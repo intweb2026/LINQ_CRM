@@ -1,18 +1,33 @@
 <!DOCTYPE html>
-<html lang="en" translate="no">
-
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="robots" content="noindex,nofollow">
-  <meta name="google" content="notranslate" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" type="image/webp" href="favicon.png" />
-  <title>IQ-Hub CRM</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IQ-Hub — CRM Workspace</title>
+<!--
+  react-scripts injects the built <script>/<link> tags into this file and writes
+  the result to build/index.html, which is ALSO a Django template
+  (backend/config/settings.py adds frontend/build to TEMPLATES[0].DIRS and
+  config/urls.py serves it via TemplateView for every non-API route).
+
+  Two consequences worth keeping in mind before editing:
+
+  1. Nothing here may contain "{{", "{%" or "{#" — Django would try to render it
+     as template syntax. That is also why the build runs with
+     INLINE_RUNTIME_CHUNK=false (see package.json): CRA otherwise inlines the
+     minified webpack runtime into this file, and minified JS can contain those
+     sequences by chance.
+  2. %PUBLIC_URL% resolves to "" at build time, so "%PUBLIC_URL%/static/x" ends
+     up as "/static/x" — which Django serves out of frontend/build/static via
+     STATICFILES_DIRS. Never hardcode a host here.
+-->
+<link rel="icon" type="image/webp" href="%PUBLIC_URL%/static/logo-icon.webp">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-
 <body>
-  <noscript>You need JavaScript to run this app.</noscript>
-  <div id="root"></div>
+<noscript>You need to enable JavaScript to run this app.</noscript>
+<a href="#main" class="skip">Skip to content</a>
+<div id="root"></div>
 </body>
-
 </html>

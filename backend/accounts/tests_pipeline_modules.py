@@ -183,37 +183,57 @@ class _StubView:
 
 class ModuleListSyncTests(TestCase):
     """
-    The frontend keeps its own copies of the module list. Assert they match
-    rather than trusting three hand-edited files to stay aligned.
+    The frontend keeps its own copy of the module list. Assert it matches the
+    backend rather than trusting hand-edited files to stay aligned.
+
+    This class used to check three files — contexts/AuthContext.jsx,
+    pages/RolesPage.jsx and App.jsx — because the CRA frontend scattered the list
+    across all three. The Vite tree has a SINGLE canonical list in
+    lib/constants.js from which ALL_MODULES derives, and SessionContext,
+    api/roles.js and the role editor all read that. So there is one place to
+    check, and its absence is a failure rather than a skip: there is no longer a
+    second copy to fall back on.
     """
 
-    def _require(self, keys, where):
-        if keys is None:
-            self.skipTest(f"{where} not present in this checkout")
-        return keys
+    CONSTANTS = FRONTEND / "lib" / "constants.js"
+    NAV = FRONTEND / "lib" / "nav.js"
 
-    def test_auth_context_matches_backend(self):
-        keys = self._require(
-            _js_string_list(FRONTEND / "contexts" / "AuthContext.jsx", "ALL_MODULES"),
-            "AuthContext.ALL_MODULES")
-        self.assertEqual(set(keys), set(CRM_MODULES))
+    def _frontend_present(self):
+        if not FRONTEND.exists():
+            self.skipTest("frontend/src not present in this checkout")
 
-    def test_roles_page_matches_backend(self):
-        path = FRONTEND / "pages" / "RolesPage.jsx"
-        if not path.exists():
-            self.skipTest("RolesPage.jsx not present in this checkout")
-        src = path.read_text(encoding="utf-8")
-        block = re.search(r"const\s+CRM_MODULES\s*=\s*\[(.*?)\n\];", src, re.S)
-        self.assertIsNotNone(block, "RolesPage.CRM_MODULES not found")
-        keys = re.findall(r"key:\s*[\"']([a-z_]+)[\"']", block.group(1))
-        self.assertEqual(set(keys), set(CRM_MODULES))
-
-    def test_default_redirect_covers_every_module(self):
+    def test_frontend_module_list_matches_backend(self):
         """
-        A role granted only a module missing from ORDER lands on No Access
-        despite having a working sidebar entry.
+        A key here the backend does not know produces a permission checkbox that
+        can never grant anything; a backend key missing here is a module no role
+        can be granted at all.
         """
-        keys = self._require(
-            _js_string_list(FRONTEND / "App.jsx", "ORDER"),
-            "App.ORDER")
-        self.assertEqual(set(keys), set(CRM_MODULES))
+        self._frontend_present()
+        self.assertTrue(self.CONSTANTS.exists(), f"missing {self.CONSTANTS}")
+        src = self.CONSTANTS.read_text(encoding="utf-8")
+        block = re.search(r"const\s+CRM_MODULES\s*=\s*\[(.*?)\];", src, re.S)
+        self.assertIsNotNone(block, "constants.CRM_MODULES not found")
+        # Entries look like { k: 'bookings', l: 'Bookings' } — `k` is the key.
+        keys = re.findall(r"""k:\s*["']([a-z_]+)["']""", block.group(1))
+        frontend_only = sorted(set(keys) - set(CRM_MODULES))
+        backend_only = sorted(set(CRM_MODULES) - set(keys))
+        self.assertEqual(
+            set(keys), set(CRM_MODULES),
+            "frontend lib/constants.js CRM_MODULES is out of sync with "
+            "accounts.models.CRM_MODULES\n"
+            f"  frontend only: {frontend_only}\n"
+            f"  backend only:  {backend_only}",
+        )
+
+    def test_every_nav_module_is_a_real_backend_module(self):
+        """
+        A sidebar entry whose `mod` the backend does not recognise is gated on a
+        permission that can never be granted, so its page is unreachable for
+        every role. `mod: null` marks an entry that is not module-gated.
+        """
+        self._frontend_present()
+        self.assertTrue(self.NAV.exists(), f"missing {self.NAV}")
+        src = self.NAV.read_text(encoding="utf-8")
+        mods = set(re.findall(r"""mod:\s*["']([a-z_]+)["']""", src))
+        unknown = sorted(mods - set(CRM_MODULES))
+        self.assertEqual(unknown, [], f"nav.js references unknown modules: {unknown}")

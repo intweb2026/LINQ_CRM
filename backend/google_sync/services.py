@@ -55,6 +55,12 @@ class SyncOrchestrator:
         from sync.events_sync import sync_events
         from services.google_sheets import google_sheets as gs
 
+        # The CRM mirror writes to its own spreadsheet and builds its own client,
+        # so it bypasses the `gs` singleton (and its single GOOGLE_SHEET_ID)
+        # entirely. Handled before the checks below for that reason.
+        if sync_type == GoogleSheetSyncLog.SyncType.CRM_MIRROR:
+            return cls._execute_crm_mirror(triggered_by, trigger_source)
+
         sync_mode = (
             GoogleSheetSyncLog.SyncMode.FULL
             if full
@@ -151,12 +157,69 @@ class SyncOrchestrator:
 
         return log
 
+    @classmethod
+    def _execute_crm_mirror(cls, triggered_by, trigger_source):
+        """
+        Full replace of every CRM module into the 'CRM data' spreadsheet.
+
+        Always a full replace, so sync_mode is FULL regardless of the caller's
+        `full` flag — there is no incremental mode for a mirror.
+        """
+        from sync.crm_mirror import mirror_all, CRM_MODULES
+
+        log = GoogleSheetSyncLog.objects.create(
+            sync_type=GoogleSheetSyncLog.SyncType.CRM_MIRROR,
+            sheet_name=cls._sheet_label(GoogleSheetSyncLog.SyncType.CRM_MIRROR),
+            status=GoogleSheetSyncLog.Status.RUNNING,
+            sync_mode=GoogleSheetSyncLog.SyncMode.FULL,
+            triggered_by=triggered_by,
+            trigger_source=trigger_source,
+            started_at=timezone.now(),
+        )
+
+        start = time.time()
+        try:
+            summary, errors = mirror_all()
+        except Exception as exc:
+            logger.error("CRM mirror aborted: %s", exc, exc_info=True)
+            log.status           = GoogleSheetSyncLog.Status.FAILED
+            log.completed_at     = timezone.now()
+            log.duration_seconds = round(time.time() - start, 2)
+            log.error_message    = str(exc)
+            log.save()
+            return log
+
+        total = sum(summary.values())
+
+        if errors and not summary:
+            final_status = GoogleSheetSyncLog.Status.FAILED
+        elif errors:
+            final_status = GoogleSheetSyncLog.Status.PARTIAL
+        else:
+            final_status = GoogleSheetSyncLog.Status.SUCCESS
+
+        log.status            = final_status
+        log.completed_at      = timezone.now()
+        log.duration_seconds  = round(time.time() - start, 2)
+        log.records_processed = total
+        log.error_message     = "\n".join(errors)
+        log.sync_summary      = {"tabs": summary, "modules": len(CRM_MODULES)}
+        log.last_synced_at    = timezone.now() if final_status == GoogleSheetSyncLog.Status.SUCCESS else None
+        log.save()
+
+        logger.info(
+            "CRM mirror %s in %.2fs — %d rows across %d tabs",
+            final_status, log.duration_seconds, total, len(summary),
+        )
+        return log
+
     @staticmethod
     def _sheet_label(sync_type: str) -> str:
         bookings_tab = getattr(settings, "GOOGLE_SHEET_BOOKINGS_TAB", "Bookings")
         events_tab   = getattr(settings, "GOOGLE_SHEET_EVENTS_TAB",   "Events")
         return {
-            "bookings":  bookings_tab,
-            "events":    events_tab,
-            "full_sync": f"{bookings_tab} + {events_tab}",
+            "bookings":   bookings_tab,
+            "events":     events_tab,
+            "full_sync":  f"{bookings_tab} + {events_tab}",
+            "crm_mirror": "CRM data (all modules)",
         }.get(sync_type, "")

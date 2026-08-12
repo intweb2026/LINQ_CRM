@@ -29,6 +29,8 @@ class BookDelegate(models.Model):
     )
     event_code       = models.CharField(max_length=50, db_index=True)
     edition          = models.IntegerField(null=True, blank=True, db_index=True)
+    # See events/models.py for the rationale — one value per load_zoho_export run.
+    import_batch_id  = models.UUIDField(null=True, blank=True, db_index=True)
     company          = models.ForeignKey(
         "companies.Company", null=True, blank=True,
         on_delete=models.SET_NULL, related_name="delegates",

@@ -11,9 +11,10 @@ from django.utils import timezone
 class GoogleSheetSyncLog(models.Model):
 
     class SyncType(models.TextChoices):
-        BOOKINGS  = "bookings",  "Bookings"
-        EVENTS    = "events",    "Events"
-        FULL_SYNC = "full_sync", "Full Sync"
+        BOOKINGS   = "bookings",   "Bookings"
+        EVENTS     = "events",     "Events"
+        FULL_SYNC  = "full_sync",  "Full Sync"
+        CRM_MIRROR = "crm_mirror", "CRM Mirror"
 
     class Status(models.TextChoices):
         PENDING        = "pending",        "Pending"

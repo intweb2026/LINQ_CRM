@@ -19,6 +19,12 @@ class Event(models.Model):
 
     event_code  = models.CharField(max_length=50, unique=True, db_index=True)
     name        = models.CharField(max_length=255, blank=True, default="")
+    # Provenance for the Zoho load. All rows written by ONE run of
+    # `load_zoho_export` share one value, so a superseded or partial load can be
+    # identified and deleted without a full database restore. Null on every row
+    # that did not arrive through that command. Mirrors the same field on
+    # PaperReview / ProposalSubmission.
+    import_batch_id = models.UUIDField(null=True, blank=True, db_index=True)
     status      = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
     city        = models.CharField(max_length=100, blank=True, default="")
     country     = models.CharField(max_length=100, blank=True, default="")

@@ -1,167 +1,76 @@
-import { useState, useEffect } from "react";
-import { teamApi } from "../api";
-import { fmt } from "../utils/helpers";
-import { Td, EmptyState } from "../components/ui/Table";
-import { EventStatusBadge } from "../components/ui/Badge";
+import { useState } from 'react';
+import { PageHead, Tabs } from '../components/UI';
+import DataTable from '../components/DataTable';
+import Drawer from '../components/Drawer';
+import { Icon } from '../lib/icons';
+import { Who, RoleBadge, EvBadge } from '../components/Badge';
+import { nf, rel } from '../lib/helpers';
+import { ROLE_FULL } from '../lib/constants';
+import * as myTeamApi from '../api/myTeam';
+import { useFetch } from '../hooks/useFetch';
 
-export function TeamPage() {
-  const [users, setUsers] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState(null);
-  const [detailData, setDetailData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    teamApi.list()
-      .then(data => {
-        setUsers(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    if (!selectedUserId) {
-      setDetailData(null);
-      return;
-    }
-    teamApi.get(selectedUserId).then(setDetailData);
-  }, [selectedUserId]);
-
-  if (loading) return <div style={{ padding: 40 }}>Loading...</div>;
+// Mirrors TeamPage.jsx from the original design — routed with NO permission
+// gate, so every signed-in user can see rep-level performance here.
+function MyTeamDrawer({ rep, onClose }) {
+  const [tab, setTab] = useState('events');
+  if (!rep) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: "20px" }}>
-      <div style={{ marginBottom: "20px" }}>
-        <h4 style={{ margin: 0, fontSize: 18, color: "#495057", textTransform: "uppercase", fontWeight: 700 }}>Team Performance</h4>
-        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#878a99" }}>Track and analyze sales performance across your entire team.</p>
-      </div>
-
-      <div style={{ display: "flex", gap: "20px", height: "100%", minHeight: 0 }}>
-        {/* Master View (Table of Users) */}
-        <div className="card" style={{ 
-          flex: selectedUserId ? "0 0 350px" : 1, 
-          display: "flex", 
-          flexDirection: "column", 
-          transition: "flex 0.3s ease",
-          overflow: "hidden" 
-        }}>
-          <div className="card-header">
-            <h5 style={{ margin: 0, fontSize: 14 }}>Sales Representatives</h5>
-          </div>
-          <div style={{ flex: 1, overflow: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead style={{ background: "#f3f6f9" }}>
-                <tr>
-                  <th style={thStyle}>Sales User</th>
-                  <th style={thStyle}>Events</th>
-                  <th style={thStyle}>Total Sales</th>
+    <Drawer
+      wide onClose={onClose}
+      head={<div style={{ display: 'flex', alignItems: 'center', gap: 11 }}><Who name={rep.username} size="lg" /><div><h2>{rep.username}</h2><p>{rep.email} · {ROLE_FULL[rep.role]}</p></div></div>}
+      tabs={<Tabs list={[{ id: 'events', label: 'Event-wise breakdown' }, { id: 'activity', label: 'Activity log' }]} active={tab} onPick={setTab} />}
+      foot={<button className="btn btn-s" onClick={onClose}>Close</button>}
+    >
+      {tab === 'events' ? (
+        !rep.events.length ? (
+          <div className="mt"><div className="mt-i"><Icon name="calendar" size={21} /></div><h3>No assigned events</h3><p>Nothing tracked against {rep.username} yet.</p></div>
+        ) : (
+          <table className="gt">
+            <thead><tr><th>Event</th><th>Status</th><th className="num">Invoices</th><th className="num">Paid</th><th className="num">Pending</th></tr></thead>
+            <tbody>
+              {rep.events.map((e) => (
+                <tr key={e.event_id}>
+                  <td><div style={{ fontWeight: 650, color: 'var(--text)' }}>{e.event_name}</div><div className="mono" style={{ fontSize: 10.5, color: 'var(--t-600)' }}>{e.event_code}</div></td>
+                  <td><EvBadge value={e.event_status} /></td>
+                  <td className="num">{nf(e.total_invoices)}</td>
+                  <td className="num" style={{ color: 'var(--green)', fontWeight: 650 }}>{nf(e.paid_invoices)}</td>
+                  <td className="num" style={{ color: 'var(--amber)', fontWeight: 650 }}>{nf(e.pending_invoices)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {users.map(u => (
-                  <tr 
-                    key={u.id} 
-                    onClick={() => setSelectedUserId(u.id)}
-                    style={{ 
-                      cursor: "pointer", 
-                      background: selectedUserId === u.id ? "rgba(64, 81, 137, 0.05)" : "#fff",
-                      borderBottom: "1px solid var(--vz-card-border-color)",
-                      transition: "background .2s ease"
-                    }}
-                    onMouseEnter={(e) => { if (selectedUserId !== u.id) e.currentTarget.style.background = "#f3f3f9"; }}
-                    onMouseLeave={(e) => { if (selectedUserId !== u.id) e.currentTarget.style.background = "#fff"; }}
-                  >
-                    <Td><span style={{ fontWeight: 600 }}>{u.username}</span></Td>
-                    <Td muted>{u.total_events}</Td>
-                    <Td style={{ fontWeight: 700, color: "var(--vz-success)" }}>{fmt.currency(u.total_sales)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {users.length === 0 && <EmptyState title="No sales team members found." />}
-          </div>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : rep.activity.length ? (
+        <div className="tl">
+          {rep.activity.map((a) => (
+            <div className="tl-i" key={a.id}><span className="tl-d"><Icon name="receipt" size={10} /></span><div><div className="tl-t">{a.action}</div>{a.details ? <div className="tl-s">{a.details}</div> : null}<div className="tl-m">{rel(a.created_at)}</div></div></div>
+          ))}
         </div>
-
-        {/* Detail View */}
-        {selectedUserId && (
-          <div className="card" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", animation: "slideUp 0.3s ease-out" }}>
-            {!detailData ? (
-              <div style={{ padding: 40, textAlign: "center", color: "#94a3b8" }}>
-                <div style={{ width: 30, height: 30, border: "3px solid #e9ebec", borderTopColor: "var(--vz-primary)", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 10px" }} />
-                Loading Performance...
-              </div>
-            ) : (
-              <>
-                {/* SECTION 1: User Info Header */}
-                <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--vz-primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>
-                      {detailData.user.username[0].toUpperCase()}
-                    </div>
-                    <div>
-                      <h5 style={{ margin: 0, fontSize: 16 }}>{detailData.user.username}</h5>
-                      <div style={{ color: "#878a99", fontSize: 12 }}>{detailData.user.email}</div>
-                    </div>
-                  </div>
-                  <button onClick={() => setSelectedUserId(null)} className="btn" style={{ background: "#f3f3f9", color: "#878a99" }}>
-                    Close
-                  </button>
-                </div>
-
-                {/* SECTION 2: Events Performance Table */}
-                <div className="card-body" style={{ flex: 1, overflow: "auto" }}>
-                  <h6 style={{ margin: "0 0 16px", color: "#495057", textTransform: "uppercase", fontSize: 12 }}>Event-wise Breakdown</h6>
-                  <div style={{ border: "1px solid var(--vz-card-border-color)", borderRadius: 4, overflow: "hidden" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead style={{ background: "#f3f6f9" }}>
-                        <tr>
-                          <th style={thStyle}>Event</th>
-                          <th style={thStyle}>Status</th>
-                          <th style={thStyle}>Invoices</th>
-                          <th style={thStyle}>Paid</th>
-                          <th style={thStyle}>Pending</th>
-                          <th style={{ ...thStyle, textAlign: "right" }}>Revenue</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {detailData.events.map(ev => (
-                          <tr key={ev.event_id} style={{ borderBottom: "1px solid var(--vz-card-border-color)" }}>
-                            <Td>
-                              <div style={{ fontWeight: 600 }}>{ev.event_name}</div>
-                              <div style={{ fontSize: 11, color: "#878a99" }}>{ev.event_code}</div>
-                            </Td>
-                            <Td><EventStatusBadge status={ev.event_status} /></Td>
-                            <Td>{ev.total_invoices}</Td>
-                            <Td style={{ color: "var(--vz-success)", fontWeight: 600 }}>{ev.paid_invoices}</Td>
-                            <Td style={{ color: "var(--vz-warning)", fontWeight: 600 }}>{ev.pending_invoices}</Td>
-                            <Td right style={{ fontWeight: 700, color: "var(--vz-primary)" }}>{fmt.currency(ev.revenue)}</Td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {detailData.events.length === 0 && <EmptyState title="No assigned events." />}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+      ) : <p style={{ fontSize: 12, color: 'var(--text-4)' }}>No recent activity.</p>}
+    </Drawer>
   );
 }
 
+export default function TeamPage() {
+  const { data: reps } = useFetch(myTeamApi.list, [], { initialData: [] });
+  const MYTEAM_REPS = reps || [];
+  const [drawerRep, setDrawerRep] = useState(null);
 
-const thStyle = {
-  background: "#f8fafc",
-  color: "#64748b",
-  fontSize: 11,
-  fontWeight: 600,
-  textTransform: "uppercase",
-  letterSpacing: ".5px",
-  padding: "10px 16px",
-  textAlign: "left",
-  borderBottom: "1px solid #e2e8f0",
-  position: "sticky",
-  top: 0
-};
+  return (
+    <>
+      <PageHead title="My Team" sub="Event-wise performance across the team — pick anyone to see their invoice and attendance breakdown." />
+      <DataTable
+        rows={MYTEAM_REPS} noun="people" pageSize={50} defaultSort={{ key: 'username', dir: 'asc' }} searchPlaceholder="Search a name…"
+        cols={[
+          { key: 'username', label: 'Team member', cls: 'st', cell: (v, r) => <Who name={v} sub={r.email} size="md" mono /> },
+          { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} /> },
+          { key: 'total_events', label: 'Events', num: true },
+          { key: 'events', label: 'Open invoices', num: true, cell: (v) => nf(v.reduce((s, e) => s + e.pending_invoices, 0)) },
+        ]}
+        onRow={(r) => setDrawerRep(r)}
+      />
+      {drawerRep ? <MyTeamDrawer rep={drawerRep} onClose={() => setDrawerRep(null)} /> : null}
+    </>
+  );
+}

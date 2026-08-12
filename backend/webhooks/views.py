@@ -11,6 +11,7 @@ PATCH/DELETE /api/webhooks/keys/{id}/         — update / delete
 POST /api/webhooks/keys/{id}/regenerate/      — regenerate secret
 """
 import logging
+import traceback
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -19,6 +20,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.permissions import IsAdminRole
 from .models import WebhookApiKey, WebhookLog
 from .serializers import (
@@ -37,21 +39,53 @@ class WebhookIngestionView(APIView):
     """
     POST /api/webhooks/ingest/
     Accepts X-CRM-API-KEY (DB-backed) or X-WEBHOOK-SECRET (legacy static).
+
+    Every outcome leaves exactly one WebhookLog row — success, auth failure,
+    unparseable body, and unexpected crash alike. A delivery that produced no
+    row is indistinguishable in the UI from a delivery that never arrived, so
+    the failures most worth investigating were the ones with nothing to show.
     """
     authentication_classes = []
     permission_classes     = [AllowAny]
 
-    def post(self, request):
-        try:
-            recv_at = timezone.now()
-            ip      = extract_ip(request)
-            hdrs    = safe_headers(request.META)
+    # How much of an unparseable body to keep. Enough to see what the sender
+    # actually sent, short enough not to bloat the row.
+    RAW_BODY_LOG_LIMIT = 10_000
 
+    def post(self, request):
+        recv_at = timezone.now()
+        ip      = extract_ip(request)
+        hdrs    = safe_headers(request.META)
+        log     = None
+
+        # Read the raw body BEFORE request.data. Django caches it on the request
+        # and DRF parses from that cache, so this is safe — and it is the only
+        # order that works: once the parser has drained the stream, request.body
+        # raises RawPostDataException and the bytes are gone for good.
+        try:
+            raw_body = request.body.decode("utf-8", errors="replace")
+        except Exception:
+            raw_body = ""
+
+        # Parse without raising. A malformed body used to blow up inside the
+        # log-creating call itself, so the blanket handler below turned it into
+        # a 500 with no row at all.
+        try:
+            parsed      = request.data
+            data        = parsed if isinstance(parsed, dict) else {}
+            parse_error = None
+        except Exception as exc:
+            data        = {}
+            parse_error = f"Could not parse request body: {exc}"
+
+        try:
+            # Authenticate first even when the body is broken: an unauthenticated
+            # sender should not be able to write its raw body into our logs.
             api_key_obj, auth_err = authenticate_request(request)
 
             if auth_err:
                 WebhookLog.objects.create(
-                    ip_address=ip, payload=request.data, headers=hdrs,
+                    ip_address=ip, payload=data, headers=hdrs,
                     response={"error": auth_err},
                     status=WebhookLog.Status.FAILED,
                     http_status=401,
@@ -61,8 +95,25 @@ class WebhookIngestionView(APIView):
                 )
                 return Response({"success": False, "error": auth_err}, status=status.HTTP_401_UNAUTHORIZED)
 
-            raw_payload    = request.data if isinstance(request.data, dict) else {}
-            payload        = unwrap_payload(raw_payload)
+            if parse_error:
+                WebhookLog.objects.create(
+                    api_key=api_key_obj,
+                    source=(api_key_obj.name if api_key_obj else "legacy-secret"),
+                    ip_address=ip,
+                    payload={"_unparsed_body": raw_body[:self.RAW_BODY_LOG_LIMIT]},
+                    headers=hdrs,
+                    response={"success": False, "error": parse_error},
+                    status=WebhookLog.Status.FAILED,
+                    http_status=400,
+                    error_message=parse_error,
+                    processing_status=WebhookLog.ProcessingStatus.ERROR,
+                    received_at=recv_at,
+                    processed_at=timezone.now(),
+                )
+                return Response({"success": False, "error": parse_error},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            payload        = unwrap_payload(data)
             invoice_number = payload.get("InvoiceNumber", "")
             event_code     = payload.get("Eventcode", "")
             event_name     = payload.get("Eventname", "")
@@ -76,7 +127,7 @@ class WebhookIngestionView(APIView):
                 source=source,
                 ip_address=ip,
                 request_method="POST",
-                payload=request.data,
+                payload=data,
                 headers=hdrs,
                 response={},
                 status=WebhookLog.Status.RECEIVED,
@@ -111,17 +162,73 @@ class WebhookIngestionView(APIView):
             return Response(resp_body, status=resp_status)
         except Exception as e:
             logger.exception("CRITICAL Webhook Ingestion Failure")
-            return Response({
-                "success": False, 
-                "error": "Internal Server Error",
-                "detail": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            detail    = f"{type(e).__name__}: {e}"
+            resp_body = {"success": False, "error": "Internal Server Error", "detail": detail}
+
+            # A crash used to return 500 having written nothing, or having left
+            # the row parked in `processing` forever — both of which read as "no
+            # such delivery" in the logs UI. Record the outcome on the row we
+            # already have, or make one if we crashed before creating it.
+            try:
+                if log is not None:
+                    log.status            = WebhookLog.Status.FAILED
+                    log.processing_status = WebhookLog.ProcessingStatus.ERROR
+                    log.http_status       = 500
+                    log.error_message     = detail
+                    log.stack_trace       = traceback.format_exc()
+                    log.response          = resp_body
+                    log.processed_at      = timezone.now()
+                    log.save(update_fields=[
+                        "status", "processing_status", "http_status",
+                        "error_message", "stack_trace", "response", "processed_at",
+                    ])
+                    resp_body["log_id"] = log.id
+                else:
+                    crash_log = WebhookLog.objects.create(
+                        ip_address=ip,
+                        payload=data,
+                        headers=hdrs,
+                        response=resp_body,
+                        status=WebhookLog.Status.FAILED,
+                        http_status=500,
+                        error_message=detail,
+                        stack_trace=traceback.format_exc(),
+                        processing_status=WebhookLog.ProcessingStatus.ERROR,
+                        received_at=recv_at,
+                        processed_at=timezone.now(),
+                    )
+                    resp_body["log_id"] = crash_log.id
+            except Exception:
+                # Recording the failure must never replace the failure.
+                logger.exception("Could not write a WebhookLog row for the failure above")
+
+            return Response(resp_body, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ── Webhook Logs ──────────────────────────────────────────────────────────────
 
-class WebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
+class WebhookLogViewSet(FilterSpecMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAdminRole]
+
+    # FilterSpecMixin so the Webhook Logs table can filter and page
+    # server-side. This table is 130,287 rows: loading it all took ~261
+    # sequential requests at page_size=500, which is not a slow page, it is a
+    # hung one. `payload`, `headers`, `response` and `stack_trace` are excluded
+    # — they are large text blobs and filtering them would be a table scan
+    # over megabytes per row.
+    filter_spec_fields = build_filter_spec_fields(
+        WebhookLog,
+        exclude={"payload", "headers", "response", "stack_trace",
+                 "api_key", "created_booking"},
+        labels={"invoice_number": "Invoice Number", "event_code": "Event Code",
+                "db_insert_status": "DB Insert Status"},
+    )
+    # Explicit rather than inherited: DRF silently drops an unrecognised
+    # ordering term, so anything the frontend may ask for has to be named.
+    ordering_fields = ["id", "received_at", "created_at", "status",
+                       "processing_status", "db_insert_status", "event_code",
+                       "invoice_number", "http_status", "retry_count"]
+    ordering = ["-created_at"]
 
     def get_serializer_class(self):
         return WebhookLogSerializer if self.action == "retrieve" else WebhookLogListSerializer

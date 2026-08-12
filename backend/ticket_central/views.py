@@ -472,16 +472,39 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
         if len(ids) > 1000:
             return Response({"detail": "Maximum 1000 IDs per request"}, status=400)
 
+        # Through self.get_queryset(), not Ticket.objects: NO behaviour change today
+        # because TicketViewSet.get_queryset() deliberately does not scope (tickets
+        # are cross-team visible per product spec, documented there). The point is
+        # that if scoping is ever introduced on that queryset, this delete inherits
+        # it instead of quietly staying global — which is exactly how the delegate
+        # equivalent ended up able to delete out-of-scope rows.
+        permitted_ids = list(
+            self.get_queryset().filter(id__in=ids).values_list("id", flat=True)
+        )
+        skipped = len(set(ids)) - len(permitted_ids)
+        if not permitted_ids:
+            return Response(
+                {"detail": "None of the requested records are in your scope.",
+                 "deleted": 0, "requested": len(ids), "permitted": 0},
+                status=403,
+            )
+
         with transaction.atomic():
-            qs    = Ticket.objects.filter(id__in=ids)
+            qs    = Ticket.objects.filter(id__in=permitted_ids)
             count = qs.count()
             ActionLog.objects.create(
                 user    = request.user,
                 action  = f"Bulk deleted {count} tickets",
-                details = f"IDs (first 50): {ids[:50]}",
+                details = (
+                    f"requested={len(ids)} permitted={count} "
+                    f"out_of_scope={skipped} ids={sorted(permitted_ids)}"
+                ),
             )
             qs.delete()
-        return Response({"deleted": count})
+        return Response({
+            "deleted": count, "requested": len(ids), "permitted": count,
+            "out_of_scope": skipped,
+        })
 
     @action(detail=False, methods=["post"], url_path="clear_all",
             permission_classes=[IsAdminRole])

@@ -7,7 +7,32 @@ from webhooks.models import WebhookLog
 from webhooks.services import WebhookProcessor
 
 class Command(BaseCommand):
-    help = "Bulk import/update bookings from a JSON file (Zoho Report format)"
+    """
+    DEPRECATED FOR BULK LOADS — use `load_zoho_export` instead.
+
+    Kept because it is the only path that replays rows through WebhookProcessor,
+    which is occasionally what you want for reprocessing a handful of webhook
+    payloads. It is the WRONG tool for the Zoho load, on four counts:
+
+      * NO INVOICE NUMBER POLICY CONFLICT. This command SKIPS a row with no
+        invoice number (see the `continue` below). Assumption A2 says the load
+        must GENERATE one. Running both against the same file therefore produces
+        different row counts, and this one loses those rows silently — the skip
+        is only printed for every hundredth row.
+      * Not atomic. Each row is processed independently, so a failure part-way
+        leaves everything before it committed.
+      * No import_batch_id, so its rows cannot be identified or rolled back
+        without a full restore.
+      * Writes one WebhookLog per row — 35,690 extra rows in a table that is
+        already 130k, for an import that is not a webhook.
+
+    `load_zoho_export` has a --dry-run, one transaction for the whole load, a
+    batch id, an ActionLog, bounded date/edition parsing and anchored event-code
+    resolution. Reach for that.
+    """
+
+    help = ("DEPRECATED for bulk loads (use load_zoho_export). Replays bookings "
+            "from a JSON file through WebhookProcessor, one WebhookLog per row.")
 
     def add_arguments(self, parser):
         parser.add_argument('json_file', type=str, help='Path to the JSON file')

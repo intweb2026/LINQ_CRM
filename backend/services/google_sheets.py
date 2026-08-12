@@ -7,7 +7,12 @@ from googleapiclient.discovery import build
 logger = logging.getLogger('book_event')
 
 class GoogleSheetsService:
-    def __init__(self):
+    def __init__(self, spreadsheet_id=None):
+        """
+        spreadsheet_id defaults to settings.GOOGLE_SHEET_ID so the module-level
+        singleton below keeps its original behaviour. The CRM mirror passes its
+        own sheet ID (settings.GOOGLE_SHEET_CRM_ID) instead.
+        """
         if not os.path.exists(settings.GOOGLE_SHEETS_CREDENTIALS):
             raise FileNotFoundError(f"Credentials not found at {settings.GOOGLE_SHEETS_CREDENTIALS}")
 
@@ -16,7 +21,7 @@ class GoogleSheetsService:
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
 
-        raw_id = settings.GOOGLE_SHEET_ID
+        raw_id = spreadsheet_id or settings.GOOGLE_SHEET_ID
         if "/" in raw_id:
             parts = [p for p in raw_id.split("/") if p]
             if "d" in parts:
@@ -128,6 +133,77 @@ class GoogleSheetsService:
             ).execute()
 
         return len(rows)
+
+    # ── Tab management ────────────────────────────────────────────────────────
+    # replace_data()/sync_data() above write to "{tab}!A1", which fails if the
+    # tab does not exist. The CRM mirror creates one tab per module, so it needs
+    # to be able to add them to an otherwise-empty spreadsheet.
+
+    def list_tabs(self):
+        """Return the titles of every tab in the spreadsheet."""
+        meta = self.service.spreadsheets().get(
+            spreadsheetId=self.spreadsheet_id,
+            fields="sheets.properties.title",
+        ).execute()
+        return [s["properties"]["title"] for s in meta.get("sheets", [])]
+
+    def ensure_tabs(self, names):
+        """Create any of `names` that don't exist yet. Returns the created names."""
+        existing = set(self.list_tabs())
+        missing = [n for n in names if n not in existing]
+        if not missing:
+            return []
+
+        self.service.spreadsheets().batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={"requests": [
+                {"addSheet": {"properties": {"title": name}}} for name in missing
+            ]},
+        ).execute()
+        logger.info("Created Google Sheet tabs: %s", ", ".join(missing))
+        return missing
+
+    def replace_data_chunked(self, sheet_name, headers, row_iter, chunk_size=5000):
+        """
+        Wipe `sheet_name` and refill it from an iterable of rows.
+
+        Unlike replace_data(), rows are streamed and appended in batches rather
+        than sent in one request — a single update carrying tens of thousands of
+        rows is too large a payload for the Sheets API. Returns the row count.
+        """
+        self.clear_sheet(sheet_name)
+
+        # Header row first, so the appends below land from row 2 onwards.
+        self.service.spreadsheets().values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{sheet_name}!A1",
+            valueInputOption="RAW",
+            body={"values": [headers]},
+        ).execute()
+
+        total = 0
+        batch = []
+        for row in row_iter:
+            batch.append(row)
+            if len(batch) >= chunk_size:
+                self._append_rows(sheet_name, batch)
+                total += len(batch)
+                batch = []
+        if batch:
+            self._append_rows(sheet_name, batch)
+            total += len(batch)
+
+        return total
+
+    def _append_rows(self, sheet_name, rows):
+        self.service.spreadsheets().values().append(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{sheet_name}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": rows},
+        ).execute()
+
 
 # Singleton instance
 google_sheets = None

@@ -1,6 +1,74 @@
-import axios from "axios";
+// Real-backend entry point. Every src/api/*.js resource module is written
+// against this client, which talks to the LINQ CRM Django/DRF backend
+// (see backend/config/urls.py — everything lives under /api/).
+import axios from 'axios';
 
-const BASE_URL = process.env.REACT_APP_API_URL || "/api/";
+/**
+ * Read env through `process.env.<NAME>` member access, one variable at a time —
+ * never via an intermediate `const ENV = process.env`.
+ *
+ * react-scripts substitutes these at build time with webpack's DefinePlugin,
+ * which matches the literal text `process.env.REACT_APP_FOO`. Aliasing the
+ * object first defeats that match, and the browser has no real `process`, so
+ * the alias would be `undefined` at runtime and every value would silently fall
+ * back to its default.
+ *
+ * Written this way it also works unchanged under plain Node, where
+ * `process.env` is real — which is what lets backend/accounts/wire_probe.mjs
+ * import THIS module rather than a rewritten copy of it.
+ *
+ * NODE_ENV is used for the dev-only flood check rather than a DEV flag:
+ * react-scripts sets it to 'development'/'production', and under bare Node it
+ * is undefined, so the probe keeps the detector off.
+ */
+const BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api/';
+const IS_DEV = process.env.NODE_ENV === 'development';
+
+/**
+ * Development-only request-flood detector.
+ *
+ * A render loop, or a fetchAllPages walk over a table large enough to be a
+ * mistake, both present the same way from the outside: "the backend seems busy".
+ * Neither fails a test suite. This names the offending URL on the console the
+ * moment one resource is hit implausibly often in a short window, so the next
+ * occurrence is diagnosed in seconds instead of by reading a Django log.
+ *
+ * The threshold is deliberately above what legitimate paging costs (a handful of
+ * pages) and well below what a runaway costs (dozens to hundreds). It counts by
+ * PATH, ignoring query params, so a page-walk and a repeated identical request
+ * both accumulate.
+ */
+const FLOOD_WINDOW_MS = 10000;
+const FLOOD_THRESHOLD = 40;
+const floodHits = new Map();      // path -> number[] (timestamps)
+const floodWarned = new Set();
+
+function recordForFloodCheck(url) {
+  if (!IS_DEV || !url) return;
+  const path = String(url).split('?')[0];
+  const now = Date.now();
+  const hits = (floodHits.get(path) || []).filter((t) => now - t < FLOOD_WINDOW_MS);
+  hits.push(now);
+  floodHits.set(path, hits);
+  if (hits.length >= FLOOD_THRESHOLD && !floodWarned.has(path)) {
+    floodWarned.add(path);
+    // console.error, not warn: this is a defect, and it should be impossible to
+    // scroll past. Repeated once per path so the console stays readable.
+    console.error(
+      `[request flood] ${hits.length} requests to "${path}" in under ` +
+      `${FLOOD_WINDOW_MS / 1000}s.\n` +
+      'This is either a render loop (an unstable useEffect/useMemo dependency ' +
+      'refiring a fetch) or a fetchAllPages walk over a table too large for it. ' +
+      'Use DataTable\'s `server` prop for large tables, or a count endpoint if ' +
+      'you only need a number — see api/bookings.js count().',
+    );
+  }
+}
+
+/** Test seam: lets a harness assert the detector fired without a real flood. */
+export function __floodState() {
+  return { threshold: FLOOD_THRESHOLD, windowMs: FLOOD_WINDOW_MS, warned: [...floodWarned] };
+}
 
 /**
  * Serialise params so array values become repeated bare keys:
@@ -14,10 +82,10 @@ const BASE_URL = process.env.REACT_APP_API_URL || "/api/";
 export function serializeParams(params) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params || {})) {
-    if (value === undefined || value === null || value === "") continue;
+    if (value === undefined || value === null || value === '') continue;
     if (Array.isArray(value)) {
       value.forEach((v) => {
-        if (v !== undefined && v !== null && v !== "") search.append(key, v);
+        if (v !== undefined && v !== null && v !== '') search.append(key, v);
       });
       continue;
     }
@@ -44,9 +112,9 @@ export function assertIdArray(ids, method) {
   }
 }
 
-const client = axios.create({
+export const http = axios.create({
   baseURL: BASE_URL,
-  headers: { "Content-Type": "application/json" },
+  headers: { 'Content-Type': 'application/json' },
   paramsSerializer: { serialize: serializeParams },
 });
 
@@ -64,30 +132,32 @@ function safeStorageRemove(key) {
   } catch {}
 }
 
-// Attach token on every request
-client.interceptors.request.use((config) => {
-  const token = safeStorageGet("auth_token");
+// Attach token on every request. Backend uses DRF TokenAuthentication
+// ("Authorization: Token <token>"), not Bearer/JWT.
+http.interceptors.request.use((config) => {
+  const token = safeStorageGet('auth_token');
   if (token) {
     config.headers.Authorization = `Token ${token}`;
   }
+  recordForFloodCheck(config.url);
   return config;
 });
 
 // Mark the moment a token is stored so the interceptor can suppress
 // spurious 401s that fire in the first few seconds after login.
 export function markTokenFreshness() {
-  try { localStorage.setItem("auth_token_set_at", String(Date.now())); } catch {}
+  try { localStorage.setItem('auth_token_set_at', String(Date.now())); } catch {}
 }
 
-function tokenIsFreslhySet() {
+function tokenIsFreshlySet() {
   try {
-    const t = localStorage.getItem("auth_token_set_at");
+    const t = localStorage.getItem('auth_token_set_at');
     return t && (Date.now() - parseInt(t, 10)) < 5000;
   } catch { return false; }
 }
 
 // Global error handling — retry on network/503, redirect on 401 (unless token was just set)
-client.interceptors.response.use(
+http.interceptors.response.use(
   (res) => res,
   async (err) => {
     const config = err.config;
@@ -98,24 +168,120 @@ client.interceptors.response.use(
     if (isBackendDown && config && !config._retried) {
       config._retried = true;
       for (let i = 0; i < 2; i++) {
-        await new Promise(r => setTimeout(r, 1200));
-        try { return await client(config); } catch (_) {}
+        await new Promise((r) => setTimeout(r, 1200));
+        try { return await http(config); } catch (_) {}
       }
     }
 
     if (status === 401) {
       // Suppress redirect if the token was just stored (login race window)
-      if (tokenIsFreslhySet()) {
+      if (tokenIsFreshlySet()) {
         return Promise.reject(err);
       }
-      safeStorageRemove("auth_token");
-      safeStorageRemove("auth_user");
-      safeStorageRemove("auth_perms");
-      window.location.replace("/");
+      safeStorageRemove('auth_token');
+      safeStorageRemove('auth_user');
+      safeStorageRemove('auth_perms');
+      window.location.replace('/login');
     }
 
     return Promise.reject(err);
   }
 );
 
-export default client;
+// Small helper retained for any not-yet-migrated mock resource functions.
+export const delay = (value, ms = 120) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+
+/**
+ * Every list endpoint on this backend is wrapped in DRF's PageNumberPagination
+ * (page_size=50 by default, page_size_query_param="page_size", max 500 — see
+ * config/pagination.py). A plain `http.get(url).then(r => r.data.results)`
+ * silently returns only the first page — on tables with thousands of rows
+ * (delegates, tickets, ...) that reads as "there's only ~50 records" with no
+ * indication more exist. This follows `next` until exhausted so callers get
+ * the complete set. Endpoints that aren't paginated (bare array response)
+ * are returned as-is.
+ */
+export async function fetchAllPages(url, params = {}) {
+  const pageSize = 500;
+  const all = [];
+  let page = 1;
+  while (true) {
+    const { data } = await http.get(url, { params: { ...params, page, page_size: pageSize } });
+    if (Array.isArray(data)) return data;
+    all.push(...(data.results || []));
+    if (!data.next) break;
+    page += 1;
+  }
+  return all;
+}
+
+/**
+ * One page of a list endpoint, filtered and ordered by the server.
+ *
+ * The counterpart to fetchAllPages: where that walks every page so a caller
+ * gets the complete set, this fetches exactly the page asked for and lets the
+ * backend do the filtering. Large tables (delegates is ~35k rows) must use this
+ * one — fetchAllPages pulls all 35k into the browser before any filter runs.
+ *
+ * `filterSpec` is RAW JSON, not percent-encoded: serializeParams runs it through
+ * URLSearchParams, which encodes exactly once. Encoding it here as well is the
+ * double-encoding bug that already shipped — Django decodes once, sees the
+ * literal text "%7B%22match%22…" and answers 400 "filter_spec is not valid JSON".
+ */
+export async function fetchPage(url, { page = 1, pageSize = 50, ordering, filterSpec, search, params } = {}) {
+  const query = { ...(params || {}), page, page_size: pageSize };
+  if (ordering) query.ordering = ordering;
+  if (filterSpec) query.filter_spec = filterSpec;
+  if (search) query.search = search;
+
+  const { data } = await http.get(url, { params: query });
+  // Endpoints that opt out of pagination answer with a bare array.
+  if (Array.isArray(data)) {
+    return { results: data, count: data.length, totalPages: 1, page: 1, paginated: false };
+  }
+  return {
+    results: data.results || [],
+    count: data.count ?? (data.results || []).length,
+    totalPages: data.total_pages ?? 1,
+    page: data.page ?? page,
+    paginated: true,
+  };
+}
+
+/**
+ * GET {resource}/filter_schema/ — the server's registry of filterable fields
+ * and the operators allowed on each. Fetched rather than hardcoded so the
+ * frontend cannot drift from backend/accounts/filter_spec.py.
+ */
+export function fetchFilterSchema(resource) {
+  return http.get(`${resource}/filter_schema/`).then((r) => r.data);
+}
+
+/** GET {resource}/bulk_update_schema/ — what may be mass-edited, and its max. */
+export function fetchBulkUpdateSchema(resource) {
+  return http.get(`${resource}/bulk_update_schema/`).then((r) => r.data);
+}
+
+/**
+ * POST {resource}/bulk_update/ — preview (commit=false) or apply (commit=true).
+ *
+ * Two shapes matter here and both have bitten before:
+ *
+ *   ids   MUST be a real Array. A Set serialises to {} through JSON.stringify,
+ *         so the backend saw {"ids": {}} and answered "ids list required".
+ *         assertIdArray throws at the call site with the actual type named.
+ *
+ *   value KEY PRESENCE is the signal, not truthiness. Omitting it means "no
+ *         target chosen yet" (a distribution-only preview); sending it as null
+ *         means "clear this field", which is a real operation on a nullable
+ *         column. Passing `undefined` here omits the key; passing null sends it.
+ */
+export function bulkUpdate(resource, { ids, field, value, commit = false, planHash }) {
+  assertIdArray(ids, `bulkUpdate(${resource})`);
+  const body = { ids, field, commit };
+  if (value !== undefined) body.value = value;
+  if (planHash) body.plan_hash = planHash;
+  return http.post(`${resource}/bulk_update/`, body).then((r) => r.data);
+}
+
+export default http;

@@ -4,19 +4,23 @@ accounts/tests_wire_probe.py
 The test that would have caught both shipped frontend→wire bugs.
 
 Runs accounts/wire_probe.mjs under Node, which imports the REAL api/*.js and
-useFilterSpec.js with axios stubbed and records exactly what would go on the
+lib/filterSpec.js with axios stubbed and records exactly what would go on the
 wire. This suite then asserts the invariants AND replays the captured literals
 against Django, so a serializer change that green unit tests would miss fails
 here instead of in a browser.
 
-Two bugs this locks down:
+Three bugs this locks down:
   1. A Set serialises to {} through JSON.stringify -> {"ids": {}} -> the
      backend answered "ids list required". Now the api layer throws first.
   2. A pre-encoded filter_spec got encoded a second time by URLSearchParams
      (%257B), and Django, which decodes once, saw literal "%7B..." text.
+  3. The probe itself silently stopped matching the frontend, so every test
+     here skipped and the suite went green having checked nothing. A probe
+     that cannot run is now a FAILURE unless the machine genuinely lacks Node
+     — see require_probe().
 
-Skipped automatically when Node is unavailable, so the suite still runs on a
-machine without it.
+Skipped only when Node is unavailable, so the suite still runs on a machine
+without it.
 
     python manage.py test accounts.tests_wire_probe
 """
@@ -63,13 +67,22 @@ def run_probe():
     if _PROBE_CACHE:
         return _PROBE_CACHE["result"], _PROBE_CACHE["error"]
 
+    # `skippable` separates "this machine cannot run the probe" from "the probe
+    # ran and something is wrong". Only the former may skip.
+    #
+    # The distinction is the whole point: when the frontend was replaced, the
+    # probe died on an unstubbed axios import, run_probe() returned an error, and
+    # every test below called skipTest() — so the suite stayed green while
+    # asserting nothing at all about what the frontend sends. A broken probe is
+    # now a failure.
     result = error = None
+    skippable = False
     if not _node():
-        error = "node is not on PATH"
+        error, skippable = "node is not on PATH", True
     elif not PROBE.exists():
-        error = f"probe script missing at {PROBE}"
+        error, skippable = f"probe script missing at {PROBE}", True
     elif not FRONTEND_SRC.exists():
-        error = f"frontend source missing at {FRONTEND_SRC}"
+        error, skippable = f"frontend source missing at {FRONTEND_SRC}", True
     else:
         try:
             out = subprocess.run(
@@ -84,16 +97,36 @@ def run_probe():
             error = repr(exc)
 
     _PROBE_CACHE["result"], _PROBE_CACHE["error"] = result, error
+    _PROBE_CACHE["skippable"] = skippable
     return result, error
+
+
+def require_probe(test_case):
+    """
+    Return the probe result, or end the test appropriately.
+
+    Skips only when the environment cannot run the probe at all; a probe that ran
+    and failed — or one whose imports no longer match the frontend — fails.
+    """
+    result, error = run_probe()
+    if result is not None:
+        return result
+    if _PROBE_CACHE.get("skippable"):
+        test_case.skipTest(f"wire probe unavailable: {error}")
+    test_case.fail(
+        "wire probe could not run against the real frontend modules. This is a "
+        "FAILURE, not a skip: it means api/*.js no longer matches what "
+        "accounts/wire_probe.mjs imports, so nothing about the frontend's wire "
+        f"format is being checked.\n\n{error}"
+    )
+    return None
 
 
 class WireProbeTests(TestCase):
     """Invariants captured from the real frontend modules."""
 
     def setUp(self):
-        self.probe, err = run_probe()
-        if self.probe is None:
-            self.skipTest(f"wire probe unavailable: {err}")
+        self.probe = require_probe(self)
         self.factory = APIRequestFactory()
 
     def test_every_wire_invariant_holds(self):
@@ -104,10 +137,19 @@ class WireProbeTests(TestCase):
             + "\n".join(f"  {c['name']}: {c['detail']}" for c in failed),
         )
 
-    def test_probe_covered_all_three_modules(self):
+    def test_probe_covered_the_real_wire_surfaces(self):
+        """
+        Guards against the probe quietly shrinking. It previously asserted three
+        per-module bulkUpdate functions; bulk update is now a single generic
+        helper in api/client.js, so the surfaces worth naming are these.
+        """
         names = " ".join(c["name"] for c in self.probe["checks"])
-        for module in ("delegates", "tickets", "events"):
-            self.assertIn(f"{module}.bulkUpdate", names)
+        for surface in (
+            "client.bulkUpdate", "client.assertIdArray", "filterSpec.partitionConds",
+            "bookings.bulkRemove", "is_empty criterion carries no value key",
+            "filter_spec is single-encoded", "rejects a Set loudly",
+        ):
+            self.assertIn(surface, names, f"probe no longer covers: {surface}")
 
 
 class WireLiteralReplayTests(TestCase):
@@ -125,9 +167,7 @@ class WireLiteralReplayTests(TestCase):
         cls.user.save()
 
     def setUp(self):
-        self.probe, err = run_probe()
-        if self.probe is None:
-            self.skipTest(f"wire probe unavailable: {err}")
+        self.probe = require_probe(self)
         self.factory = APIRequestFactory()
         inv = BookEvent.objects.create(
             invoice_number="WP-1", event_code="WP - AA",
@@ -149,8 +189,14 @@ class WireLiteralReplayTests(TestCase):
         body = json.loads(resp.content)
         self.assertEqual({r["id"] for r in body["results"]}, {self.d.id})
 
-    def test_captured_bulk_update_bodies_have_array_ids(self):
-        for module in ("delegates", "tickets", "events"):
-            body = self.probe["literals"][f"{module}_bulk_update_body"]
-            self.assertIsInstance(body["ids"], list, f"{module} ids not a list")
-            self.assertNotEqual(body["ids"], {}, f"{module} ids serialised to an object")
+    def test_captured_bulk_update_body_has_array_ids(self):
+        body = self.probe["literals"]["delegates_bulk_update_body"]
+        self.assertIsInstance(body["ids"], list, "ids not a list")
+        self.assertNotEqual(body["ids"], {}, "ids serialised to an object")
+        # A commit without plan_hash is how a stale plan gets applied silently.
+        self.assertIn("plan_hash", body)
+
+    def test_count_query_does_not_walk_every_page(self):
+        """A count must cost one row, not ~35k across ~70 requests."""
+        params = self.probe["literals"]["delegates_count_params"]
+        self.assertEqual(params["page_size"], 1, params)

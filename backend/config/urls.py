@@ -13,7 +13,9 @@ from book_event.views import BookEventViewSet
 from book_delegate.views import BookDelegateViewSet
 from teams.views import TeamViewSet as TeamManagementViewSet
 from ticket_central.views import TicketViewSet
-from config.views import GlobalSearchView, DashboardStatsView
+from paper_review.views import PaperReviewViewSet
+from proposal_submission.views import ProposalSubmissionViewSet
+from config.views import GlobalSearchView, DashboardStatsView, DashboardAggregateView
 
 router = DefaultRouter()
 router.register(r"users",     UserViewSet,         basename="users")
@@ -25,6 +27,10 @@ router.register(r"events",    EventViewSet,        basename="events")
 router.register(r"invoices",  BookEventViewSet,    basename="invoices")
 router.register(r"delegates", BookDelegateViewSet, basename="delegates")
 router.register(r"tickets",   TicketViewSet,       basename="tickets")
+router.register(r"proposal-submissions", ProposalSubmissionViewSet,
+                basename="proposal-submissions")
+# The path frontend/src/api/paperReview.js was written against.
+router.register(r"paper-reviews", PaperReviewViewSet, basename="paper-reviews")
 
 urlpatterns = [
     path("admin/",               admin.site.urls),
@@ -36,6 +42,10 @@ urlpatterns = [
     path("api/historical-events/", include("historical_event_registry.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),
+    # GROUP BY aggregates for the Dashboard. Replaces ~350 sequential
+    # fetchAllPages requests the browser used to make to compute these.
+    path("api/stats/dashboard_aggregate/", DashboardAggregateView.as_view(),
+         name="dashboard-aggregate"),
     path("api/auth/token/",       CustomAuthToken.as_view(), name="api-token"),
     path("api/auth/request-otp/", RequestOTPView.as_view(),  name="request-otp"),
     path("api/auth/verify-otp/",  VerifyOTPView.as_view(),   name="verify-otp"),

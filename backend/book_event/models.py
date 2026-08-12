@@ -61,6 +61,8 @@ class BookEvent(models.Model):
     invoice_date    = models.DateField(null=True, blank=True)
     booking_code    = models.CharField(max_length=100, blank=True, default="")
     edition         = models.IntegerField(null=True, blank=True, db_index=True)
+    # See events/models.py for the rationale — one value per load_zoho_export run.
+    import_batch_id = models.UUIDField(null=True, blank=True, db_index=True)
 
     # ── Ownership ──────────────────────────────────────────────────────────────
     sales_executive = models.ForeignKey(

@@ -1,9 +1,13 @@
-import client from "./client";
+// Real backend: /api/google-sync/ (see backend/google_sync/views.py + serializers.py).
+// Field names match this UI's log shape 1:1.
+import { http, fetchAllPages } from './client';
 
-export const googleSyncApi = {
-  logs:   (params) => client.get("/google-sync/logs/",     { params }).then(r => r.data),
-  get:    (id)     => client.get(`/google-sync/logs/${id}/`).then(r => r.data),
-  status: ()       => client.get("/google-sync/status/").then(r => r.data),
-  run:    (body)   => client.post("/google-sync/run/",     body).then(r => r.data),
-  retry:  (id)     => client.post(`/google-sync/retry/${id}/`).then(r => r.data),
-};
+export const list = () => fetchAllPages('google-sync/logs/');
+export const status = () => http.get('google-sync/status/').then((r) => r.data);
+
+export function retry(id) {
+  return http.post(`google-sync/retry/${id}/`, {}).then((r) => r.data);
+}
+export function run(type) {
+  return http.post('google-sync/run/', { sync_type: type }).then((r) => r.data);
+}

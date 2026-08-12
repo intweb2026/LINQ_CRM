@@ -1,15 +1,23 @@
-import client from "./client";
+import { http } from './client';
 
-export const authApi = {
-  login: (username, password) =>
-    client.post("auth/token/", { username, password }).then((r) => r.data),
+// Real backend endpoints — see backend/config/urls.py and accounts/views.py.
+// Token responses do not include a display name, only username/email/role;
+// SessionContext derives `name` from whatever identifier is available.
 
-  requestOtp: (email) =>
-    client.post("auth/request-otp/", { email }).then((r) => r.data),
+export function login({ username, password }) {
+  return http.post('auth/token/', { username, password }).then((r) => r.data);
+}
 
-  verifyOtp: (email, otp) =>
-    client.post("auth/verify-otp/", { email, otp }).then((r) => r.data),
+export function sendCode(email) {
+  return http.post('auth/request-otp/', { email }).then((r) => r.data);
+}
 
-  me: () =>
-    client.get("users/me/").then((r) => r.data).catch(() => null),
-};
+export function verifyCode(email, code) {
+  return http.post('auth/verify-otp/', { email, otp: code }).then((r) => r.data);
+}
+
+// Backend has no server-side logout endpoint (DRF token auth) — token is
+// simply discarded client-side.
+export function logout() {
+  return Promise.resolve();
+}

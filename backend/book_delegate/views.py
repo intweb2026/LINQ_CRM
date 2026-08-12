@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -14,6 +16,8 @@ from .serializers import (
     BookDelegateListSerializer, BookDelegateDetailSerializer, BookDelegateWriteSerializer,
 )
 from .filters import BookDelegateFilter
+
+logger = logging.getLogger(__name__)
 
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -146,19 +150,48 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
         "_sort_invoice", "_sort_status", "_sort_date", "_sort_name", "_sort_request_date",
         "first_name", "last_name", "email", "event_code", "attendance", "created_at",
         "position", "company_name_raw",
+        # Resolved person-level ordering. These are what the table must use for the
+        # five override-backed columns — _sort_status orders by the invoice value and
+        # therefore disagrees with the displayed cell. DRF silently DROPS an ordering
+        # term that is not listed here, which is why they are named explicitly.
+        "_sort_effective_payment_status", "_sort_effective_payment_type",
+        "_sort_effective_paid_or_free", "_sort_effective_ticket_tier",
+        "_sort_effective_payment_date",
     ]
     ordering        = ["-_sort_request_date"]
 
     def get_queryset(self):
         from django.db.models import F, Value
-        from django.db.models.functions import Concat
+        from django.db.models.functions import Coalesce, Concat, NullIf
         qs = BookDelegate.objects.select_related("invoice__sales_executive", "company")
         qs = qs.annotate(
             _sort_invoice=F("invoice__invoice_number"),
+            # NOTE: _sort_status orders by the INVOICE column, which is NOT what the
+            # Payment Status cell displays. Kept because existing callers pass it,
+            # but the table should use _sort_effective_payment_status below.
             _sort_status=F("invoice__payment_status"),
             _sort_date=F("invoice__invoice_date"),
             _sort_request_date=F("invoice__request_date"),
             _sort_name=Concat(F("first_name"), Value(" "), F("last_name")),
+            # ── Ordering over the RESOLVED person-level values ────────────────
+            # Same expression as accounts/filter_spec.py _resolved_expression and
+            # the serializer's effective_* fields:
+            #   COALESCE(NULLIF(<override>, ''), <invoice column>)
+            # Without these, sorting Payment Status ordered by the invoice value
+            # while the cell showed the resolved one, so the header claimed an order
+            # the rows did not have as soon as any delegate carried an override.
+            # See accounts/tests_resolved_ordering.py for the reproduction.
+            _sort_effective_payment_status=Coalesce(
+                NullIf("delegate_payment_status", Value("")), "invoice__payment_status"),
+            _sort_effective_payment_type=Coalesce(
+                NullIf("delegate_payment_type", Value("")), "invoice__payment_type"),
+            _sort_effective_paid_or_free=Coalesce(
+                NullIf("delegate_paid_or_free", Value("")), "invoice__paid_or_free"),
+            _sort_effective_ticket_tier=Coalesce(
+                NullIf("delegate_ticket_tier", Value("")), "invoice__ticket_tier"),
+            # A DateField cannot hold '', so NULLIF would be a type error here.
+            _sort_effective_payment_date=Coalesce(
+                "delegate_payment_date", "invoice__payment_date"),
         )
         return self.rbac_filter_invoice(qs)
 
@@ -178,7 +211,25 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
     @action(detail=False, methods=["post"], url_path="bulk_delete",
             permission_classes=[IsAdminRole])
     def bulk_delete(self, request):
-        """Admin-only: delete up to 1000 delegate records by ID."""
+        """
+        Delete up to 1000 delegate records by ID, RBAC-SCOPED.
+
+        Previously this ran `BookDelegate.objects.filter(id__in=ids)` — the default
+        manager, not the scoped queryset — so any caller who passed the IsAdminRole
+        gate could delete ANY delegate row by guessing its id, regardless of event
+        assignment. IsAdminRole admits HP, any `is_admin` user, and any custom role
+        with is_all_access, so that was wider than the role's read access.
+
+        Resolving through self.get_queryset() routes the deletion through
+        rbac_filter_invoice(), so a caller can only ever delete rows already inside
+        their scope. IDs outside it are silently skipped rather than 403ing the
+        whole batch — the response reports requested vs permitted so a partial
+        delete is visible rather than looking like a success.
+
+        Two-step (ids first, then a clean manager) because get_queryset() carries
+        annotations and select_related, and .delete() on an annotated queryset is
+        not reliable. permitted_ids is already scoped, so scoping is preserved.
+        """
         from accounts.models import ActionLog
         ids = request.data.get("ids", [])
         if not isinstance(ids, list) or not ids:
@@ -186,16 +237,40 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
         if len(ids) > 1000:
             return Response({"detail": "Maximum 1000 IDs per request"}, status=400)
 
+        permitted_ids = list(
+            self.get_queryset().filter(id__in=ids).values_list("id", flat=True)
+        )
+        skipped = len(set(ids)) - len(permitted_ids)
+        if skipped:
+            logger.warning(
+                "bulk_delete: %s requested %d delegate ids, %d were out of scope",
+                request.user.username, len(set(ids)), skipped,
+            )
+        if not permitted_ids:
+            return Response(
+                {"detail": "None of the requested records are in your scope.",
+                 "deleted": 0, "requested": len(ids), "permitted": 0},
+                status=403,
+            )
+
         with transaction.atomic():
-            qs    = BookDelegate.objects.filter(id__in=ids)
+            qs = BookDelegate.objects.filter(id__in=permitted_ids)
             count = qs.count()
             ActionLog.objects.create(
                 user    = request.user,
                 action  = f"Bulk deleted {count} booking delegates",
-                details = f"IDs (first 50): {ids[:50]}",
+                # Full permitted list, not ids[:50]: the audit trail should record
+                # what was actually deleted, not a truncated sample of what was asked.
+                details = (
+                    f"requested={len(ids)} permitted={count} out_of_scope={skipped}\n"
+                    f"ids={sorted(permitted_ids)}"
+                ),
             )
             qs.delete()
-        return Response({"deleted": count})
+        return Response({
+            "deleted": count, "requested": len(ids), "permitted": count,
+            "out_of_scope": skipped,
+        })
 
     @action(detail=True, methods=["patch"], url_path="update_attendance")
     def update_attendance(self, request, pk=None):

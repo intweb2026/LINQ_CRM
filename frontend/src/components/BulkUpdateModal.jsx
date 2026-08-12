@@ -1,0 +1,331 @@
+/**
+ * BulkUpdateModal — mass update: pick one field, set one value, apply to the
+ * selected rows. Drives backend/accounts/bulk_update.py.
+ *
+ * The field list comes entirely from `schema` (the server's bulk_update_schema
+ * response). Nothing about what is editable is hardcoded here — the backend
+ * denies by default, and a field it has not declared must not be offered.
+ *
+ * WHY THE PREVIEW IS NOT OPTIONAL
+ * bulk_update runs preview and commit down the SAME resolution path; `commit`
+ * only decides whether the write block executes. The preview is therefore an
+ * accurate account of what is about to happen, and it is the only place three
+ * things become visible:
+ *
+ *   • `permitted` < `requested`  — rows the caller cannot edit (RBAC scoping)
+ *   • `collateral`               — a parent-group field writes to the shared
+ *                                 invoice, so it also changes rows the user
+ *                                 never selected
+ *   • `side_effects`             — declared model consequences, e.g. setting
+ *                                 delegate_payment_status to Cancelled also
+ *                                 sets delegate_count to 0
+ *
+ * Any of those makes review mandatory. A plain row-scoped change with none of
+ * them stays two clicks (`fastPath`).
+ *
+ * plan_hash: the fingerprint of the plan the user was shown. It is echoed back
+ * on commit and the backend refuses with 409 if the underlying data moved,
+ * handing back the refreshed plan — which this component shows rather than
+ * silently applying a stale one.
+ *
+ * Contract with the caller:
+ *   onPreview(field, value)          -> resolves to the plan object
+ *   onCommit(field, value, planHash) -> resolves to the result, or throws
+ * The caller must NOT raise its own toast; this component owns success and
+ * error messaging so a 409 retry does not double-notify.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Modal from './Modal';
+import { Icon } from '../lib/icons';
+import { nf } from '../lib/helpers';
+import { useToast } from '../context/ToastContext';
+
+// Just the (possibly pluralised) noun. `plur` from lib/helpers returns the count
+// as well, and stripping it back off with a regex breaks the moment nf() inserts
+// a thousands separator ("1,234 delegates").
+function noun(n, label) {
+  return n === 1 ? label : `${label}s`;
+}
+
+export default function BulkUpdateModal({
+  onClose, selectedIds = [], schema, rowLabel = 'record', onPreview, onCommit,
+  // Selection spans loaded rows only — there is no "select all N matching".
+  // Passing the table's totals lets the header say exactly what will be touched
+  // so it cannot be mistaken for the whole filtered set.
+  totalMatching = null,
+}) {
+  const toast = useToast();
+
+  const [step, setStep] = useState('pick');       // 'pick' | 'preview' | 'result'
+  const [field, setField] = useState('');
+  const [value, setValue] = useState('');
+  const [plan, setPlan] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [staleNotice, setStale] = useState('');
+  const [clearing, setClearing] = useState(false); // explicit-null mode
+
+  const fields = useMemo(() => schema?.fields || {}, [schema]);
+  const config = field ? fields[field] : null;
+
+  const { rowFields, parentFields } = useMemo(() => {
+    const row = [], parent = [];
+    Object.entries(fields).forEach(([key, cfg]) => {
+      (cfg.group === 'parent' ? parent : row).push([key, cfg]);
+    });
+    return { rowFields: row, parentFields: parent };
+  }, [fields]);
+
+  const bothGroups = rowFields.length > 0 && parentFields.length > 0;
+
+  // Re-price the plan whenever field or value changes. Previewing with NO value
+  // is valid and useful — the distribution of current values does not depend on
+  // the target, so "what am I about to overwrite?" renders the moment a field is
+  // picked. no_op and side_effects only arrive once a value is chosen.
+  useEffect(() => {
+    if (!field || !config) return undefined;
+    // Never call the endpoint with an empty selection: a caller whose handler is
+    // not memoised re-fires this effect on every parent render, and after a
+    // commit clears the selection that would post ids:[] and get back
+    // {"detail":"ids list required"}.
+    if (!selectedIds.length) { setPlan(null); return undefined; }
+    // undefined => omit the key entirely (preview with no target chosen).
+    // null      => explicit clear, only offered on nullable fields.
+    const outgoing = clearing ? null : (value !== '' && value != null ? value : undefined);
+    let cancelled = false;
+    setBusy(true); setError('');
+    Promise.resolve(onPreview(field, outgoing))
+      .then((p) => { if (!cancelled) setPlan(p); })
+      .catch((err) => {
+        if (!cancelled) setError(err?.response?.data?.detail || 'Could not preview this change.');
+      })
+      .finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+    // selectedIds.LENGTH, not the array: callers build it with [...set], a new
+    // reference every render, which would re-fire this effect continuously.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field, value, clearing, config, onPreview, selectedIds.length]);
+
+  const pickField = useCallback((key) => {
+    setField(key); setPlan(null); setError(''); setValue(''); setClearing(false);
+  }, []);
+
+  const valueChosen = clearing || (value !== '' && value != null);
+  const hasSideEffects = (plan?.side_effects?.length || 0) > 0;
+  const hasCollateral = (plan?.collateral?.count || 0) > 0;
+  const isParent = config?.group === 'parent';
+
+  const fastPath = !!plan && valueChosen && !isParent
+    && plan.permitted === plan.requested && !hasSideEffects && !hasCollateral;
+
+  async function doCommit() {
+    setBusy(true); setError(''); setStale('');
+    try {
+      const res = await onCommit(field, clearing ? null : value, plan.plan_hash);
+      setResult(res);
+      setStep('result');
+      toast(`Updated ${nf(res.updated)} ${noun(res.updated, rowLabel)}`, 'ok');
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        setPlan(err.response.data);
+        setStep('preview');
+        setStale('The underlying data changed since this plan was generated. Review the refreshed numbers and confirm again.');
+      } else {
+        setError(err?.response?.data?.detail || 'Bulk update failed.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const fieldList = (entries) => (
+    <div className="bu-fl">
+      {entries.map(([key, cfg]) => (
+        <label className={'pop-i' + (field === key ? ' on' : '')} key={key}>
+          <input type="radio" name="bulk-field" checked={field === key} onChange={() => pickField(key)} />
+          {cfg.label || key}
+        </label>
+      ))}
+    </div>
+  );
+
+  const distribution = plan && Object.keys(plan.distribution || {}).length > 0 ? (
+    <div className="bu-dist">
+      Currently:{' '}
+      {Object.entries(plan.distribution)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `${nf(n)} ${k === 'null' || k === null ? '(none)' : k}`)
+        .join(' · ')}
+    </div>
+  ) : null;
+
+  const pickBody = (
+    <div>
+      <div className="bu-sel">
+        {nf(selectedIds.length)} {noun(selectedIds.length, rowLabel)} selected
+        {totalMatching != null && totalMatching > selectedIds.length ? (
+          <> — <b>not</b> all {nf(totalMatching)} matching records. Only what you selected will change.</>
+        ) : null}
+      </div>
+
+      {!bothGroups ? fieldList(rowFields.length ? rowFields : parentFields) : (
+        <>
+          <div className="bu-sec">Per-{rowLabel} fields</div>
+          <div className="bu-hint">Affects exactly the {nf(selectedIds.length)} rows you selected.</div>
+          {fieldList(rowFields)}
+          <div className="bu-sec bu-sec-d">Shared fields</div>
+          <div className="bu-hint bu-hint-d">
+            {hasCollateral
+              ? `Writes to the shared invoice — also changes ${nf(plan.collateral.count)} row(s) you did not select.`
+              : 'Writes to the shared invoice — may change rows you did not select.'}
+          </div>
+          {fieldList(parentFields)}
+        </>
+      )}
+
+      {config ? (
+        <div className="bu-val">
+          <div className="bu-sec">New value</div>
+          {config.type === 'boolean' ? (
+            /* Sent as the strings "true"/"false"; the backend coerces to a real
+               bool so a BooleanField never receives the truthy string "false". */
+            <select className="in" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing}>
+              <option value="">Choose a value…</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          ) : config.type === 'choice' ? (
+            <select className="in" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing}>
+              <option value="">Choose a value…</option>
+              {(config.choices || []).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : config.type === 'date' ? (
+            <input className="in" type="date" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
+          ) : (
+            <input className="in" type="text" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
+          )}
+
+          {/* Only nullable fields can be emptied; the backend rejects a null on
+              anything else, so don't offer it. */}
+          {config.nullable ? (
+            <label className="bu-clear">
+              <input type="checkbox" checked={clearing} onChange={(e) => { setClearing(e.target.checked); setValue(''); }} />
+              Clear this field instead (revert to the invoice's value)
+            </label>
+          ) : null}
+
+          {distribution}
+          {fastPath ? (
+            <div className="bu-dist">
+              {plan.no_op > 0
+                ? `${nf(plan.permitted - plan.no_op)} will change · ${nf(plan.no_op)} already ${value}`
+                : `All ${nf(plan.permitted)} will change.`}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {error ? <div className="vr er"><Icon name="warn" size={15} /><span>{error}</span></div> : null}
+    </div>
+  );
+
+  const previewBody = plan ? (
+    <div className="bu-prev">
+      {staleNotice ? <div className="vr wn"><Icon name="warn" size={15} /><span>{staleNotice}</span></div> : null}
+
+      <div className="bu-set">
+        Setting <b>{config?.label || field}</b> to <b>{clearing ? '(cleared)' : String(value)}</b>
+      </div>
+
+      {/* no_op is absent from a value-less preview; preview is only reachable
+          with a value, but guard so a 409 refresh can never render NaN. */}
+      <ul className="bu-list">
+        <li>{nf(plan.requested)} selected</li>
+        <li>{nf(plan.permitted - (plan.no_op ?? 0))} will change</li>
+        <li>{nf(plan.no_op ?? 0)} already {clearing ? 'empty' : String(value)}</li>
+        {plan.requested > plan.permitted ? (
+          <li className="bu-d">{nf(plan.requested - plan.permitted)} not editable by you</li>
+        ) : null}
+      </ul>
+
+      {hasSideEffects ? (
+        <div className="vr wn bu-warn">
+          <Icon name="warn" size={15} />
+          <span>{plan.side_effects.join(' · ')}</span>
+        </div>
+      ) : null}
+
+      {hasCollateral ? (
+        <div className="vr er bu-warn">
+          <Icon name="warn" size={15} />
+          <div>
+            <b>
+              {nf(plan.collateral.count)} {noun(plan.collateral.count, rowLabel)} you
+              did not select will also change
+              {plan.collateral.hidden_count > 0
+                ? ` — ${plan.collateral.sample.length} shown, ${nf(plan.collateral.hidden_count)} on records outside your access`
+                : ''}
+            </b>
+            {plan.collateral.sample.map((c) => (
+              <div className="bu-coll" key={c.id}>{c.label}{c.parent ? ` — ${c.parent}` : ''}</div>
+            ))}
+            {plan.collateral.overflow > 0 ? (
+              <div className="bu-coll">…and {nf(plan.collateral.overflow)} more you can see</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {error ? <div className="vr er"><Icon name="warn" size={15} /><span>{error}</span></div> : null}
+    </div>
+  ) : null;
+
+  const resultBody = result ? (
+    <div className="bu-prev">
+      Updated <b>{nf(result.updated)}</b> {noun(result.updated, rowLabel)}.
+      {result.no_op > 0 ? (
+        <div className="bu-dist">{nf(result.no_op)} already held that value and were left alone.</div>
+      ) : null}
+    </div>
+  ) : null;
+
+  let footer;
+  if (step === 'pick') {
+    const changing = plan ? plan.permitted - (plan.no_op ?? 0) : 0;
+    footer = (
+      <>
+        <button className="btn btn-s" onClick={onClose}>Cancel</button>
+        <button className="btn btn-p" disabled={!plan || !valueChosen || busy}
+          onClick={() => (fastPath ? doCommit() : setStep('preview'))}>
+          {busy ? 'Working…' : fastPath ? `Apply to ${nf(changing)} ${noun(changing, rowLabel)}` : 'Review changes →'}
+        </button>
+      </>
+    );
+  } else if (step === 'preview') {
+    footer = (
+      <>
+        <button className="btn btn-s" onClick={() => setStep('pick')}>← Back</button>
+        <button className={'btn ' + (hasCollateral ? 'btn-d' : 'btn-p')} disabled={busy} onClick={doCommit}>
+          {busy ? 'Applying…' : 'Apply'}
+        </button>
+      </>
+    );
+  } else {
+    footer = <button className="btn btn-p" onClick={onClose}>Done</button>;
+  }
+
+  return (
+    <Modal
+      size="mdw"
+      onClose={onClose}
+      title={step === 'result' ? 'Mass update complete'
+        : `Update ${nf(selectedIds.length)} ${noun(selectedIds.length, rowLabel)}`}
+      footer={footer}
+    >
+      {step === 'pick' ? pickBody : null}
+      {step === 'preview' ? previewBody : null}
+      {step === 'result' ? resultBody : null}
+    </Modal>
+  );
+}

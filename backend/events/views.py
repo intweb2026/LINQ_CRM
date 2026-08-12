@@ -595,11 +595,16 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             except Exception as exc:
                 errors.append({"row_index": i, "event_code": event_code, "message": str(exc)})
 
-        # Send alert email for any auto-generated fields
-        if auto_gen_rows:
+        # Send alert email for any auto-generated fields.
+        #
+        # Gated on IMPORT_ALERT_EMAILS_ENABLED, which defaults False — see the
+        # matching guard in book_event/views.py and the rationale on the setting
+        # itself. This fires once per CALL, so a chunked import of events missing a
+        # code / name / date would otherwise send one message per chunk.
+        from django.conf import settings as django_settings
+        if auto_gen_rows and django_settings.IMPORT_ALERT_EMAILS_ENABLED:
             try:
                 from django.core.mail import send_mail
-                from django.conf import settings as django_settings
                 recipient = getattr(django_settings, "IMPORT_ALERT_EMAIL", "harrison.peck@iq-hub.com")
                 lines = []
                 for entry in auto_gen_rows:

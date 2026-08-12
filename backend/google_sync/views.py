@@ -22,7 +22,7 @@ from .services import SyncOrchestrator
 
 logger = logging.getLogger("book_event")
 
-VALID_SYNC_TYPES = {"bookings", "events", "full_sync"}
+VALID_SYNC_TYPES = {"bookings", "events", "full_sync", "crm_mirror"}
 
 
 class GoogleSyncLogViewSet(viewsets.ReadOnlyModelViewSet):

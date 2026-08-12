@@ -5,6 +5,15 @@ backend/CREDENTIALS.md
 CREDENTIALS.md
 credentials.json
 **/credentials.json
+# GOOGLE_CREDS_PATH defaults to credentials.json (book_event/management/commands/
+# sync_bookings_from_sheets.py); token.* is what an OAuth flow writes back beside
+# it, and a refresh token is as sensitive as the client secret.
+token.json
+token.pickle
+# Every .md file, repo-wide, and deliberately so — this repo tracks no markdown
+# at all, which is what keeps a CREDENTIALS.md or a pasted-in dump of connection
+# strings from being committed by reflex. A doc that genuinely belongs in git
+# needs `git add -f`.
 *.md
 *.pem
 *.key
@@ -12,12 +21,13 @@ credentials.json
 service-account*.json
 
 # ── Environment Variables ───────────────────────────────────────────────────
+# .env* rather than a list of suffixes: settings.py reads config via
+# python-decouple/dotenv, and the previous rules covered .env and .env*.local
+# but NOT .env.production or .env.staging — the two most costly to leak.
 .env
-.env.local
-.env.*.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!.env.sample
 
 # ── Dependency Checks ───────────────────────────────────────────────────────
 backend/.deps_check/
@@ -33,8 +43,17 @@ env/
 .Python
 
 # Django
+# Machine-local settings overrides, which is where a local DB password ends up.
+local_settings.py
 db.sqlite3
 db.sqlite3-journal
+db.sqlite3-shm
+db.sqlite3-wal
+*.sqlite3
+# Collected static and uploaded media are both generated. NOTE: the rule is
+# `staticfiles/`, never `static/` — frontend/public/static holds real committed
+# logo assets, and react-scripts' own output lands in frontend/build/static,
+# which `build/` below already covers.
 staticfiles/
 media/
 *.log
@@ -42,6 +61,7 @@ media/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 .tox/
@@ -53,20 +73,32 @@ MANIFEST
 
 # Generated reports (not source data)
 backend/*.csv
+backend/*.xlsx
 
 # ── Node / React ─────────────────────────────────────────────────────────────
 node_modules/
 build/
-dist/
 .pnp
 .pnp.js
+.eslintcache
+coverage/
+*.tgz
 
 # Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
-frontend/*.log
+
+# ── Browser tests ────────────────────────────────────────────────────────────
+# frontend/tests/*.mjs and the @playwright/test dependency were removed — they
+# were one-off debugging harnesses for already-fixed bugs, run by nothing. These
+# rules stay so an ad-hoc Playwright run's large, regenerated artefacts (which
+# land in the repo root or frontend/ by default) still cannot be committed.
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # ── IDE & Editor ─────────────────────────────────────────────────────────────
 .vscode/
@@ -82,6 +114,13 @@ frontend/*.log
 .settings/
 .claude/
 
+# Scratch, backup and merge leftovers
+*.bak
+*.orig
+*.rej
+*.tmp
+*~
+
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
 .DS_Store?
@@ -91,8 +130,7 @@ frontend/*.log
 Thumbs.db
 ehthumbs.db
 desktop.ini
-
-
-backend/db.sqlite3
-backend/db.sqlite3-shm
-backend/db.sqlite3-wal
+$RECYCLE.BIN/
+# A file literally named `nul`, which Windows creates when a command redirects
+# to NUL from a POSIX shell (`… > /dev/null` is the portable form here).
+nul

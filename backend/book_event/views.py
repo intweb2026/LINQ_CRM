@@ -176,15 +176,24 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         del_qs = BookDelegate.objects.filter(invoice__in=qs)
 
         # Booking-code matchers (applied on BookEvent fields).
-        # SpEx  : contains "spex" OR exactly "Add-Ons"
-        # Speaker: contains "speaker" OR contains "spp"
-        #          Hybrid codes (e.g. "Speaker / SLV SpEx") match BOTH — intentional.
-        SPEX_Q    = Q(booking_code__icontains="spex") | Q(booking_code__iexact="Add-Ons")
-        SPEAKER_Q = Q(booking_code__icontains="speaker") | Q(booking_code__icontains="spp")
+        # SpEx  : marker "spex" OR exactly "Add-Ons"
+        # Speaker: marker "speaker" OR "spp"
+        #          Hybrid codes (e.g. "Speaker / SLV SpEx") match BOTH — intentional,
+        #          and preserved: these two predicates deliberately overlap.
+        #
+        # Matching is now BOUNDARY-ANCHORED and the marker lists live in settings —
+        # see book_event/booking_code.py. Previously these were raw `icontains`, so
+        # any code merely CONTAINING "spp" ("SUPPLEMENT", a supplier ref) counted as
+        # speaker sales and nothing surfaced it. Same rule as the event-code
+        # resolver, single-sourced from its boundary_regex.
+        from book_event.booking_code import spex_q, speaker_q
+
+        SPEX_Q    = spex_q("booking_code")
+        SPEAKER_Q = speaker_q("booking_code")
 
         # Delegate-level equivalents (prefix with invoice__ for BookDelegate querysets)
-        INV_SPEX_Q    = Q(invoice__booking_code__icontains="spex") | Q(invoice__booking_code__iexact="Add-Ons")
-        INV_SPEAKER_Q = Q(invoice__booking_code__icontains="speaker") | Q(invoice__booking_code__icontains="spp")
+        INV_SPEX_Q    = spex_q("invoice__booking_code")
+        INV_SPEAKER_Q = speaker_q("invoice__booking_code")
 
         # For individual KPI cards, scope to the rep's own attributed bookings.
         # SpEx / Speaker Sales attribution comes from the event's team string fields
@@ -687,6 +696,12 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         from collections import defaultdict
         invoice_email_seen = defaultdict(int)
 
+        # Built ONCE for the whole batch, not per row: it loads every user into
+        # dictionaries and answers from memory, where the old inline chain issued
+        # up to five queries per row.
+        from accounts.user_resolution import UserResolver
+        _resolver = UserResolver()
+
         for i, row in enumerate(rows):
             event_code_val = _clean(row, "event_code")   # empty is allowed — never skip
 
@@ -708,11 +723,19 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                     from decimal import Decimal
                     from django.utils import timezone
 
-                    # Parse new fields for the row
-                    try:
-                        edition_val = int(row.get("edition")) if row.get("edition") else None
-                    except (ValueError, TypeError):
-                        edition_val = None
+                    # Parse new fields for the row.
+                    #
+                    # edition goes through parse_edition, which BOUNDS it to a
+                    # plausible year. Previously this was a bare int(), and since
+                    # `edition` is an IntegerField an Excel serial like 45678
+                    # raised nothing and was stored verbatim as a 45,678th
+                    # edition. Out-of-range now ERRORS the row rather than
+                    # writing nonsense — same rule the loader applies.
+                    from accounts.import_common import parse_edition
+
+                    edition_val, _edition_err = parse_edition(row.get("edition"))
+                    if _edition_err:
+                        raise ValueError(f"edition: {_edition_err}")
 
                     try:
                         discount_val = Decimal(str(row.get("discount") or "0.00").strip() or "0.00")
@@ -772,30 +795,18 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
 
                     else:
                         # New BookEvent
-                        sales_exec = None
+                        # EXACT resolution only — email, then username (including
+                        # the "first.last" convention), then exact full name.
+                        #
+                        # The previous chain ended in first_name__icontains +
+                        # last_name__icontains and took .first(). Substring name
+                        # matching attributes a booking to the wrong person ("Ana"
+                        # matches "Anastasia") and, where several users matched,
+                        # the winner was whichever row the database happened to
+                        # return. Misses are now COUNTED on the resolver and
+                        # reported in the response, not left as a silent NULL.
                         se_name = _clean(row, "sales_executive")
-                        if se_name:
-                            from accounts.models import User
-                            _parts = se_name.split()
-                            sales_exec = (
-                                # Full name: first + last exact (handles "Victor Venegas")
-                                (User.objects.filter(
-                                    first_name__iexact=_parts[0],
-                                    last_name__iexact=" ".join(_parts[1:]),
-                                ).first() if len(_parts) >= 2 else None)
-                                # Partial: first icontains + last icontains
-                                or (User.objects.filter(
-                                    first_name__icontains=_parts[0],
-                                    last_name__icontains=_parts[-1],
-                                ).first() if len(_parts) >= 2 else None)
-                                # username with dots ("victor.venegas")
-                                or User.objects.filter(
-                                    username__iexact=se_name.replace(" ", ".").lower()
-                                ).first()
-                                # Single-word fallback: first or last name
-                                or User.objects.filter(first_name__iexact=se_name).first()
-                                or User.objects.filter(last_name__iexact=se_name).first()
-                            )
+                        sales_exec, _ = _resolver.resolve(se_name)
                         try:
                             dc = max(1, int(row.get("delegate_count") or 1))
                         except (ValueError, TypeError):
@@ -848,11 +859,18 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             except Exception as exc:
                 errors.append({"row_index": i, "invoice_number": inv_no, "message": str(exc)})
 
-        # Send alert email for any auto-generated invoice numbers
-        if auto_inv_rows:
+        # Send alert email for any auto-generated invoice numbers.
+        #
+        # Gated on IMPORT_ALERT_EMAILS_ENABLED, which defaults False. This fires
+        # once per CALL, and the browser chunks an import at 500 rows per call, so
+        # a large load would otherwise deliver one message per chunk containing a
+        # row with no invoice number. The settings read is deliberately inside the
+        # branch and via django.conf.settings so the flag can be toggled without a
+        # restart. See config/settings.py:IMPORT_ALERT_EMAILS_ENABLED.
+        from django.conf import settings as django_settings
+        if auto_inv_rows and django_settings.IMPORT_ALERT_EMAILS_ENABLED:
             try:
                 from django.core.mail import send_mail
-                from django.conf import settings as django_settings
                 recipient = getattr(django_settings, "IMPORT_ALERT_EMAIL", "harrison.peck@iq-hub.com")
                 lines = []
                 for entry in auto_inv_rows:
@@ -885,6 +903,10 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             "batch_number":       batch_number,
             "inserted":           inserted,
             "skipped_duplicates": skipped,
+            # Every name on a booking is expected to correspond to a real
+            # account, so a rate materially below 1.0 is a defect to chase, not
+            # missing data. Surfaced rather than left as silent NULLs.
+            "sales_executive_resolution": _resolver.report(limit=25),
             "errors":             errors[:20],
             "skipped_rows":       skipped_rows,
         })
