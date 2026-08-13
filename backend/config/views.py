@@ -4,16 +4,15 @@ config/views.py
 Global search + dashboard stats — RBAC-scoped per user role.
 """
 from collections import Counter
-from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce
-from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts import period_filter
 from book_delegate.models import BookDelegate
 from book_delegate.serializers import BookDelegateListSerializer
 from book_event.models import BookEvent
@@ -31,29 +30,12 @@ def _event_codes(user):
     return user.assigned_event_codes() or []
 
 
-# ── Dashboard period windows ─────────────────────────────────────────────────
-#
-# Windows are ROLLING and INCLUSIVE OF TODAY: "last 7 days" is today plus the
-# six days before it. The keys state the window LENGTH rather than a calendar
-# unit, deliberately. book_event/views.py already ships a "month"/"year"
-# vocabulary meaning "the current calendar month / year to date"; a second
-# vocabulary where "last_month" meant a rolling 30 days would put two different
-# answers behind labels a reader cannot tell apart. Every response echoes the
-# resolved `from`/`to` dates so the window is never in doubt.
-PERIOD_DAYS = {
-    "all": None,
-    "last_7_days": 7,
-    "last_30_days": 30,
-    "last_12_months": 365,
-}
-
-
-def period_window(period, today):
-    """(from_date, to_date) for a period key — (None, None) for "all"."""
-    days = PERIOD_DAYS[period]
-    if days is None:
-        return None, None
-    return today - timedelta(days=days - 1), today
+# The date-range vocabulary is shared with every list endpoint that offers the
+# same presets — see accounts/period_filter.py for the keys, the rolling-window
+# rule and why it is not a filter_spec criterion. Re-exported here because this
+# module's name is what the dashboard tests and callers already import.
+PERIOD_DAYS = period_filter.PERIOD_DAYS
+period_window = period_filter.period_window
 
 
 class GlobalSearchView(APIView):
