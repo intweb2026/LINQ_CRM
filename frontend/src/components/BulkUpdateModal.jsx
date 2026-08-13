@@ -47,6 +47,22 @@ function noun(n, label) {
   return n === 1 ? label : `${label}s`;
 }
 
+// Above this many fields the picker gets a search box. Bookings declares 46
+// across both groups and Events 34: a bare radio list that long is a scroll hunt.
+const SEARCH_THRESHOLD = 8;
+
+// The server sends the distribution keyed by str(value), so a BooleanField
+// arrives as Python's "True"/"False" while the picker offers Yes/No. Showing
+// both spellings for one column reads as two different things.
+function display(value, config) {
+  if (value === null || value === 'null' || value === '') return '(none)';
+  if (config?.type !== 'boolean') return String(value);
+  const s = String(value);
+  if (s === 'True' || s === 'true') return 'Yes';
+  if (s === 'False' || s === 'false') return 'No';
+  return s;
+}
+
 export default function BulkUpdateModal({
   onClose, selectedIds = [], schema, rowLabel = 'record', onPreview, onCommit,
   // Selection spans loaded rows only — there is no "select all N matching".
@@ -65,6 +81,7 @@ export default function BulkUpdateModal({
   const [error, setError] = useState('');
   const [staleNotice, setStale] = useState('');
   const [clearing, setClearing] = useState(false); // explicit-null mode
+  const [query, setQuery] = useState('');          // field-picker search
 
   const fields = useMemo(() => schema?.fields || {}, [schema]);
   const config = field ? fields[field] : null;
@@ -78,6 +95,16 @@ export default function BulkUpdateModal({
   }, [fields]);
 
   const bothGroups = rowFields.length > 0 && parentFields.length > 0;
+  const searchable = Object.keys(fields).length > SEARCH_THRESHOLD;
+
+  // Matched on the label AND the column name: a rep searches "payment", a
+  // developer reading a bug report searches "delegate_payment_status".
+  const matches = useCallback((entries) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter(([key, cfg]) =>
+      key.toLowerCase().includes(q) || (cfg.label || '').toLowerCase().includes(q));
+  }, [query]);
 
   // Re-price the plan whenever field or value changes. Previewing with NO value
   // is valid and useful — the distribution of current values does not depend on
@@ -139,26 +166,38 @@ export default function BulkUpdateModal({
     }
   }
 
-  const fieldList = (entries) => (
-    <div className="bu-fl">
-      {entries.map(([key, cfg]) => (
-        <label className={'pop-i' + (field === key ? ' on' : '')} key={key}>
-          <input type="radio" name="bulk-field" checked={field === key} onChange={() => pickField(key)} />
-          {cfg.label || key}
-        </label>
-      ))}
-    </div>
-  );
+  const fieldList = (entries) => {
+    const shown = matches(entries);
+    if (!shown.length) {
+      return <div className="bu-hint bu-none">No field here matches “{query}”.</div>;
+    }
+    return (
+      <div className="bu-fl">
+        {shown.map(([key, cfg]) => (
+          <label className={'pop-i' + (field === key ? ' on' : '')} key={key}>
+            <input type="radio" name="bulk-field" checked={field === key} onChange={() => pickField(key)} />
+            {cfg.label || key}
+          </label>
+        ))}
+      </div>
+    );
+  };
 
-  const distribution = plan && Object.keys(plan.distribution || {}).length > 0 ? (
-    <div className="bu-dist">
-      Currently:{' '}
-      {Object.entries(plan.distribution)
-        .sort((a, b) => b[1] - a[1])
-        .map(([k, n]) => `${nf(n)} ${k === 'null' || k === null ? '(none)' : k}`)
-        .join(' · ')}
-    </div>
-  ) : null;
+  // Capped: a text column across 1000 rows can hold 1000 distinct values, and
+  // the full list would bury the counts that matter. The tail is summed rather
+  // than dropped, so the numbers still add up to the selection.
+  const distribution = plan && Object.keys(plan.distribution || {}).length > 0 ? (() => {
+    const all = Object.entries(plan.distribution).sort((a, b) => b[1] - a[1]);
+    const head = all.slice(0, 6);
+    const rest = all.slice(6).reduce((n, [, count]) => n + count, 0);
+    return (
+      <div className="bu-dist">
+        Currently:{' '}
+        {head.map(([k, n]) => `${nf(n)} ${display(k, config)}`).join(' · ')}
+        {rest > 0 ? ` · ${nf(rest)} across ${all.length - head.length} other values` : ''}
+      </div>
+    );
+  })() : null;
 
   const pickBody = (
     <div>
@@ -168,6 +207,16 @@ export default function BulkUpdateModal({
           <> — <b>not</b> all {nf(totalMatching)} matching records. Only what you selected will change.</>
         ) : null}
       </div>
+
+      {searchable ? (
+        <input
+          className="in bu-search"
+          type="search"
+          value={query}
+          placeholder="Search fields…"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      ) : null}
 
       {!bothGroups ? fieldList(rowFields.length ? rowFields : parentFields) : (
         <>
@@ -202,16 +251,44 @@ export default function BulkUpdateModal({
             </select>
           ) : config.type === 'date' ? (
             <input className="in" type="date" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
+          ) : config.type === 'integer' || config.type === 'decimal' ? (
+            /* min/max/step come from the schema, which reads them off the model's
+               own validators and decimal_places. They are a keyboard convenience
+               only — the backend re-checks every one of them, since a number
+               input accepts pasted text and can be bypassed entirely. */
+            <input
+              className="in"
+              type="number"
+              value={value}
+              min={config.min}
+              max={config.max}
+              step={config.type === 'integer' ? 1
+                : (config.decimal_places ? 10 ** -config.decimal_places : 'any')}
+              onChange={(e) => setValue(e.target.value)}
+              disabled={clearing}
+            />
           ) : (
-            <input className="in" type="text" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
+            <input
+              className="in"
+              type="text"
+              value={value}
+              maxLength={config.max_length}
+              onChange={(e) => setValue(e.target.value)}
+              disabled={clearing}
+            />
           )}
 
           {/* Only nullable fields can be emptied; the backend rejects a null on
-              anything else, so don't offer it. */}
+              anything else, so don't offer it. Bookings is the only resource
+              where clearing means "inherit" — everywhere else the column is
+              simply emptied, and saying "the invoice's value" there would be
+              wrong. */}
           {config.nullable ? (
             <label className="bu-clear">
               <input type="checkbox" checked={clearing} onChange={(e) => { setClearing(e.target.checked); setValue(''); }} />
-              Clear this field instead (revert to the invoice's value)
+              {isParent || field.startsWith('delegate_')
+                ? "Clear this field instead (revert to the invoice's value)"
+                : 'Clear this field instead (leave it empty)'}
             </label>
           ) : null}
 
@@ -219,7 +296,7 @@ export default function BulkUpdateModal({
           {fastPath ? (
             <div className="bu-dist">
               {plan.no_op > 0
-                ? `${nf(plan.permitted - plan.no_op)} will change · ${nf(plan.no_op)} already ${value}`
+                ? `${nf(plan.permitted - plan.no_op)} will change · ${nf(plan.no_op)} already ${display(value, config)}`
                 : `All ${nf(plan.permitted)} will change.`}
             </div>
           ) : null}
@@ -235,7 +312,7 @@ export default function BulkUpdateModal({
       {staleNotice ? <div className="vr wn"><Icon name="warn" size={15} /><span>{staleNotice}</span></div> : null}
 
       <div className="bu-set">
-        Setting <b>{config?.label || field}</b> to <b>{clearing ? '(cleared)' : String(value)}</b>
+        Setting <b>{config?.label || field}</b> to <b>{clearing ? '(cleared)' : display(value, config)}</b>
       </div>
 
       {/* no_op is absent from a value-less preview; preview is only reachable
@@ -243,7 +320,7 @@ export default function BulkUpdateModal({
       <ul className="bu-list">
         <li>{nf(plan.requested)} selected</li>
         <li>{nf(plan.permitted - (plan.no_op ?? 0))} will change</li>
-        <li>{nf(plan.no_op ?? 0)} already {clearing ? 'empty' : String(value)}</li>
+        <li>{nf(plan.no_op ?? 0)} already {clearing ? 'empty' : display(value, config)}</li>
         {plan.requested > plan.permitted ? (
           <li className="bu-d">{nf(plan.requested - plan.permitted)} not editable by you</li>
         ) : null}

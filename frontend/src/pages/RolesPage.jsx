@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PageHead } from '../components/UI';
 import { Icon } from '../lib/icons';
 import { Av } from '../components/Badge';
@@ -6,6 +6,7 @@ import { CRM_MODULES } from '../lib/constants';
 import * as rolesApi from '../api/roles';
 import * as usersApi from '../api/users';
 import { useFetch } from '../hooks/useFetch';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import RoleDrawer from './roles/RoleDrawer';
@@ -13,13 +14,32 @@ import RoleEditModal from './roles/RoleEditModal';
 
 export default function RolesPage() {
   const { canView, can } = useSession();
-  const { data: roles, refetch } = useFetch(rolesApi.list, [], { initialData: [] });
-  const { data: rolePerms } = useFetch(rolesApi.permissions, [], { initialData: {} });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
+  const { data: roles, refetchQuiet: reloadRoles } = useFetch(rolesApi.list, [], { initialData: [] });
+  const { data: rolePerms, refetchQuiet: reloadPerms } = useFetch(rolesApi.permissions, [], { initialData: {} });
+  const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
   const CUSTOM_ROLES = roles || [];
   const ROLE_PERMS = rolePerms || {};
   const USERS = users || [];
-  const refresh = () => refetch();
+  /**
+   * The matrix as well as the list.
+   *
+   * Editing a role changes its PERMISSIONS, which live in `rolePerms` — refetching
+   * only `roles` left the module chips on every card, and the grid the edit modal
+   * opens with next time, showing what the role held BEFORE the save. The change
+   * had gone through; the page just never asked for it again. Sequential, because
+   * rolesApi keeps a module-level cache that list() repopulates — permissions()
+   * reads that cache, so running the two in parallel can rebuild the matrix from
+   * the copy the save has just invalidated.
+   *
+   * The holder count on each card comes from `users`, so that reloads too.
+   */
+  const { refreshNow: refresh } = useLiveData(
+    useCallback(
+      () => reloadRoles().then(() => { reloadPerms(); reloadUsers(); }),
+      [reloadRoles, reloadPerms, reloadUsers],
+    ),
+    { resources: ['roles', 'users'] },
+  );
   const [drawerRole, setDrawerRole] = useState(null);
   const [editRole, setEditRole] = useState(undefined); // undefined = closed, null = create new, object = edit
 
@@ -33,7 +53,13 @@ export default function RolesPage() {
         {CUSTOM_ROLES.map((r) => {
           const p = ROLE_PERMS[r.name] || {};
           const modsOn = CRM_MODULES.filter((mo) => p[mo.k] && p[mo.k].view);
-          const members = USERS.filter((u) => u.role === r.name);
+          // Who HOLDS this role is `custom_role_id`, the same FK the backend
+          // counts for user_count. Matching on `u.role` compared a CustomRole's
+          // key against the legacy job-function enum, so the two halves of this
+          // footer disagreed: the count said 6 and the avatars showed 2, because
+          // the seeded roles share their names and the live rows have since
+          // drifted apart. A role named anything else showed no avatars at all.
+          const members = USERS.filter((u) => u.custom_role_id === r.id);
           return (
             <div className="rcd" key={r.id} onClick={() => setDrawerRole(r)}>
               <div className="rcd-b" style={{ background: r.color }} />

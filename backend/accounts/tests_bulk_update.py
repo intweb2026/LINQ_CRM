@@ -354,3 +354,139 @@ class BulkUpdateMixinTests(TestCase):
         self.assertEqual(r.data["max"], 5)
         self.assertEqual(r.data["label"], "delegates")
         self.assertTrue(r.data["parent_enabled"])
+
+
+# ── The registry builder ──────────────────────────────────────────────────────
+
+class BuildBulkUpdateFieldsTests(TestCase):
+    """
+    build_bulk_update_fields derives the registry from a model's own columns.
+    Deny-by-default still holds: it emits only concrete, editable, writable
+    columns, and everything unmapped is dropped rather than guessed at.
+    """
+
+    def _build(self, **kw):
+        from accounts.bulk_update import build_bulk_update_fields
+        return build_bulk_update_fields(BookDelegate, **kw)
+
+    def test_default_excludes_drop_surrogate_and_provenance_columns(self):
+        fields = self._build()
+        for name in ("id", "created_at", "updated_at", "import_batch_id"):
+            self.assertNotIn(name, fields)
+
+    def test_relations_and_unmapped_types_are_skipped_not_guessed(self):
+        """
+        A ForeignKey needs a picker the modal does not have, and a UUID/JSON
+        column has no scalar input. Emitting them wrongly typed would be worse
+        than not offering them.
+        """
+        fields = self._build()
+        self.assertNotIn("invoice", fields)
+        self.assertNotIn("company", fields)
+
+    def test_nullable_mirrors_null_true(self):
+        fields = self._build()
+        self.assertTrue(fields["delegate_payment_date"]["nullable"])
+        self.assertNotIn("nullable", fields["position"])
+
+    def test_model_choices_become_a_choice_field(self):
+        fields = self._build()
+        self.assertEqual(fields["attendance"]["type"], "choice")
+        self.assertEqual(fields["attendance"]["choices"],
+                         list(BookDelegate.Attendance.values))
+
+    def test_supplied_choices_turn_a_bare_charfield_into_a_choice_field(self):
+        """
+        The delegate_* overrides carry no choices= of their own; the ViewSet
+        supplies the BookEvent enum each one shadows.
+        """
+        fields = self._build(choices={"delegate_payment_type": ["Stripe", "Bank"]})
+        self.assertEqual(fields["delegate_payment_type"]["type"], "choice")
+        self.assertEqual(fields["delegate_payment_type"]["choices"], ["Stripe", "Bank"])
+
+    def test_text_carries_its_max_length_and_decimals_their_precision(self):
+        fields = self._build()
+        self.assertEqual(fields["position"]["max_length"], 150)
+        self.assertEqual(fields["discount"]["type"], "decimal")
+        self.assertEqual(fields["discount"]["max_digits"], 10)
+        self.assertEqual(fields["discount"]["decimal_places"], 2)
+
+    def test_prefix_and_group_produce_parent_keys(self):
+        from accounts.bulk_update import build_bulk_update_fields
+        fields = build_bulk_update_fields(
+            BookEvent, prefix="invoice", group="parent", exclude=("invoice_number",))
+        self.assertIn("invoice.currency", fields)
+        self.assertEqual(fields["invoice.currency"]["group"], "parent")
+        self.assertNotIn("invoice.invoice_number", fields)
+
+    def test_extra_wins_over_the_derived_entry(self):
+        fields = self._build(extra={"position": {"group": "row", "type": "choice",
+                                                 "label": "P", "choices": ["a"]}})
+        self.assertEqual(fields["position"]["type"], "choice")
+
+
+# ── The shared numeric / length coercion ──────────────────────────────────────
+
+class CoerceTests(TestCase):
+    """
+    paper_review and proposal_submission each carried a private "integer" type
+    for the 400-not-500 guarantee. Both now call the shared one; these lock its
+    behaviour so a change cannot silently regress either module.
+    """
+
+    def setUp(self):
+        self.vs = _DelegateBulkViewSet()
+
+    def _coerce(self, value, **config):
+        return self.vs._coerce(value, config)
+
+    def test_integer_accepts_a_numeric_string(self):
+        self.assertEqual(self._coerce("42", type="integer"), (42, None))
+
+    def test_integer_refuses_garbage_with_a_message_naming_the_value(self):
+        coerced, err = self._coerce("abc", type="integer")
+        self.assertIsNone(coerced)
+        self.assertIn("whole number", err)
+
+    def test_integer_refuses_a_bool_which_python_would_otherwise_accept(self):
+        coerced, err = self._coerce(True, type="integer")
+        self.assertIsNone(coerced)
+        self.assertIn("whole number", err)
+
+    def test_bounds_come_from_the_config(self):
+        self.assertEqual(self._coerce(5, type="integer", min=0, max=10), (5, None))
+        self.assertIn("negative", self._coerce(-1, type="integer", min=0)[1])
+        self.assertIn("exceed", self._coerce(11, type="integer", max=10)[1])
+        self.assertIn("less than 3", self._coerce(2, type="integer", min=3)[1])
+
+    def test_an_emptied_number_input_reads_as_a_clear(self):
+        self.assertEqual(self._coerce("", type="integer", nullable=True), (None, None))
+        self.assertIn("cannot be cleared", self._coerce("", type="integer")[1])
+
+    def test_an_empty_string_stays_a_value_on_a_text_field(self):
+        """CharField(blank=True) is the common case; '' must not mean 'clear'."""
+        self.assertEqual(self._coerce("", type="text"), ("", None))
+
+    def test_decimal_precision_is_checked_before_the_database_sees_it(self):
+        from decimal import Decimal
+        cfg = dict(type="decimal", max_digits=5, decimal_places=2)
+        self.assertEqual(self._coerce("12.34", **cfg), (Decimal("12.34"), None))
+        self.assertIn("decimal places", self._coerce("1.234", **cfg)[1])
+        self.assertIn("too large", self._coerce("1234", **cfg)[1])
+        self.assertIn("not a number", self._coerce("NaN", **cfg)[1])
+
+    def test_over_length_text_is_refused_with_the_limit_named(self):
+        coerced, err = self._coerce("x" * 51, type="text", max_length=50)
+        self.assertIsNone(coerced)
+        self.assertIn("50", err)
+
+    def test_a_non_string_choice_matches_on_its_string_form(self):
+        """
+        BookDelegate.delegate_count declares [(0, "0"), (1, "1")] and a <select>
+        can only ever submit "0". The declared value is what comes back, so the
+        column gets an int rather than a string.
+        """
+        self.assertEqual(self._coerce("0", type="choice", choices=[0, 1]), (0, None))
+        self.assertEqual(self._coerce(1, type="choice", choices=[0, 1]), (1, None))
+        self.assertIn("not a valid choice",
+                      self._coerce("2", type="choice", choices=[0, 1])[1])

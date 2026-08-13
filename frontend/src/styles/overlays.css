@@ -20,6 +20,12 @@
 .qa button{display:inline-flex;align-items:center;gap:6px;padding:0 12px;height:31px;font-size:11.5px;font-weight:650;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:var(--r-md);cursor:pointer;transition:all .14s;backdrop-filter:blur(4px)}
 .qa button:hover{background:rgba(255,255,255,.22);transform:translateY(-1px)}
 .qa button svg{width:14px;height:14px}
+/* dashboard date-range filter — sits on the page ground rather than inside the
+   dark .hero, so the shared .seg control keeps its light-surface styling */
+.dfl{display:flex;align-items:center;justify-content:space-between;gap:13px;flex-wrap:wrap;margin:-4px 0 13px}
+.dfl-t{display:flex;flex-direction:column;line-height:1.4;min-width:0}
+.dfl-t .n{font-size:12.5px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
+.dfl-t .s{font-size:10.5px;color:var(--text-4)}
 /* action queue */
 .aq{display:flex;flex-direction:column;gap:1px}
 .aq-i{display:flex;align-items:center;gap:11px;padding:11px 4px;border-bottom:1px solid var(--n-50);cursor:pointer;transition:background .12s;border-radius:var(--r-sm)}
@@ -230,7 +236,19 @@ table.gt th.num,table.gt td.num{text-align:right}
 .wz-ln{flex:1;height:1.5px;background:var(--border);margin:0 8px;min-width:13px}
 .wz-ln.dn{background:var(--green)}
 .dz{border:1.5px dashed var(--border-s);border-radius:var(--r-lg);padding:36px 20px;text-align:center;cursor:pointer;transition:all .17s;background:var(--surface-2)}
-.dz:hover{border-color:var(--t-400);background:var(--t-50)}
+.dz:hover,.dz:focus-visible{border-color:var(--t-400);background:var(--t-50)}
+/* Dragging a file over the zone. Stronger than :hover because a drag has no
+   cursor feedback of its own — without a visible change there is nothing to tell
+   you the page will accept the file rather than navigate away to it. The dashes
+   also tighten, so the state reads even where colour does not. */
+.dz-over{border-style:solid;border-color:var(--t-500);background:var(--t-50);box-shadow:inset 0 0 0 3px var(--t-50)}
+/* The zone itself owns the drag: children must not swallow dragenter/dragleave
+   while a file is over it, or the highlight fights the depth counter. Only while
+   dragging, so clicking is unaffected. */
+.dz-over *{pointer-events:none}
+/* Busy parsing or importing — the zone stops inviting a second file. */
+.dz-off{opacity:.55;cursor:default}
+.dz-off:hover{border-color:var(--border-s);background:var(--surface-2)}
 .dz-i{width:44px;height:44px;margin:0 auto 10px;background:var(--t-50);border-radius:var(--r-lg);display:grid;place-items:center;color:var(--t-500)}
 .dz-i svg{width:20px;height:20px}
 .dz h3{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:4px}

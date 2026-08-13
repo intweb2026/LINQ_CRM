@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from accounts.audit import log_module_wipe
 from accounts.permissions import RBACMixin, IsAdminRole, IsSalesOrAdmin, IsHPAccount
-from accounts.bulk_update import BulkUpdateMixin
+from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from .models import Event
@@ -48,9 +48,10 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
     # Event has no parent FK. BookEvent links to it by event_code TEXT, not a
     # relation, so there is no collateral set and no split-group UI.
     #
-    # Event.save() (models.py:79-148) derives NINE fields. Only SOURCE fields are
-    # wired; every derived field is excluded, because writing a derived field
-    # directly would be silently undone on the next save of its source.
+    # Every editable column is wired EXCEPT the exclusions below. Event.save()
+    # (models.py:85-154) derives NINE fields; only SOURCE fields are offered,
+    # because writing a derived field directly would be silently undone on the
+    # next save of its source.
     #
     #   official_event_name  -> name, official_name   (falls back to event_code)
     #   location             -> city, country, venue
@@ -58,14 +59,14 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
     #   telemarketing_team   -> tele_marketing_team
     #   market_research_senior -> market_research_team
     #   sales_executive     <-> sales_team   (BIDIRECTIONAL, fuzzy user match,
-    #                                         plus a per-object SELECT at :99-101)
+    #                                         plus a per-object SELECT at :105-107)
     #
     # EXCLUDED and why:
     #   event_code   — identity, and 86 of 215 BookEvent codes already fail to
     #                  match this table (40.8% of invoices). Mass-editing codes
     #                  would deepen an outstanding data-integrity problem.
     #                  It also feeds name/official_name when official_event_name
-    #                  is blank (models.py:84-86).
+    #                  is blank (models.py:87-92).
     #   edition      — not a field on Event; the corrupt editions live on
     #                  BookEvent (5,854 rows hold Excel serial dates). Same
     #                  outstanding problem; nothing here may touch it.
@@ -74,27 +75,48 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
     #                — all derived in save(). Callers set the SOURCE field.
     #   sales_executive — an FK whose save() path fuzzy-matches users and writes
     #                  back to sales_team; too much hidden behaviour for a
-    #                  generic writer. Deferred deliberately.
+    #                  generic writer. Dropped by the builder with every other FK
+    #                  rather than by name, and deferred deliberately.
+    #   id / created_at / updated_at / import_batch_id
+    #                — DEFAULT_EXCLUDES in accounts/bulk_update.py.
     bulk_update_label = "events"
     bulk_update_parent_path = None
 
-    # No field below is null=True — all are NOT NULL in the schema — so none is
-    # marked nullable.
-    bulk_update_fields = {
-        "status": {
-            "group": "row", "type": "choice", "label": "Status",
-            "choices": list(Event.Status.values),
+    # Derived from the model, minus the exclusions above. `nullable` mirrors
+    # null=True per column, so end_date and website_live_date can be cleared and
+    # event_date cannot.
+    bulk_update_fields = build_bulk_update_fields(
+        Event,
+        exclude=(
+            # identity
+            "event_code",
+            # the nine fields Event.save() derives — callers set the SOURCE
+            "name", "official_name", "accepting_web_bookings",
+            "city", "country", "venue",
+            "tele_marketing_team", "market_research_team", "sales_team",
+        ),
+        labels={
+            "official_event_name":    "Official Event Name",
+            "web_bookings":           "Web Bookings",
+            "vr1_sent_status":        "VR1 Sent Status",
+            "email_marketing_name":   "Email Marketing Name",
+            "market_research_senior": "Market Research Senior",
+            "market_research_junior": "Market Research Junior",
+            "telemarketing_team":     "Telemarketing Team",
+            "event_management_team":  "Event Management Team",
+            "speaker_sales_team":     "Speaker Sales Team",
+            "spex_team":              "SPEX Team",
+            "master_code":            "Master Code",
+            "website_live_date":      "Website Live Date",
+            "nearest_related_event":  "Nearest Related Event",
+            "related_event_1":        "Related Event 1",
+            "related_event_2":        "Related Event 2",
+            "related_event_3":        "Related Event 3",
+            "upcoming_event_1":       "Upcoming Event 1",
+            "upcoming_event_2":       "Upcoming Event 2",
+            "upcoming_event_3":       "Upcoming Event 3",
         },
-        "web_bookings": {
-            "group": "row", "type": "boolean", "label": "Web Bookings",
-        },
-        "location": {
-            "group": "row", "type": "text", "label": "Location",
-        },
-        "official_event_name": {
-            "group": "row", "type": "text", "label": "Official Event Name",
-        },
-    }
+    )
 
     # Every save()-derivation of a wired field MUST be declared here, or the
     # preview understates what the change actually does.
@@ -111,15 +133,26 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
         ("web_bookings", "true"): "also sets accepting_web_bookings → True",
     }
 
+    # Every save()-derivation of a wired field that fires for ANY value, keyed by
+    # field alone. The static dict above cannot express those — it is an exact
+    # (field, value) lookup — so they live here.
+    _ANY_VALUE_SIDE_EFFECTS = {
+        "location":               "also overwrites city, country and venue",
+        "official_event_name":    "also overwrites name and official_name",
+        "telemarketing_team":     "also overwrites tele_marketing_team",
+        "market_research_senior": "also overwrites market_research_team",
+    }
+
     def get_bulk_update_side_effects(self, field, raw_value):
         """
         location and official_event_name overwrite their derived fields for ANY
         value, so they cannot be keyed by (field, value) in the static dict.
+        telemarketing_team and market_research_senior behave the same way, and
+        were undeclared while they were unwired.
         """
-        if field == "location":
-            return ["also overwrites city, country and venue"]
-        if field == "official_event_name":
-            return ["also overwrites name and official_name"]
+        any_value = self._ANY_VALUE_SIDE_EFFECTS.get(field)
+        if any_value:
+            return [any_value]
         effect = self.bulk_update_side_effects.get((field, raw_value))
         return [effect] if effect else []
     filterset_class = EventFilter
@@ -394,6 +427,12 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     event_type = _clean(row, "event_type")
                     website_live_date = _parse_date(row.get("website_live_date"))
                     vr1_sent_status = _clean(row, "vr1_sent_status")
+                    # Plain trimmed strings, matching how the CSV loader treats
+                    # them at management/commands/update_events_csv.py:77-78. No
+                    # _resolve_user and no assigned_users entry, unlike
+                    # sales_check, so importing them cannot widen row visibility.
+                    content_check = _clean(row, "content_check")
+                    marketing_check = _clean(row, "marketing_check")
                     sales_team = _clean(row, "sales_team")
                     team_leader = _clean(row, "team_leader")
                     market_research_senior = _clean(row, "market_research_senior")
@@ -509,6 +548,8 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             existing.event_type = event_type
                             existing.website_live_date = website_live_date or existing.website_live_date
                             existing.sales_check = _clean(row, "sales_check") or existing.sales_check
+                            existing.content_check = content_check or existing.content_check
+                            existing.marketing_check = marketing_check or existing.marketing_check
                             existing.vr1_sent_status = vr1_sent_status or existing.vr1_sent_status
                             existing.sales_team = sales_team or existing.sales_team
                             existing.team_leader = team_leader or existing.team_leader
@@ -556,6 +597,8 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             event_type=event_type,
                             website_live_date=website_live_date,
                             sales_check=_clean(row, "sales_check"),
+                            content_check=content_check,
+                            marketing_check=marketing_check,
                             vr1_sent_status=vr1_sent_status,
                             sales_team=sales_team,
                             team_leader=team_leader,

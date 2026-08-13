@@ -102,7 +102,17 @@ class PaperReview(models.Model):
     # the ≥80/≥60/≥40 bands are inferred from a single record and are not
     # confirmed business rules. Matches the standing decision that
     # proposal_submission's qc_grade and qc_score are independent and manual.
-    grade = models.CharField(max_length=1, blank=True, default="", db_index=True)
+    #
+    # WIDTH. This was max_length=1, written on the assumption that a grade is a
+    # single letter. The real vocabulary is not. The Zoho export carries A, B, B+,
+    # C, D and E, and 'B+' is the third most common grade in it, 355 of 3492 rows.
+    # At one character every one of those rows raised a DataError on import;
+    # because the commit writes a chunk inside one transaction.atomic(), that
+    # failure discarded the other 499 rows with it. 5 leaves room for a modifier on
+    # any letter without inviting free text, and stays under qc_grade's 10; see the
+    # assertion in tests_paper_to_proposal.py that this column must not be wider
+    # than the one proposal_bridge copies it into.
+    grade = models.CharField(max_length=5, blank=True, default="", db_index=True)
 
     # ── Outcome ───────────────────────────────────────────────────────────────
     session_location_on_agenda = models.CharField(max_length=100, blank=True, default="")

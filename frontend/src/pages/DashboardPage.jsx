@@ -1,28 +1,53 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
-import { Donut, Sparkline } from '../components/UI';
+import { Donut, Seg, Sparkline } from '../components/UI';
 import { Who, RoleBadge, EvBadge } from '../components/Badge';
 import { nf, pc, plur, rel, MON } from '../lib/helpers';
-import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
+import { ROLE_FULL, ALL_MODULES, DASH_PERIODS, DASH_PERIOD_LABEL } from '../lib/constants';
 import * as eventsApi from '../api/events';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
 import * as webhooksApi from '../api/webhooks';
 import * as reportsApi from '../api/reports';
 import { useFetch } from '../hooks/useFetch';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import NewBookingModal from './bookings/NewBookingModal';
 import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
 
+const EMPTY_LINE = { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0, invoices: 0, companies: 0 };
 const EMPTY_STATS = {
-  all: { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0 },
-  sales: { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0 },
-  spex: { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0 },
-  speaker: { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0 },
+  all: EMPTY_LINE, sales: EMPTY_LINE, spex: EMPTY_LINE, speaker: EMPTY_LINE,
   months: [], channels: [], booking_team_productivity: [], team_productivity: [], tickets: {}, whFailed: 0, year: 0, delta: 0,
+  period: {}, attribution: {},
 };
+
+// dd Mmm yyyy, for the resolved window the backend echoes back. Read from
+// `period.from`/`period.to` rather than recomputed here: the window is the
+// server's arithmetic, and a second implementation in the browser would be one
+// timezone away from disagreeing with the numbers underneath it.
+function windowText(period) {
+  if (!period || !period.key || period.key === 'all') return 'Every booking on record';
+  if (!period.from || !period.to) return '';
+  const fmt = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    return d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear();
+  };
+  return fmt(period.from) + ' → ' + fmt(period.to);
+}
+
+// Per-team headline. The pipeline figure is PIPELINE-wide, not team-wide (two
+// teams can work one pipeline — Sales and Telemarketing both sell delegate
+// seats), so it is labelled as such rather than presented as this team's total.
+// SpEx is measured in COMPANIES: sponsorship is sold to an organisation, and the
+// delegate rows on a SpEx invoice are the passes bundled with the package.
+function pipelineStat(t) {
+  if (t.team_type === 'spex') return { label: 'Sponsors', value: t.pipeline_companies };
+  if (t.team_type === 'speaker_sales') return { label: 'Speakers', value: t.pipeline_total };
+  return { label: 'In pipeline', value: t.pipeline_total };
+}
 
 // Declared at module scope, not inline: useFetch memoises on its deps array, so
 // an inline arrow would still be captured once, but a named module-level function
@@ -38,6 +63,7 @@ export default function DashboardPage() {
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [newTicketOpen, setNewTicketOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [period, setPeriod] = useState('all');
 
   // Every fetch on this page is either a bounded page or an aggregate. It used to
   // hold three fetchAllPages walks (delegates 13,269 / tickets 35,690 / webhook
@@ -45,14 +71,46 @@ export default function DashboardPage() {
   // webhook logs AGAIN — measured at 161 API requests in the first 10 seconds and
   // still climbing, roughly 700 in total. That is what the "backend running in a
   // loop" report was: a finite page-walk, not a render loop.
-  const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
-  const { data: recentBookings } = useFetch(dashRecentBookings, [], { initialData: [] });
-  const { data: oldestPending } = useFetch(bookingsApi.oldestPending, [], { initialData: null });
-  const { data: recentTickets } = useFetch(dashRecentTickets, [], { initialData: [] });
-  const { data: recentWhLogs } = useFetch(dashRecentWhLogs, [], { initialData: [] });
-  const { data: syncLogs } = useFetch(reportsApi.syncLogs, [], { initialData: [] });
-  const { data: sheets } = useFetch(reportsApi.sheets, [], { initialData: [] });
-  const { data: stats } = useFetch(reportsApi.dashboard, [], { initialData: EMPTY_STATS });
+  const { data: events, refetchQuiet: reloadEvents } = useFetch(eventsApi.list, [], { initialData: [] });
+  const { data: recentBookings, refetchQuiet: reloadBookings } = useFetch(dashRecentBookings, [], { initialData: [] });
+  const { data: oldestPending, refetchQuiet: reloadOldest } = useFetch(bookingsApi.oldestPending, [], { initialData: null });
+  const { data: recentTickets, refetchQuiet: reloadTickets } = useFetch(dashRecentTickets, [], { initialData: [] });
+  const { data: recentWhLogs, refetchQuiet: reloadWhLogs } = useFetch(dashRecentWhLogs, [], { initialData: [] });
+  const { data: syncLogs, refetchQuiet: reloadSyncLogs } = useFetch(reportsApi.syncLogs, [], { initialData: [] });
+  const { data: sheets, refetchQuiet: reloadSheets } = useFetch(reportsApi.sheets, [], { initialData: [] });
+  // The only period-sensitive fetch on the page. useFetch memoises `run` on the
+  // deps array, so [period] is what makes changing the range refetch — and the
+  // ONLY thing that does. An inline arrow with an empty deps array would capture
+  // the first period forever and the buttons would visibly do nothing.
+  const fetchStats = useCallback(() => reportsApi.dashboard(period), [period]);
+  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: EMPTY_STATS });
+
+  /**
+   * The whole page, on any write.
+   *
+   * Nothing here is a list this user edits in place — every number is an
+   * aggregate over tables owned by other pages, plus the webhook and sheet-sync
+   * feeds, which are written by machines and not by anyone's browser. So the
+   * subscription is unfiltered (`resources: null`): a booking, a ticket, an event,
+   * a sheet source or a delivery all move something on this screen.
+   *
+   * Polled at a minute rather than the default thirty seconds. This is nine
+   * requests, one of them a full aggregate over the delegate table, and a
+   * dashboard left open on a wall display would otherwise run that all day.
+   */
+  const { refreshNow: refresh } = useLiveData(
+    useCallback(() => {
+      reloadStats();
+      reloadEvents();
+      reloadBookings();
+      reloadOldest();
+      reloadTickets();
+      reloadWhLogs();
+      reloadSyncLogs();
+      reloadSheets();
+    }, [reloadStats, reloadEvents, reloadBookings, reloadOldest, reloadTickets, reloadWhLogs, reloadSyncLogs, reloadSheets]),
+    { resources: null, poll: 60000 },
+  );
 
   const EVENTS = events || [];
   const RECENT_BOOKINGS = recentBookings || [];
@@ -61,6 +119,12 @@ export default function DashboardPage() {
   const SYNC_LOGS = syncLogs || [];
   const SHEETS = sheets || [];
   const S = stats || EMPTY_STATS;
+  // Read through a local: the resolved window arrives with the aggregate, so it
+  // is absent on the very first render and on any response that predates it.
+  // Reaching straight into S.period.from there is the same crash the
+  // oldestPending note below describes — one undefined read blanks the page.
+  const P = S.period || {};
+  const RANGE = period === 'all' ? 'all time' : DASH_PERIOD_LABEL[period].toLowerCase();
 
   const hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
@@ -71,18 +135,24 @@ export default function DashboardPage() {
   const soon = withOffset.filter((e) => e.offset > 0).sort((a, b) => a.offset - b.offset);
   const next7 = soon.filter((e) => e.offset <= 30);
 
+  // OUT is the all-time payment mix, not the windowed one. This queue is a
+  // worklist: under "Last 7 days" the windowed figure would report 0 unpaid
+  // invoices while a backlog of them sits in the table, and a filter that hides
+  // a backlog is worse than no filter. The analytic cards below use the windowed
+  // `S.all`; these two rows deliberately do not.
+  const OUT = S.outstanding || S.all;
   const acts = [];
-  if (canView('bookings') && S.all.pending) {
+  if (canView('bookings') && OUT.pending) {
     // oldestPending is a single server-sorted row and may not have arrived yet —
     // the count comes from a different request. Reading `.request_date` off an
     // undefined row here used to throw during render and blank the page.
     acts.push({
       ic: 'clock', tone: 'var(--amber)', t: 'Bookings awaiting payment',
       s: oldestPending ? 'Oldest is ' + rel(oldestPending.request_date) : 'Awaiting confirmation',
-      n: S.all.pending, go: () => nav('/bookings/Pending'),
+      n: OUT.pending, go: () => nav('/bookings/Pending'),
     });
   }
-  if (canView('bookings') && S.all.unpaid) acts.push({ ic: 'warn', tone: 'var(--red)', t: 'Unpaid invoices past due', s: 'Needs a chase call or escalation', n: S.all.unpaid, go: () => nav('/bookings/Unpaid') });
+  if (canView('bookings') && OUT.unpaid) acts.push({ ic: 'warn', tone: 'var(--red)', t: 'Unpaid invoices past due', s: 'Needs a chase call or escalation', n: OUT.unpaid, go: () => nav('/bookings/Unpaid') });
   if (canView('ticket_central') && S.tickets.mr_submitted) acts.push({ ic: 'inbox', tone: 'var(--blue)', t: 'Tickets in the mining queue', s: 'Submitted by Market Research', n: S.tickets.mr_submitted, go: () => nav('/tickets/mr_submitted') });
   if (canView('ticket_central') && S.tickets.returned) acts.push({ ic: 'refresh', tone: 'var(--red)', t: 'Tickets returned to MR', s: 'Rejected by Data Mining — needs detail', n: S.tickets.returned, go: () => nav('/tickets/returned') });
   // whFailed is a server-side count (webhooks/logs/?status=failed, read for
@@ -117,7 +187,7 @@ export default function DashboardPage() {
             <p>{ROLE_FULL[user.role]} · {perms.is_all_access ? 'full access' : plur(ALL_MODULES.filter(canView).length, 'module') + ' available'} · Signed in as <b style={{ color: '#fff' }}>{user.username}</b></p>
           </div>
           <div className="hero-st">
-            {canView('bookings') ? <div><div className="l">Pending</div><div className="v">{nf(S.all.pending)}<small>bookings</small></div></div> : null}
+            {canView('bookings') ? <div><div className="l">Pending</div><div className="v">{nf(OUT.pending)}<small>bookings</small></div></div> : null}
             {canView('ticket_central') ? <div><div className="l">Mining queue</div><div className="v">{nf(S.tickets.mr_submitted)}<small>tickets</small></div></div> : null}
             {canView('events') ? <div><div className="l">Live now</div><div className="v">{nf(live.length)}<small>events</small></div></div> : null}
             <div><div className="l">Next 30 days</div><div className="v">{nf(next7.length)}<small>events</small></div></div>
@@ -132,10 +202,28 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <div className="dfl">
+        <div className="dfl-t">
+          <span className="n">
+            Date range<span className="tg bg-neutral">{DASH_PERIOD_LABEL[period]}</span>
+            {statsLoading ? <span className="s" style={{ fontWeight: 500 }}>updating…</span> : null}
+          </span>
+          <span className="s">
+            {windowText(P)} · applies to the pipelines, monthly chart, intake mix and team bookings — not to the attention queue, tickets or webhooks
+            {P.undated_records ? ' · ' + plur(P.undated_records, 'record') + ' carry no booking date and appear only under All time' : ''}
+          </span>
+        </div>
+        <Seg
+          options={DASH_PERIODS.map((p) => ({ value: p.k, label: p.l }))}
+          value={period}
+          onChange={setPeriod}
+        />
+      </div>
+
       <div className="dg w21">
         <div className="card">
           <div className="card-h">
-            <div><div className="card-t">Needs your attention</div><div className="card-s">Ranked by urgency across every module you can reach</div></div>
+            <div><div className="card-t">Needs your attention</div><div className="card-s">Ranked by urgency across every module you can reach · not limited by the date range</div></div>
             <span className={'bg bg-' + (acts.length ? 'amber' : 'green')}><i />{acts.length ? acts.length + ' open' : 'all clear'}</span>
           </div>
           {acts.length ? (
@@ -158,7 +246,7 @@ export default function DashboardPage() {
         </div>
         {canView('bookings') ? (
           <div className="card">
-            <div className="card-h"><div><div className="card-t">Payment mix</div><div className="card-s">All {nf(S.all.total)} booking records</div></div></div>
+            <div className="card-h"><div><div className="card-t">Payment mix</div><div className="card-s">{nf(S.all.total)} booking records · {RANGE}</div></div></div>
             <div className="dn">
               <div className="dn-c">
                 <Donut segs={[{ v: S.all.paid, c: 'var(--green)' }, { v: S.all.pending, c: 'var(--amber)' }, { v: S.all.free, c: 'var(--blue)' }, { v: S.all.credit, c: 'var(--violet)' }, { v: S.all.unpaid + S.all.cancelled, c: 'var(--red)' }]} />
@@ -179,7 +267,7 @@ export default function DashboardPage() {
       {canView('bookings') ? (
         <div className="card" style={{ marginBottom: 11 }}>
           <div className="card-h">
-            <div><div className="card-t">Three pipelines</div><div className="card-s">Delegates, sponsorship and speakers tracked separately</div></div>
+            <div><div className="card-t">Three pipelines</div><div className="card-s">Split on the booking code — sponsorship, speakers and delegate sales counted separately · {RANGE}</div></div>
             <button className="btn btn-s btn-sm" onClick={() => nav('/bookings/Pending')}><Icon name="arrowR" size={13} /> Open bookings</button>
           </div>
           <div className="pl">
@@ -187,7 +275,7 @@ export default function DashboardPage() {
               const d = L.d, t = d.total || 1;
               return (
                 <div className="pl-i" key={L.k}>
-                  <div className="h"><span className="n">{L.n}<span className="tg" style={{ background: `var(${L.bgc})`, color: `var(${L.tc})` }}>{L.tg}</span></span><span className="v"><b>{nf(d.total)}</b> records · {pc(d.paid, t)}% paid</span></div>
+                  <div className="h"><span className="n">{L.n}<span className="tg" style={{ background: `var(${L.bgc})`, color: `var(${L.tc})` }}>{L.tg}</span></span><span className="v"><b>{nf(d.total)}</b> records · {nf(d.invoices)} invoices · {nf(d.companies)} companies · {pc(d.paid, t)}% paid</span></div>
                   <div className="bar">
                     <i style={{ width: (d.paid / t) * 100 + '%', background: 'var(--green)' }} />
                     <i style={{ width: (d.pending / t) * 100 + '%', background: 'var(--amber)' }} />
@@ -207,8 +295,11 @@ export default function DashboardPage() {
         {canView('reports') ? (
           <div className="card">
             <div className="card-h">
-              <div><div className="card-t">Bookings by month</div><div className="card-s">Paid, pending and complimentary · 2026 · H2 {S.delta >= 0 ? '+' : ''}{S.delta}% vs H1</div></div>
-              <span className="bg bg-teal"><i />{nf(S.year)} total</span>
+              {/* The H1→H2 swing is only meaningful across a full year; inside a
+                  7-day window there is no second half to compare, so it is
+                  dropped rather than rendered as a confident -100%. */}
+              <div><div className="card-t">Bookings by month</div><div className="card-s">Paid, pending and complimentary · {RANGE}{period === 'all' ? ` · H2 ${S.delta >= 0 ? '+' : ''}${S.delta}% vs H1` : ''}</div></div>
+              <span className="bg bg-teal"><i />{nf(period === 'all' ? S.year : S.all.total)} {period === 'all' ? 'this year' : 'total'}</span>
             </div>
             <div className="bc">
               {S.months.map((mo) => {
@@ -253,24 +344,50 @@ export default function DashboardPage() {
 
       {canView('reports') ? (
         <>
-          <div className="sl">Team productivity — booking pipelines</div>
+          <div className="sl">Team productivity — booking pipelines<span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>{RANGE}</span></div>
           {S.booking_team_productivity.map((t) => {
-            const lab = t.team_type === 'spex' ? ['Sponsors booked', 'Sponsors paid'] : t.team_type === 'speaker_sales' ? ['Speakers', 'Speakers paid'] : ['Bookings', 'Paid'];
             const tag = t.team_type === 'spex' ? 'SpEx' : t.team_type === 'speaker_sales' ? 'Speaker Sales' : ROLE_FULL[t.team_type] || 'Sales';
             const open = openTeams.has(t.team_id);
+            const ps = pipelineStat(t);
+            // Three distinct states, because "0 bookings" and "nobody can be
+            // told apart from the data" look identical on a card and mean very
+            // different things. The third is what an empty Event ▸ SpEx Team
+            // column produces, and reporting it as a flat 0 is what made the
+            // SpEx and Speaker numbers look absent rather than unattributable.
+            const sub = !t.members.length ? 'no one assigned'
+              : t.bookings ? t.conv + '% conversion · ' + nf(t.paid) + ' paid'
+              : t.attribution_available ? 'no bookings attributed in this range'
+              : 'not attributed — ' + t.attribution_source + ' is empty on every event';
             return (
               <div className="ac" key={t.team_id}>
                 <div className="ac-h" onClick={() => toggleTeam(t.team_id)}>
                   <span className="ac-i" style={{ background: t.color + '14', color: t.color }}><Icon name="team" size={15} /></span>
-                  <span className="ac-t"><span className="n">{t.team_name}<span className="tg bg-neutral">{tag}</span></span><span className="s">{plur(t.members.length, 'member')}{t.members.length ? ' · ' + t.conv + '% conversion' : ' · no one assigned'}</span></span>
+                  <span className="ac-t"><span className="n">{t.team_name}<span className="tg bg-neutral">{tag}</span></span><span className="s">{plur(t.members.length, 'member')} · {sub}</span></span>
                   {t.members.length ? <Sparkline v={t.trend} w={56} h={20} /> : null}
-                  <span className="ac-st" style={{ marginLeft: 13 }}><span className="l">{lab[0]}</span><span className="v">{nf(t.bookings)}</span></span>
+                  <span className="ac-st" style={{ marginLeft: 13 }}><span className="l">{ps.label}</span><span className="v">{nf(ps.value)}</span></span>
+                  {t.attribution_available
+                    ? <span className="ac-st" style={{ marginLeft: 13 }}><span className="l">Attributed</span><span className="v">{nf(t.bookings)}</span></span>
+                    : <span className="ac-st" style={{ marginLeft: 13 }}><span className="l">Attributed</span><span className="v" style={{ color: 'var(--amber)' }}>—</span></span>}
                   <span className={'ac-a' + (open ? ' op' : '')}><Icon name="chevD" size={16} /></span>
                 </div>
                 <div className={'ac-b' + (open ? ' op' : '')}>
                   {!t.members.length ? <div className="mt" style={{ padding: 24 }}><p style={{ margin: 0 }}>No members assigned to this team yet.</p></div> : (
+                    <>
+                    {!t.attribution_available ? (
+                      <div className="hint" style={{ margin: 12, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                        <span style={{ color: 'var(--amber)', flexShrink: 0, marginTop: 1 }}><Icon name="warn" size={14} /></span>
+                        <span>
+                          <b>{nf(t.pipeline_total)} records</b> sit in this pipeline for the selected range
+                          {t.team_type === 'spex' ? <> across <b>{nf(t.pipeline_invoices)} invoices</b> and <b>{nf(t.pipeline_companies)} companies</b></> : null}
+                          , but none of them name a member of this team. Bookings are attributed
+                          through <b>{t.attribution_source}</b>, which is empty on every event in
+                          the catalogue — so the split by person cannot be computed. Fill that
+                          column in on the Events tab and these numbers populate themselves.
+                        </span>
+                      </div>
+                    ) : null}
                     <table className="gt">
-                      <thead><tr><th>Member</th><th>Role</th><th className="num">{lab[0]}</th><th className="num">{lab[1]}</th><th className="num">Conversion</th></tr></thead>
+                      <thead><tr><th>Member</th><th>Role</th><th className="num">Bookings</th><th className="num">Paid</th><th className="num">Conversion</th></tr></thead>
                       <tbody>
                         {t.members.slice().sort((a, b) => b.bookings - a.bookings).map((mb) => {
                           const tn = mb.conv >= 70 ? 'var(--green)' : mb.conv >= 50 ? 'var(--t-500)' : 'var(--amber)';
@@ -286,6 +403,7 @@ export default function DashboardPage() {
                         })}
                       </tbody>
                     </table>
+                    </>
                   )}
                 </div>
               </div>
@@ -336,9 +454,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {newBookingOpen ? <NewBookingModal onClose={() => setNewBookingOpen(false)} /> : null}
-      {newTicketOpen ? <TicketFormModal onClose={() => setNewTicketOpen(false)} /> : null}
-      {importOpen ? <ImportWizard kind="bookings" onClose={() => setImportOpen(false)} /> : null}
+      {/* All three used to be mounted with onClose alone. A booking raised from
+          the dashboard, a ticket raised from the dashboard, or a spreadsheet
+          imported from the dashboard therefore changed nothing the user could
+          see: same KPIs, same activity feed, same "awaiting payment" count, on a
+          page whose entire job is to report those numbers. */}
+      {newBookingOpen ? <NewBookingModal onClose={() => setNewBookingOpen(false)} onCreated={refresh} /> : null}
+      {newTicketOpen ? <TicketFormModal onClose={() => setNewTicketOpen(false)} onSaved={refresh} /> : null}
+      {importOpen ? <ImportWizard kind="bookings" onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
     </>
   );
 }

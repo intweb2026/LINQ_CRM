@@ -108,6 +108,24 @@ export const GSYNC_STATUS_TONE = { pending: 'neutral', running: 'amber', success
 
 export const BOOKING_TEAM_TYPES = ['sales', 'spex', 'speaker_sales', 'telemarketing'];
 
+/**
+ * Dashboard date-range filter. `k` is sent verbatim as ?period= and must match a
+ * key in PERIOD_DAYS (backend/config/views.py), which 400s on anything else
+ * rather than silently answering for all time.
+ *
+ * Windows are ROLLING and include today. The labels say "30 days" and "12
+ * months" rather than "month" and "year" on purpose: a rolling window labelled
+ * "last month" reads as "the previous calendar month" and would be wrong by up
+ * to 30 days. The active window's real dates are shown next to the control.
+ */
+export const DASH_PERIODS = [
+  { k: 'all', l: 'All time' },
+  { k: 'last_7_days', l: 'Last 7 days' },
+  { k: 'last_30_days', l: 'Last 30 days' },
+  { k: 'last_12_months', l: 'Last 12 months' },
+];
+export const DASH_PERIOD_LABEL = Object.fromEntries(DASH_PERIODS.map((p) => [p.k, p.l]));
+
 export const YES_NO = ['Yes', 'No'];
 export const VR1_STATUS = ['Not Sent', 'Sent', 'Opened', 'Clicked'];
 export const SALES_CHECK_OPTIONS = ['Unassigned', 'Pending', 'Scheduled', 'Done'];
@@ -116,8 +134,12 @@ export const SALES_CHECK_OPTIONS = ['Unassigned', 'Pending', 'Scheduled', 'Done'
 // Option lists inferred from the reference screenshots — the exact allowed
 // values are not confirmed against a backend yet. See PROPOSAL_SUBMISSION_BACKEND.md.
 export const PARTICIPATION_TYPES = ['Speaker', 'Sponsor', 'Speaker & Sponsor', 'Panelist'];
-export const QC_GRADES = ['A', 'B', 'C', 'D'];
-export const QC_GRADE_TONE = { A: 'green', B: 'blue', C: 'amber', D: 'red' };
+// A-D was inferred from screenshots; the Zoho export carries B+ and E as well,
+// and 'B+' is the third most common. Listing only A-D meant the column filter and
+// the form's dropdown could neither show nor select a grade that a third of the
+// imported rows actually hold.
+export const QC_GRADES = ['A', 'B', 'B+', 'C', 'D', 'E'];
+export const QC_GRADE_TONE = { A: 'green', B: 'blue', 'B+': 'blue', C: 'amber', D: 'red', E: 'red' };
 export const SPEAKER_SLOT_STATUSES = ['Pending', 'Confirmed', 'Declined', 'Waitlisted'];
 export const SPEAKER_SLOT_TONE = { Pending: 'amber', Confirmed: 'green', Declined: 'red', Waitlisted: 'slate' };
 export const SPONSORSHIP_STATUSES = ['Pending', 'Confirmed', 'Declined', 'Not Applicable'];
@@ -141,6 +163,8 @@ export const PAPER_REVIEW_CRITERIA = [
   { key: 'company_profile_score', label: 'Company Profile', max: 10 },
 ];
 export const PAPER_REVIEW_MAX_SCORE = PAPER_REVIEW_CRITERIA.reduce((s, c) => s + c.max, 0);
-export const PAPER_GRADES = ['A', 'B', 'C', 'D'];
-export const PAPER_GRADE_TONE = { A: 'green', B: 'blue', C: 'amber', D: 'red' };
+// Same correction as QC_GRADES above; the export's real vocabulary is
+// A, B, B+, C, D, E, not A-D.
+export const PAPER_GRADES = ['A', 'B', 'B+', 'C', 'D', 'E'];
+export const PAPER_GRADE_TONE = { A: 'green', B: 'blue', 'B+': 'blue', C: 'amber', D: 'red', E: 'red' };
 export const PAPER_SESSION_OPTIONS = ['Day 1, Morning Session', 'Day 1, Afternoon Session', 'Day 2, Morning Session', 'Day 2, Afternoon Session'];

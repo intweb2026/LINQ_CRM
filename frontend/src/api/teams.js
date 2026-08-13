@@ -28,6 +28,22 @@ export function archive(teamId) {
 export function activity(teamId) {
   return http.get(`teams/${teamId}/activity/`).then((r) => r.data);
 }
+function toBackend(patch) {
+  const body = {};
+  if (patch.name !== undefined) body.name = patch.name;
+  if (patch.color !== undefined) body.color = patch.color;
+  if (patch.description !== undefined) body.description = patch.description;
+  return body;
+}
+
 export function create(payload) {
-  return http.post('teams/', payload).then((r) => toFrontend(r.data));
+  return http.post('teams/', toBackend(payload)).then((r) => toFrontend(r.data));
+}
+export function update(id, payload) {
+  return http.patch(`teams/${id}/`, toBackend(payload)).then((r) => toFrontend(r.data));
+}
+// 409 with a `detail` naming the member count when the team is not empty —
+// TeamViewSet.destroy refuses rather than orphaning people.
+export function remove(id) {
+  return http.delete(`teams/${id}/`).then(() => true);
 }

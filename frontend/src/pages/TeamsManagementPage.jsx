@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { PageHead } from '../components/UI';
 import Popover from '../components/Popover';
 import { Icon } from '../lib/icons';
@@ -9,12 +9,15 @@ import * as teamsApi from '../api/teams';
 import * as usersApi from '../api/users';
 import * as reportsApi from '../api/reports';
 import { useFetch } from '../hooks/useFetch';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
 import NoAccessPage from './NoAccessPage';
 import AssignLeadModal from './teams/AssignLeadModal';
 import TeamActivityDrawer from './teams/TeamActivityDrawer';
+import TeamFormModal from './teams/TeamFormModal';
+import { apiErrorMessage } from '../api/client';
 
 function Card({ u, metric, onDragStart, onDragEnd }) {
   return (
@@ -29,7 +32,7 @@ function Card({ u, metric, onDragStart, onDragEnd }) {
   );
 }
 
-function Column({ id, name, color, members, isOver, match, secondMetric, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onAssignLead, onViewActivity, onArchive }) {
+function Column({ id, name, color, members, isOver, match, secondMetric, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onEdit, onAssignLead, onViewActivity, onArchive }) {
   const vis = members.filter(match);
   return (
     <div className={'kc' + (isOver ? ' ov' : '')} onDragOver={(e) => { e.preventDefault(); onDragOver(id); }} onDragLeave={() => onDragLeave(id)} onDrop={(e) => { e.preventDefault(); onDrop(id); }}>
@@ -40,6 +43,7 @@ function Column({ id, name, color, members, isOver, match, secondMetric, onDragS
             {({ close }) => (
               <>
                 <div className="pop-t">{name}</div>
+                <button className="pop-i" onClick={() => { close(); onEdit(id); }}><Icon name="edit" size={15} />Edit team</button>
                 <button className="pop-i" onClick={() => { close(); onAssignLead(id); }}><Icon name="star" size={15} />Assign lead</button>
                 <button className="pop-i" onClick={() => { close(); onViewActivity(id); }}><Icon name="chart" size={15} />View activity</button>
                 <button className="pop-i del" onClick={() => { close(); onArchive(id, name, members.length); }}><Icon name="trash" size={15} />Archive team</button>
@@ -61,15 +65,33 @@ export default function TeamsManagementPage() {
   const confirm = useConfirm();
   const [roleFilter, setRoleFilter] = useState('all');
   const [q, setQ] = useState('');
-  const { data: teams, refetch } = useFetch(teamsApi.list, [], { initialData: [] });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
+  const { data: teams, refetchQuiet: reloadTeams } = useFetch(teamsApi.list, [], { initialData: [] });
+  const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
   // One aggregate request instead of walking every delegate and every ticket.
-  const { data: memberStats } = useFetch(reportsApi.teamMemberStats, [], { initialData: {} });
+  const { data: memberStats, refetchQuiet: reloadStats } = useFetch(reportsApi.teamMemberStats, [], { initialData: {} });
   const TEAMS = teams || [];
   const USERS = users || [];
-  const refresh = () => refetch();
+  /**
+   * BOTH lists, always.
+   *
+   * The board's columns come from `teams` but every CARD in them comes from
+   * `users` — `team_id` and `is_lead` live on the user, not the team. Refreshing
+   * teams alone meant a drag between columns and an Assign lead both returned a
+   * success toast while the card stayed exactly where it was; only a page reload
+   * showed the move that had in fact already been saved.
+   *
+   * The per-member counters come with them, and the whole thing now runs on
+   * useLiveData — so a member moved between teams from someone else's browser
+   * lands on this board too, which matters on a page two people reorganising the
+   * same teams will have open at once.
+   */
+  const { refreshNow: refresh } = useLiveData(
+    useCallback(() => { reloadTeams(); reloadUsers(); reloadStats(); }, [reloadTeams, reloadUsers, reloadStats]),
+    { resources: ['teams', 'users'] },
+  );
   const [leadModalTeam, setLeadModalTeam] = useState(null);
   const [activityTeam, setActivityTeam] = useState(null);
+  const [formTeam, setFormTeam] = useState(undefined); // undefined = closed, null = create new, object = edit
   const [dragName, setDragName] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
 
@@ -101,7 +123,12 @@ export default function TeamsManagementPage() {
     const u = USERS.find((x) => x.name === dragName);
     setDragName(null);
     if (!u || u.team_id === destId) return;
-    await teamsApi.reassign(u.id, destId || null);
+    try {
+      await teamsApi.reassign(u.id, destId || null);
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not move ' + u.name + '.'), 'er');
+      return;
+    }
     toast(u.name + ' moved to ' + (destId === 0 ? 'Unassigned' : TEAMS.find((t) => t.id === destId)?.name), 'ok');
     refresh();
   }
@@ -109,7 +136,12 @@ export default function TeamsManagementPage() {
   async function archive(id, name, memberCount) {
     const ok = await confirm({ title: 'Archive ' + name + '?', danger: true, ok: 'Archive', sub: memberCount + ' member(s) will need reassignment.', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>Archived teams are hidden from the board but not deleted.</p> });
     if (ok) {
-      await teamsApi.archive(id);
+      try {
+        await teamsApi.archive(id);
+      } catch (err) {
+        toast(apiErrorMessage(err, 'Could not archive ' + name + '.'), 'er');
+        return;
+      }
       refresh();
       toast(name + ' archived', 'ok');
     }
@@ -119,6 +151,7 @@ export default function TeamsManagementPage() {
     match, secondMetric,
     onDragStart: setDragName, onDragEnd: () => setDragName(null),
     onDragOver: setDragOverId, onDragLeave: (id) => setDragOverId((cur) => (cur === id ? null : cur)), onDrop: drop,
+    onEdit: (id) => setFormTeam(TEAMS.find((t) => t.id === id)),
     onAssignLead: (id) => setLeadModalTeam(TEAMS.find((t) => t.id === id)),
     onViewActivity: (id) => setActivityTeam(TEAMS.find((t) => t.id === id)),
     onArchive: archive,
@@ -129,7 +162,7 @@ export default function TeamsManagementPage() {
       <PageHead title="Teams" sub="Drag a person between columns to reassign them. Assign a lead or archive a team from its menu."
         actions={can('create', 'teams') ? <>
           <button className="btn btn-s" onClick={() => toast('Roster exported', 'ok')}><Icon name="download" size={15} />Export roster</button>
-          <button className="btn btn-p" onClick={() => toast('Team builder — next release', 'nf')}><Icon name="plus" size={15} />Create team</button>
+          <button className="btn btn-p" onClick={() => setFormTeam(null)}><Icon name="plus" size={15} />Create team</button>
         </> : null} />
       <div className="tb">
         <div className="tb-s"><input className="in in-s" placeholder="Find a person…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
@@ -145,6 +178,7 @@ export default function TeamsManagementPage() {
       </div>
       {leadModalTeam ? <AssignLeadModal team={leadModalTeam} onClose={() => setLeadModalTeam(null)} onSaved={refresh} /> : null}
       {activityTeam ? <TeamActivityDrawer team={activityTeam} onClose={() => setActivityTeam(null)} /> : null}
+      {formTeam !== undefined ? <TeamFormModal team={formTeam} onClose={() => setFormTeam(undefined)} onSaved={refresh} /> : null}
     </>
   );
 }

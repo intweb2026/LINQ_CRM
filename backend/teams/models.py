@@ -27,8 +27,17 @@ class Team(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
+        # `slug` is unique, and two teams may legitimately share a name ("Sales"
+        # in two regions, say). Taking slugify(name) verbatim made the second one
+        # raise IntegrityError out of the create endpoint — a 500, with nothing
+        # in the response naming the collision. Suffix until it is free instead.
         if not self.slug:
-            self.slug = slugify(self.name)
+            base = slugify(self.name) or "team"
+            slug, n = base, 2
+            while Team.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base}-{n}"
+                n += 1
+            self.slug = slug
         super().save(*args, **kwargs)
 
 

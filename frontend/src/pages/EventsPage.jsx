@@ -7,19 +7,28 @@ import { fdate, nf, uniq } from '../lib/helpers';
 import { EVENT_STATUSES } from '../lib/constants';
 import * as eventsApi from '../api/events';
 import { useFetch } from '../hooks/useFetch';
+import { useBulkUpdate } from '../hooks/useBulkUpdate';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import EventDrawer from './events/EventDrawer';
 import EditEventModal from './events/EditEventModal';
 import NewEventModal from './events/NewEventModal';
 import ImportWizard from '../components/ImportWizard';
+import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 
 export default function EventsPage() {
   const { canView, can } = useSession();
-  const { data: events, refetch } = useFetch(eventsApi.list, [], { initialData: [] });
+  const { data: events, refetchQuiet: reloadEvents } = useFetch(eventsApi.list, [], { initialData: [] });
   const EVENTS = events || [];
-  const refresh = () => refetch();
+  // The catalogue is also written by the webhook ingestion path and by the
+  // importer, neither of which this browser initiates — so the page polls as well
+  // as reacting to its own saves.
+  const { refreshNow: refresh } = useLiveData(reloadEvents, { resources: ['events'] });
+  // EventViewSet has declared bulk_update_fields (status, web bookings, location,
+  // official name) since it was written; nothing in this page reached them.
+  const bulk = useBulkUpdate('events', refresh);
   const [drawerEvent, setDrawerEvent] = useState(null);
   const [editEvent, setEditEvent] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -38,13 +47,29 @@ export default function EventsPage() {
           {/* Outside the create gate on purpose: this button answers to the HP
               account, not to a module permission, and nesting it inside another
               check would make its audience the INTERSECTION of the two. */}
+          {/* The second sentence was learned the hard way: the catalogue is what
+              every importer resolves an Event Code against, so clearing it stops
+              Paper Review, Proposal Submission and Booking imports from accepting
+              ANY row — each one reports "no matching event" per row and nothing
+              says why. Wiping events is not a self-contained action and the
+              confirmation has to say so. */}
           <ClearAllButton noun="events" count={EVENTS.length}
             onClear={eventsApi.clearAll} onCleared={refresh}
-            extra="Bookings are not deleted with the catalogue — they store their event as a text code, so they will survive with codes that no longer resolve to an event." />
+            extra="Bookings are not deleted with the catalogue — they store their event as a text code, so they will survive with codes that no longer resolve to an event. Imports in Paper Review, Proposal Submission and Bookings will also reject every row until the catalogue is restored, because they match each row's Event Code against it." />
         </>} />
 
+      {/* `infinite` without `server`. eventsApi.list already walks every page up
+          front via fetchAllPages, so the whole catalogue is in memory and
+          scrolling reveals more of what is already there rather than fetching;
+          there is no request per scroll, and the `opts` closures below keep
+          seeing the full set, which is what makes the filter dropdowns list
+          every real location, type and team rather than only the values that
+          happen to be on screen. Bookings and Tickets pair `infinite` with
+          `server` instead, because those tables are too large to hold at once;
+          this one is the catalogue. */}
       <DataTable
-        rows={EVENTS} noun="events" pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
+        rows={EVENTS} noun="events" infinite pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
+        select={can('update', 'events')}
         groups={[
           { key: 'ev', label: 'Event' }, { key: 'web', label: 'Web presence' }, { key: 'own', label: 'Team ownership' },
           { key: 'meta', label: 'Naming & metadata' }, { key: 'rel', label: 'Related & upcoming events' },
@@ -105,12 +130,32 @@ export default function EventsPage() {
           </div>
         )}
         onRow={(r) => setDrawerEvent(r)}
+        bulkActions={(ids, { clear, total }) => (
+          <div className="bulk">
+            {/* Selection spans the rows LOADED so far, not every match; the
+                header checkbox ticks what scrolling has revealed and nothing
+                below it. Saying so is what stops the count being read as the
+                whole filtered set. It also means scrolling further does not
+                retroactively add rows to a selection already made. */}
+            <span className="n">{nf(ids.length)}</span> selected
+            {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
+            <div className="sep" />
+            <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
+              <Icon name="edit" size={13} />Update field…
+            </button>
+            <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
+          </div>
+        )}
       />
+
+      {bulk.ready ? (
+        <BulkUpdateModal {...bulk.props} rowLabel="event" totalMatching={EVENTS.length} />
+      ) : null}
 
       {drawerEvent ? <EventDrawer event={drawerEvent} onClose={() => setDrawerEvent(null)} onEdit={setEditEvent} /> : null}
       {editEvent ? <EditEventModal event={editEvent} onClose={() => setEditEvent(null)} onSaved={refresh} /> : null}
       {newOpen ? <NewEventModal onClose={() => setNewOpen(false)} onSaved={refresh} /> : null}
-      {importOpen ? <ImportWizard kind="events" onClose={() => setImportOpen(false)} /> : null}
+      {importOpen ? <ImportWizard kind="events" onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
     </>
   );
 }

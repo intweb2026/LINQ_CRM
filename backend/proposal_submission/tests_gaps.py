@@ -193,6 +193,51 @@ class MRFieldVisibilityTests(_Base):
         self.row.refresh_from_db()
         self.assertEqual(self.row.internal_footnotes_mr, "Weak on delivery")
 
+    # ── The same rule on the bulk path ────────────────────────────────────────
+    # bulk_update writes the model directly, so the serializer's guard above does
+    # not cover it. These two columns became mass-updatable when the registry
+    # started deriving from the model; without the gate in views.bulk_update a
+    # non-MR user could mass-write a column stripped from their own reads.
+
+    def test_bulk_update_refuses_an_mr_field_for_other_roles(self):
+        self.client.force_authenticate(user=self.user)
+        for f in self.MR_FIELDS:
+            with self.subTest(field=f):
+                r = self.client.post(
+                    f"{self.LIST}bulk_update/",
+                    {"ids": [self.row.id], "field": f, "value": "sneaky",
+                     "commit": False},
+                    format="json")
+                self.assertEqual(r.status_code, 400, r.content)
+        self.row.refresh_from_db()
+        self.assertEqual(self.row.internal_footnotes_mr, "Weak on delivery")
+
+    def test_bulk_update_schema_hides_the_mr_fields_from_other_roles(self):
+        self.client.force_authenticate(user=self.user)
+        fields = self.client.get(f"{self.LIST}bulk_update_schema/").data["fields"]
+        for f in self.MR_FIELDS:
+            self.assertNotIn(f, fields)
+
+    def test_mr_can_bulk_update_the_fields(self):
+        self.client.force_authenticate(user=self.mr_user)
+        fields = self.client.get(f"{self.LIST}bulk_update_schema/").data["fields"]
+        for f in self.MR_FIELDS:
+            self.assertIn(f, fields)
+
+        preview = self.client.post(
+            f"{self.LIST}bulk_update/",
+            {"ids": [self.row.id], "field": "internal_footnotes_mr",
+             "value": "Batch reassessed", "commit": False}, format="json")
+        self.assertEqual(preview.status_code, 200, preview.content)
+        commit = self.client.post(
+            f"{self.LIST}bulk_update/",
+            {"ids": [self.row.id], "field": "internal_footnotes_mr",
+             "value": "Batch reassessed", "commit": True,
+             "plan_hash": preview.data["plan_hash"]}, format="json")
+        self.assertEqual(commit.status_code, 200, commit.content)
+        self.row.refresh_from_db()
+        self.assertEqual(self.row.internal_footnotes_mr, "Batch reassessed")
+
     def test_a_blank_echo_does_not_wipe_the_stored_value(self):
         """
         The shared form posts all 21 keys. A non-MR user editing another column
@@ -246,18 +291,36 @@ class MixinWiringTests(_Base):
         self.assertEqual(r.data["count"], 1)
         self.assertEqual(r.data["results"][0]["speaker_name"], "Keep Me")
 
-    def test_bulk_update_schema_exposes_only_the_whitelist(self):
+    def test_bulk_update_schema_covers_the_outcome_fields_and_no_identity(self):
+        """
+        The registry is derived from the model now, so every editable column
+        comes with it. What must NOT be there is the whole safety argument, and
+        is asserted explicitly.
+        """
         r = self.client.get(f"{self.LIST}bulk_update_schema/")
         self.assertEqual(r.status_code, 200, r.content)
-        expected = {
+        required = {
             "qc_grade", "qc_score", "speaker_slot_status", "sponsorship_status",
             "agenda_slot", "revenue_possibility", "sales_pitch_factor",
             "agenda_addition", "spex_remarks",
         }
-        self.assertEqual(set(r.data["fields"]), expected)
-        # Identity fields must never be mass-writable.
-        for forbidden in ("event_code", "speaker_name", "email", "company_name"):
-            self.assertNotIn(forbidden, r.data["fields"])
+        wired = set(r.data["fields"])
+        self.assertTrue(required <= wired, required - wired)
+        # Identity, provenance and audit must never be mass-writable.
+        for forbidden in ("event_code", "speaker_name", "email", "company_name",
+                          "source_paper_review", "import_batch_id",
+                          "created_by", "updated_by", "id"):
+            self.assertNotIn(forbidden, wired)
+
+    def test_qc_score_keeps_its_floor_from_the_model_validator(self):
+        """
+        The >= 0 rule is MinValueValidator(0) on the column; the registry reads
+        it rather than restating it, so removing the validator would remove the
+        bound in one place instead of leaving the two disagreeing.
+        """
+        r = self.client.get(f"{self.LIST}bulk_update_schema/")
+        self.assertEqual(r.data["fields"]["qc_score"]["min"], 0)
+        self.assertTrue(r.data["fields"]["qc_score"]["nullable"])
 
     def test_bulk_update_preview_writes_nothing(self):
         rows = [ProposalSubmission.objects.create(

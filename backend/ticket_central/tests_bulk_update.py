@@ -236,9 +236,68 @@ class TicketBulkUpdateTests(TestCase):
         self.assertEqual(f["relationship"]["choices"],   list(Ticket.Relationship.values))
         self.assertIn(self.user.email, f["assigned_mr"]["choices"])
 
-    def test_no_field_is_nullable(self):
-        """Every wired Ticket field is CharField(blank=True, default="") — not null=True."""
+    def _schema_fields(self):
         req = self.factory.get("/bulk_update_schema/")
         force_authenticate(req, user=self.user)
-        for key, cfg in SCHEMA(req).data["fields"].items():
-            self.assertFalse(cfg.get("nullable", False), f"{key} should not be nullable")
+        return SCHEMA(req).data["fields"]
+
+    def test_nullable_mirrors_the_model_column(self):
+        """
+        The text columns are CharField(blank=True, default="") and stay
+        non-nullable; the dates and counts are null=True and must be clearable,
+        so an MR can wipe a wrongly-entered complete_date across a batch rather
+        than only overwrite it. Asserted in both directions against the model.
+        """
+        columns = {f.name: f for f in Ticket._meta.get_fields()
+                   if getattr(f, "concrete", False)}
+        fields = self._schema_fields()
+        for key, cfg in fields.items():
+            if key not in columns:          # assigned_mr is added per request
+                continue
+            self.assertEqual(
+                bool(cfg.get("nullable", False)), bool(columns[key].null),
+                f"{key}: nullable disagrees with the model column",
+            )
+        self.assertTrue(fields["complete_date"]["nullable"])
+        self.assertFalse(fields["purpose"].get("nullable", False))
+
+    def test_workflow_state_and_provenance_are_absent_from_the_schema(self):
+        """
+        test_b_* proves the ENDPOINT refuses these. This proves the SCHEMA never
+        advertises them either — the registry derives from the model now, so the
+        exclusion list is the whole safety argument, and a field offered in the
+        picker but refused on Apply is a bug report waiting to happen.
+        """
+        wired = set(self._schema_fields())
+        for forbidden in ("status", "ticket_number", "external_id",
+                          "mr_submitted_at", "mr_submitted_by",
+                          "dmd_submitted_at", "dmd_submitted_by",
+                          "returned_at", "returned_by", "return_reason",
+                          "created_by", "created_at", "updated_at",
+                          "idempotency_key", "source_spreadsheet_id",
+                          "source_tab", "source_row_number", "id"):
+            self.assertNotIn(forbidden, wired)
+
+    def test_a_count_column_takes_a_number_and_refuses_garbage(self):
+        bad = self._preview(self.ids, "actual_number", "abc")
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("whole number", bad.data["detail"])
+
+        r = self._commit(self.ids, "actual_number", "120")
+        self.assertEqual(r.status_code, 200, r.data)
+        for t in Ticket.objects.filter(id__in=self.ids):
+            self.assertEqual(t.actual_number, 120)
+
+    def test_a_nullable_count_can_be_cleared(self):
+        self._commit(self.ids, "mined_count", "50")
+        plan = self._post({
+            "ids": self.ids, "field": "mined_count", "value": None, "commit": False,
+        })
+        self.assertEqual(plan.status_code, 200, plan.data)
+        r = self._post({
+            "ids": self.ids, "field": "mined_count", "value": None,
+            "commit": True, "plan_hash": plan.data["plan_hash"],
+        })
+        self.assertEqual(r.status_code, 200, r.data)
+        for t in Ticket.objects.filter(id__in=self.ids):
+            self.assertIsNone(t.mined_count)

@@ -33,7 +33,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from accounts.audit import log_module_wipe
-from accounts.bulk_update import BulkUpdateMixin
+from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
+from accounts.import_common import catalogue_notice
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
@@ -110,49 +111,50 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
     ordering = ["-submission_date"]
 
     # ── Mass update ───────────────────────────────────────────────────────────
-    # Whitelist only. ProposalSubmission has no parent FK, so every row is
-    # independent: no collateral, no split-group UI, no blast-radius warning.
+    # ProposalSubmission has no parent FK, so every row is independent: no
+    # collateral, no split-group UI, no blast-radius warning.
     #
-    # Identity fields (event_code, speaker_name, email, company_name) and the
-    # LinkedIn URLs are deliberately absent — mass-setting them would overwrite
-    # per-person data with one value, which is never a legitimate bulk action.
+    # Every editable column is wired EXCEPT:
+    #   event_code, speaker_name, email, company_name — identity. Mass-setting
+    #       them would overwrite per-person data with one value, and event_code
+    #       is what the RBAC scope matches on.
+    #   source_paper_review — provenance, and unique per review (the partial
+    #       constraint at models.py:155-160). One value across N rows would
+    #       violate it on the second row and abort the whole transaction.
+    #   import_batch_id, created_by, updated_by, created_at, updated_at, id —
+    #       DEFAULT_EXCLUDES in accounts/bulk_update.py.
     #
-    # The choice lists mirror the frontend placeholders. Because the model has no
-    # choices= at the DB level, this allow-list is the ONLY value safety these
-    # fields have — nothing at the database or model layer will catch a bad value.
-    bulk_update_fields = {
-        "qc_grade": {
-            "group": "row", "type": "choice", "label": "QC Grade",
-            "choices": ["A", "B", "C", "D"],
+    # qc_score keeps its >= 0 floor without being restated here: the model
+    # declares MinValueValidator(0) (models.py:58-59) and the builder reads it.
+    bulk_update_fields = build_bulk_update_fields(
+        ProposalSubmission,
+        exclude=(
+            "event_code", "speaker_name", "email", "company_name",
+            "source_paper_review",
+        ),
+        # The choice lists mirror the frontend placeholders. Because the model
+        # has no choices= at the DB level (see the module docstring — the real
+        # Zoho picklists were never legible), this allow-list is the ONLY value
+        # safety these fields have; nothing at the database or model layer will
+        # catch a bad value. participation_type is deliberately absent: its
+        # vocabulary is unknown, so it stays free text rather than being guessed.
+        choices={
+            "qc_grade":            ["A", "B", "B+", "C", "D", "E"],
+            "speaker_slot_status": ["Pending", "Confirmed", "Declined", "Waitlisted"],
+            "sponsorship_status":  ["Pending", "Confirmed", "Declined", "Not Applicable"],
+            "revenue_possibility": ["Low", "Medium", "High"],
         },
-        "qc_score": {
-            "group": "row", "type": "integer", "label": "QC Score", "nullable": True,
+        labels={
+            "qc_grade": "QC Grade",
+            "qc_score": "QC Score",
+            "linkedin_speaker": "LinkedIn — Speaker",
+            "linkedin_company": "LinkedIn — Company",
+            "linkedin_followers": "LinkedIn Followers",
+            "spex_remarks": "SPEX Remarks",
+            "internal_footnotes_mr": "Internal Footnotes (MR)",
+            "slot_recommendation_mr": "Slot Recommendation (MR)",
         },
-        "speaker_slot_status": {
-            "group": "row", "type": "choice", "label": "Speaker Slot Status",
-            "choices": ["Pending", "Confirmed", "Declined", "Waitlisted"],
-        },
-        "sponsorship_status": {
-            "group": "row", "type": "choice", "label": "Sponsorship Status",
-            "choices": ["Pending", "Confirmed", "Declined", "Not Applicable"],
-        },
-        "agenda_slot": {
-            "group": "row", "type": "text", "label": "Agenda Slot",
-        },
-        "revenue_possibility": {
-            "group": "row", "type": "choice", "label": "Revenue Possibility",
-            "choices": ["Low", "Medium", "High"],
-        },
-        "sales_pitch_factor": {
-            "group": "row", "type": "text", "label": "Sales Pitch Factor",
-        },
-        "agenda_addition": {
-            "group": "row", "type": "text", "label": "Agenda Addition",
-        },
-        "spex_remarks": {
-            "group": "row", "type": "text", "label": "SPEX Remarks",
-        },
-    }
+    )
     bulk_update_parent_path = None          # no parent — row writes only
     bulk_update_label       = "proposal submissions"
     # No field here has a save()-derived side effect, so there is nothing for the
@@ -185,37 +187,10 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
         },
     )
 
-    def _coerce(self, value, config):
-        """
-        Extend the shared coercer with an "integer" type.
-
-        BulkUpdateMixin._coerce knows only choice / date / boolean / text.
-        qc_score is an IntegerField, and declaring it "text" would pass a raw
-        string through to obj.save(): "42" happens to work, but "abc" raises
-        ValueError deep in the ORM and surfaces as an unhandled 500 instead of a
-        400 naming the field. Overridden here rather than in accounts/bulk_update.py
-        because three other modules share that file and none of them needs a
-        numeric type yet.
-
-        The modal renders unknown types as a plain text input, so "integer" needs
-        no frontend change.
-        """
-        if config.get("type") == "integer":
-            if value is None:
-                if config.get("nullable"):
-                    return None, None
-                return None, "This field cannot be cleared."
-            # bool is an int subclass in Python — reject it before int() accepts it.
-            if isinstance(value, bool):
-                return None, "Value must be a whole number."
-            try:
-                coerced = int(str(value).strip())
-            except (TypeError, ValueError):
-                return None, f"'{value}' is not a whole number."
-            if coerced < 0:
-                return None, "Value cannot be negative."
-            return coerced, None
-        return super()._coerce(value, config)
+    # The "integer" type and its 400-not-500 guarantee for a non-numeric value
+    # now live in accounts/bulk_update.py._coerce_number. This module and
+    # paper_review each carried a private copy; a fix to either had to be found
+    # in both.
 
     def get_queryset(self):
         """
@@ -625,6 +600,9 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
             "counts": counts,
             "importable": counts[CREATE] + counts[CREATE_WITH_WARNING],
             "unrecognised_columns": unrecognised,
+            # Why NOTHING in the file can import, when the reason is the system
+            # rather than the rows. See accounts/import_common.catalogue_notice.
+            "notice": catalogue_notice(),
             "rows": public_plan(plan),
         })
 
@@ -710,19 +688,31 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
     @action(detail=False, methods=["post"], url_path="bulk_update")
     def bulk_update(self, request, *args, **kwargs):
         """
-        Same contract as the shared mixin, with one addition: an id the caller
-        cannot see is a 404, not a quiet no-op.
+        Same contract as the shared mixin, with two additions.
 
-        The mixin already scopes correctly — it intersects the submitted ids with
-        get_queryset() — but an entirely out-of-scope batch comes back 200 with
-        `permitted: 0`. That is safe (nothing is written) yet it confirms nothing
-        either way, and it reads as "your edit applied to 0 rows" rather than
-        "that row is not yours". Re-decorated with @action so the route survives
-        the override.
+        1. An id the caller cannot see is a 404, not a quiet no-op. The mixin
+           already scopes correctly — it intersects the submitted ids with
+           get_queryset() — but an entirely out-of-scope batch comes back 200 with
+           `permitted: 0`. That is safe (nothing is written) yet it confirms
+           nothing either way, and it reads as "your edit applied to 0 rows"
+           rather than "that row is not yours". Re-decorated with @action so the
+           route survives the override.
+        2. The MR columns are refused for users who cannot see them. Without
+           this, a non-MR user could mass-write columns that are stripped from
+           their own reads — writing content they can never verify, over content
+           they were never shown. The serializer's guard does not cover this
+           path: bulk_update writes the model directly. Mirrors the identical
+           gate in paper_review/views.py.
 
         The submitted ids are used ONLY to narrow: the visible set comes from
         get_queryset(), never from the body.
         """
+        field = request.data.get("field")
+        if field in _MR_QUERY_PARAMS and not may_see_mr_fields(request.user):
+            raise ValidationError({
+                "field": f"'{field}' is restricted to Market Research and Admin."
+            })
+
         ids = request.data.get("ids")
         if isinstance(ids, list) and ids and all(isinstance(i, int) for i in ids):
             visible = set(
@@ -735,6 +725,22 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
                 )
         # Non-int / malformed ids fall through to the mixin's own 400.
         return super().bulk_update(request)
+
+    @action(detail=False, methods=["get"], url_path="bulk_update_schema")
+    def bulk_update_schema(self, request):
+        """
+        Hide the MR columns from the advertised schema for users who cannot read
+        them — offering a field whose values are stripped from their own reads
+        invites exactly the blind mass-write the guard in bulk_update() refuses.
+        Re-decorated with @action so the route survives the override.
+        """
+        response = super().bulk_update_schema(request)
+        if not may_see_mr_fields(request.user):
+            fields = dict(response.data.get("fields") or {})
+            for name in _MR_QUERY_PARAMS:
+                fields.pop(name, None)
+            response.data["fields"] = fields
+        return response
 
     # ── Row actions ───────────────────────────────────────────────────────────
 

@@ -6,6 +6,8 @@ import { Icon } from '../lib/icons';
 import { Av, StatusBadge, Dot, Who } from '../components/Badge';
 import { fdate, ftime, nf, plur, rel } from '../lib/helpers';
 import { PAYMENT_STATUSES, ATTENDANCE, TICKET_TIERS, PAYMENT_TYPES, BOOKING_CODES } from '../lib/constants';
+import { useBulkUpdate } from '../hooks/useBulkUpdate';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -147,8 +149,6 @@ export default function BookingsPage() {
   const [transferRow, setTransferRow] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [bulkState, setBulkState] = useState(null);   // {ids, clear}
-  const [bulkSchema, setBulkSchema] = useState(null);
 
   // Stored inside an updater, not passed bare to setTableRefetch. React treats a
   // function argument to a state setter as an UPDATER, so `setTableRefetch(fn)`
@@ -163,31 +163,35 @@ export default function BookingsPage() {
 
   useEffect(() => { reloadCounts(); }, [reloadCounts]);
 
+  /**
+   * The tab counts have to stay current alongside the rows, and they are a
+   * different query — three small aggregates, not the page of delegates. The table
+   * keeps ITSELF up to date (see DataTable's liveReload); this keeps
+   * "Pending (312)" from disagreeing with the rows underneath it.
+   *
+   * Both `delegates` and `invoices` are watched because a booking is written
+   * through either: the edit modal PATCHes invoices/{id}/, the import POSTs
+   * invoices/bulk_import/, while marking paid and transferring go through
+   * delegates/. Watching only the resource the page READS from would miss half
+   * the writes it makes.
+   */
+  const { refreshNow: refreshCounts } = useLiveData(
+    useCallback(() => {
+      reloadCounts();
+      setLastUpdated(new Date().toISOString());
+    }, [reloadCounts]),
+    { resources: ['delegates', 'invoices'] },
+  );
+
   const refresh = useCallback(() => {
     if (tableRefetch) tableRefetch();
-    reloadCounts();
-    setLastUpdated(new Date().toISOString());
-  }, [tableRefetch, reloadCounts]);
+    refreshCounts();
+  }, [tableRefetch, refreshCounts]);
 
-  // Fetched once, lazily: the modal renders entirely from this, so the field
-  // list is the server's and nothing about it is hardcoded in the UI.
-  useEffect(() => {
-    if (!bulkState || bulkSchema) return;
-    bookingsApi.bulkUpdateSchema().then(setBulkSchema).catch(() => {
-      toast('Could not load the list of editable fields', 'er');
-      setBulkState(null);
-    });
-  }, [bulkState, bulkSchema, toast]);
-
-  const onPreview = useCallback(
-    (field, value) => bookingsApi.bulkUpdateDryRun(bulkState.ids, field, value),
-    [bulkState],
-  );
-  const onCommit = useCallback(
-    (field, value, planHash) => bookingsApi.bulkUpdateApply(bulkState.ids, field, value, planHash)
-      .then((res) => { bulkState.clear(); refresh(); return res; }),
-    [bulkState, refresh],
-  );
+  // The schema fetch, the selection and the preview/commit pair were written out
+  // here first; they are now the shared hook, which is what Ticket Central, Events,
+  // Paper Review and Proposal Submission use as well. Same behaviour, one copy.
+  const bulk = useBulkUpdate(bookingsApi.RESOURCE, refresh);
 
   if (!canView('bookings')) return <NoAccessPage module="Bookings" />;
 
@@ -245,7 +249,9 @@ export default function BookingsPage() {
 
       <DataTable
         tableId="bookings"
-        server={{ resource: bookingsApi.RESOURCE, mapRow: bookingsApi.fromApi }}
+        // live: the rows are READ from delegates/, but an invoice edit and the
+        // import both write invoices/ — named here so those reach the table too.
+        server={{ resource: bookingsApi.RESOURCE, mapRow: bookingsApi.fromApi, live: ['invoices'] }}
         serverCriteria={serverCriteria}
         onServerReady={keepRefetch}
         noun="bookings" select={can('delete', 'bookings') || can('update', 'bookings')} infinite pageSize={50}
@@ -279,7 +285,7 @@ export default function BookingsPage() {
             {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
             <div className="sep" />
             {can('update', 'bookings') ? (
-              <button className="btn btn-sm btn-p" onClick={() => setBulkState({ ids, clear })}>
+              <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
                 <Icon name="edit" size={13} />Update field…
               </button>
             ) : null}
@@ -296,16 +302,8 @@ export default function BookingsPage() {
         )}
       />
 
-      {bulkState && bulkSchema ? (
-        <BulkUpdateModal
-          onClose={() => setBulkState(null)}
-          selectedIds={bulkState.ids}
-          schema={bulkSchema}
-          rowLabel="delegate"
-          totalMatching={counts?.total}
-          onPreview={onPreview}
-          onCommit={onCommit}
-        />
+      {bulk.ready ? (
+        <BulkUpdateModal {...bulk.props} rowLabel="delegate" totalMatching={counts?.total} />
       ) : null}
 
       {/* Rendered here rather than inside the table so it survives the row list
@@ -331,7 +329,7 @@ export default function BookingsPage() {
         />
       ) : null}
       {newOpen ? <NewBookingModal onClose={() => setNewOpen(false)} onCreated={refresh} /> : null}
-      {importOpen ? <ImportWizard kind="bookings" onClose={() => setImportOpen(false)} /> : null}
+      {importOpen ? <ImportWizard kind="bookings" onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
     </>
   );
 }

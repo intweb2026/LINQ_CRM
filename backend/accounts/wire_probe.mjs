@@ -46,6 +46,7 @@ const AXIOS_STUB = `
 const __mk = () => ({
   get:    (url, cfg) => { globalThis.__CAP.push({ verb:"GET",  url, params: cfg?.params ?? null, body: null }); return Promise.resolve({ data: { count: 0, results: [] } }); },
   post:   (url, body) => { globalThis.__CAP.push({ verb:"POST", url, params: null, body: JSON.parse(JSON.stringify(body ?? null)) }); return Promise.resolve({ data: {} }); },
+  put:    (url, body) => { globalThis.__CAP.push({ verb:"PUT",  url, params: null, body: JSON.parse(JSON.stringify(body ?? null)) }); return Promise.resolve({ data: {} }); },
   patch:  (url, body) => { globalThis.__CAP.push({ verb:"PATCH", url, params: null, body: JSON.parse(JSON.stringify(body ?? null)) }); return Promise.resolve({ data: {} }); },
   delete: (url) => { globalThis.__CAP.push({ verb:"DELETE", url, params: null, body: null }); return Promise.resolve({ data: {} }); },
   interceptors: { request: { use(){} }, response: { use(){} } },
@@ -70,8 +71,18 @@ async function load(rel, extra = (s) => s) {
   return import("file://" + p.replace(/\\/g, "/"));
 }
 
+// api/client.js imports lib/liveData.js — the invalidation bus its response
+// interceptor publishes writes to. Loaded FIRST so client.js's import of it can be
+// redirected at the flat copy, the same way './client' and '../lib/constants' are
+// below. That module is deliberately guarded for a non-browser global scope
+// (no window, no BroadcastChannel, no localStorage under Node), which is what lets
+// it be imported here at all.
+const liveDataMod = await load("lib/liveData.js");
+const liveDataPath = join(dir, "lib_liveData.mjs").replace(/\\/g, "/");
+
 // api/*.js import './client' — resolve that to the stubbed copy we just wrote.
-const clientMod = await load("api/client.js");
+const clientMod = await load("api/client.js", (s) =>
+  s.replace(/from ['"]\.\.\/lib\/liveData['"]/g, `from "file://${liveDataPath}"`));
 const clientPath = join(dir, "api_client.mjs").replace(/\\/g, "/");
 const patchClientImport = (s) =>
   s.replace(/from ['"]\.\/client['"]/g, `from "file://${clientPath}"`);
@@ -82,6 +93,19 @@ const { specToJson, partitionConds, toCriterion } = spec;
 const bookings = await load("api/bookings.js", patchClientImport);
 const tickets = await load("api/tickets.js", patchClientImport);
 const webhooks = await load("api/webhooks.js", patchClientImport);
+
+// api/roles.js also reads ALL_MODULES from lib/constants. Everything is loaded
+// flattened into one temp directory, so that relative import needs redirecting
+// the same way './client' does.
+const constantsMod = await load("lib/constants.js");
+const constantsPath = join(dir, "lib_constants.mjs").replace(/\\/g, "/");
+const patchAdminImports = (s) =>
+  patchClientImport(s).replace(/from ['"]\.\.\/lib\/constants['"]/g, `from "file://${constantsPath}"`);
+const { ALL_MODULES } = constantsMod;
+const roles = await load("api/roles.js", patchAdminImports);
+const users = await load("api/users.js", patchAdminImports);
+const teams = await load("api/teams.js", patchAdminImports);
+const roleFromTeam = await load("lib/roleFromTeam.js");
 // api/companies.js was loaded here until the Companies tab was removed. The
 // import outlived the file, so `node wire_probe.mjs` died with ENOENT before a
 // single check ran — the whole point of the probe, unavailable, on a suite that
@@ -490,6 +514,199 @@ for (const [name, mod, url] of [
   check(`${name} clear-all is DELETE ${url}`,
     wipe.verb === "DELETE" && wipe.url === url, `${wipe.verb} ${wipe.url}`);
 }
+
+// ── 10. Roles: the permission grid's field names ────────────────────────────
+// THE BUG THIS COVERS. The UI holds the grid as {view, create, update, delete}
+// and api/roles.js spread it into the request as-is, while
+// CustomRoleViewSet.set_permissions reads can_view / can_create / can_update /
+// can_delete and DEFAULTS EVERY MISSING KEY TO FALSE. So creating or editing a
+// role returned 200, toasted "Role created", and stored a fully denied
+// permission set. Nothing in the response said otherwise; the role simply came
+// back with nothing ticked and everyone holding it saw No Access everywhere.
+//
+// A same-shaped payload cannot be spot-checked by eye — `view: true` and
+// `can_view: true` look equally correct in a request log — so the names are
+// pinned here and the captured body is replayed at the real endpoint by
+// tests_wire_probe.py.
+const fullGrid = {};
+ALL_MODULES.forEach((m) => { fullGrid[m] = { view: true, create: true, update: true, delete: true }; });
+
+captured.length = 0;
+await roles.save({
+  id: 7, name: "regional_manager", display_label: "Regional Manager",
+  color: "#009CBC", description: "d", permissions: fullGrid,
+});
+const rolePut = captured.find((c) => c.verb === "PUT");
+const permRows = rolePut?.body?.permissions ?? [];
+results.literals.role_permissions_body = rolePut?.body ?? null;
+
+check("role permissions PUT goes to the role's permissions action",
+  rolePut?.url === "roles/7/permissions/", `${rolePut?.verb} ${rolePut?.url}`);
+check("role permissions use the backend's can_* field names",
+  permRows.length > 0 && permRows.every((p) => ["can_view", "can_create", "can_update", "can_delete"]
+    .every((k) => typeof p[k] === "boolean")),
+  JSON.stringify(permRows[0]));
+check("role permissions do NOT send the UI's bare view/create/update/delete keys",
+  permRows.every((p) => !("view" in p) && !("create" in p) && !("update" in p) && !("delete" in p)),
+  JSON.stringify(permRows[0]));
+check("every registered module is sent, so none is left at its old value",
+  permRows.length === ALL_MODULES.length
+  && ALL_MODULES.every((m) => permRows.some((p) => p.module === m)),
+  `${permRows.length} rows for ${ALL_MODULES.length} modules`);
+check("a ticked box arrives as true, not dropped",
+  permRows.every((p) => p.can_view && p.can_create && p.can_update && p.can_delete),
+  JSON.stringify(permRows.find((p) => !p.can_view) ?? "all true"));
+
+// An unticked grid must send explicit falses rather than omitting the keys —
+// revoking a permission is a real operation and has to travel.
+captured.length = 0;
+const emptyGrid = {};
+ALL_MODULES.forEach((m) => { emptyGrid[m] = { view: false, create: false, update: false, delete: false }; });
+await roles.save({ id: 7, display_label: "Regional Manager", permissions: emptyGrid });
+const revoked = captured.find((c) => c.verb === "PUT").body.permissions;
+check("revoking sends explicit false, it does not omit the key",
+  revoked.every((p) => p.can_view === false && p.can_delete === false),
+  JSON.stringify(revoked[0]));
+
+// The create path derives the unique `name` key from the label. Trailing
+// separators would survive into it and an all-punctuation label would derive an
+// empty name, which the backend rejects with an error naming a field the form
+// does not show.
+captured.length = 0;
+await roles.save({ display_label: "  Ops (EU) ", color: "#111", description: "", permissions: null });
+const rolePost = captured.find((c) => c.verb === "POST");
+check("new role posts to roles/", rolePost?.url === "roles/", `${rolePost?.verb} ${rolePost?.url}`);
+check("derived role name is a clean slug with no trailing separators",
+  rolePost?.body?.name === "ops_eu", JSON.stringify(rolePost?.body?.name));
+check("new role carries the label the user typed, trimmed",
+  rolePost?.body?.display_label === "  Ops (EU) ", JSON.stringify(rolePost?.body?.display_label));
+
+// ── 11. Users: the create/edit body ────────────────────────────────────────
+// `is_lead` is the frontend's name and `is_team_lead` is the column; sending the
+// former means the checkbox is accepted and discarded. `custom_role_id` is the
+// field that actually grants access — a create that drops it makes an account
+// that can see nothing, which reads as "the new user is broken", not "the form is".
+captured.length = 0;
+await users.create({
+  username: "ada", email: "ada@iq-hub.com", first_name: "Ada", last_name: "Lovelace",
+  role: "sales", status: "active", team_id: 3, custom_role_id: 4, is_lead: true,
+  password: "hunter2hunter2",
+});
+const userPost = captured[captured.length - 1];
+results.literals.user_create_body = userPost.body;
+check("new user posts to users/", userPost.verb === "POST" && userPost.url === "users/",
+  `${userPost.verb} ${userPost.url}`);
+check("user create sends is_team_lead, not the UI's is_lead",
+  userPost.body.is_team_lead === true && !("is_lead" in userPost.body), JSON.stringify(userPost.body));
+check("user create carries custom_role_id — the field that grants module access",
+  userPost.body.custom_role_id === 4, JSON.stringify(userPost.body.custom_role_id));
+check("user create carries team_id and password",
+  userPost.body.team_id === 3 && userPost.body.password === "hunter2hunter2",
+  JSON.stringify({ t: userPost.body.team_id, p: !!userPost.body.password }));
+
+// A blank password box means "leave it alone", never "set it to empty".
+captured.length = 0;
+await users.update(5, { first_name: "Ada", password: "" });
+const pwPatch = captured[captured.length - 1].body;
+check("an untouched password box is not sent",
+  !("password" in pwPatch), Object.keys(pwPatch).join(","));
+
+// A PATCH that names a column owns it, so an edit must send only what changed.
+captured.length = 0;
+await users.update(5, { status: "inactive" });
+const userPatch = captured[captured.length - 1];
+check("user edit patches only the keys it was given",
+  userPatch.url === "users/5/" && Object.keys(userPatch.body).join(",") === "status",
+  `${userPatch.url} ${JSON.stringify(userPatch.body)}`);
+
+// null is meaningful on both of these — it unassigns — so it must survive the
+// "only send what was given" filter rather than being treated as absent.
+captured.length = 0;
+await users.update(5, { team_id: null, custom_role_id: null });
+const unassign = captured[captured.length - 1].body;
+check("unassigning a team or permission set sends null, not nothing",
+  unassign.team_id === null && unassign.custom_role_id === null, JSON.stringify(unassign));
+
+// The endpoint flips the status; an empty body is the whole request. It used to
+// be rejected with 400 for not naming a status, on a button called "Deactivate".
+captured.length = 0;
+await users.toggleStatus(5);
+const toggle = captured[captured.length - 1];
+results.literals.user_toggle_body = toggle.body;
+check("toggle-status patches the user's toggle action with an empty body",
+  toggle.verb === "PATCH" && toggle.url === "users/5/toggle-status/"
+  && Object.keys(toggle.body).length === 0,
+  `${toggle.verb} ${toggle.url} ${JSON.stringify(toggle.body)}`);
+
+captured.length = 0;
+await users.resetPassword(5, "hunter2hunter2");
+const reset = captured[captured.length - 1];
+check("reset-password sends both halves the endpoint compares",
+  reset.url === "users/5/reset-password/"
+  && reset.body.password === "hunter2hunter2" && reset.body.confirm_password === "hunter2hunter2",
+  `${reset.url} ${JSON.stringify(Object.keys(reset.body))}`);
+
+// ── 12. Teams: create and edit ─────────────────────────────────────────────
+captured.length = 0;
+await teams.create({ name: "Market Research", color: "#009CBC", description: "MR team" });
+const teamPost = captured[captured.length - 1];
+results.literals.team_create_body = teamPost.body;
+check("new team posts to teams/", teamPost.verb === "POST" && teamPost.url === "teams/",
+  `${teamPost.verb} ${teamPost.url}`);
+check("team create carries name, colour and description",
+  teamPost.body.name === "Market Research" && teamPost.body.color === "#009CBC"
+  && teamPost.body.description === "MR team", JSON.stringify(teamPost.body));
+// slug is derived server-side and is unique; sending a client guess is how two
+// teams with the same name collide.
+check("team create does not send a client-guessed slug",
+  !("slug" in teamPost.body), Object.keys(teamPost.body).join(","));
+
+captured.length = 0;
+await teams.update(3, { name: "Market Research EU" });
+const teamPatch = captured[captured.length - 1];
+check("team edit patches only the keys it was given",
+  teamPatch.verb === "PATCH" && teamPatch.url === "teams/3/"
+  && Object.keys(teamPatch.body).join(",") === "name",
+  `${teamPatch.verb} ${teamPatch.url} ${JSON.stringify(teamPatch.body)}`);
+
+// ── 13. Team name -> role, the copy that has to match the server's ─────────
+// The Add user form fills Role in the moment a Team is picked, because the
+// server derives the same value on save and a form that did not show it left
+// the user looking at one role while a different one was stored. That preview is
+// only worth anything if it agrees with User.save(). Both are keyword chains
+// where ORDER decides the answer, so "Telesales" and "Speaker Sales Ops" are the
+// interesting names, not the obvious ones.
+//
+// The names and this side's answers are handed to tests_wire_probe.py, which
+// puts the SAME names through accounts.models.role_from_team_name and fails on
+// any disagreement. Neither copy is trusted; they are checked against each other.
+const { roleFromTeamName, TEAM_NAME_ROLE_KEYWORDS } = roleFromTeam;
+check("export exists: roleFromTeam.roleFromTeamName",
+  typeof roleFromTeamName === "function", typeof roleFromTeamName);
+
+const TEAM_NAMES = [
+  "Sales", "Sales Team", "Market Research", "MARKET RESEARCH ", "  market research  ",
+  "Data Mining", "DMD", "SpEx", "spex crew", "Operations", "Ops", "Operation",
+  "Speaker Sales", "Speaker Sales Ops", "Telemarketing", "Tele Marketing",
+  "Telesales", "Tele", "Admin", "Admin Team", "admin support",
+  "Finance", "Random Team", "", "   ",
+];
+results.literals.team_name_role_map = Object.fromEntries(
+  TEAM_NAMES.map((n) => [n, roleFromTeamName(n)]),
+);
+results.literals.team_name_role_keywords = TEAM_NAME_ROLE_KEYWORDS;
+
+check("a name with no keyword implies nothing, rather than defaulting to sales",
+  roleFromTeamName("Finance") === null, JSON.stringify(roleFromTeamName("Finance")));
+check("'tele' is tested before 'sales', so Telesales is telemarketing",
+  roleFromTeamName("Telesales") === "telemarketing", roleFromTeamName("Telesales"));
+check("'ops' is tested before 'speaker sales'",
+  roleFromTeamName("Speaker Sales Ops") === "operations", roleFromTeamName("Speaker Sales Ops"));
+check("matching ignores case and surrounding space",
+  roleFromTeamName("  MARKET RESEARCH  ") === "market_research",
+  roleFromTeamName("  MARKET RESEARCH  "));
+check("an admin-named team implies the admin role",
+  roleFromTeamName("Admin Team") === "admin", roleFromTeamName("Admin Team"));
 
 results.pass = results.checks.every((c) => c.pass);
 process.stdout.write(JSON.stringify(results, null, 2));

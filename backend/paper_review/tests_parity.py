@@ -204,14 +204,57 @@ class BulkUpdateTests(_Base):
             format="json")
         return preview, commit
 
-    def test_the_whitelist_is_exactly_what_c2_specifies(self):
+    def test_the_whitelist_covers_c2_and_excludes_identity_and_computed(self):
+        """
+        C2's original five plus the six criteria are still the load-bearing set;
+        the registry is now derived from the model, so the rest of the editable
+        columns come with it. What must NOT be there is asserted explicitly —
+        that list is the whole safety argument.
+        """
         from paper_review.views import PaperReviewViewSet
-        expected = {
+        wired = set(PaperReviewViewSet.bulk_update_fields)
+        required = {
             "grade", "session_location_on_agenda", "nos", "feedback_to_speaker",
             "internal_footnotes",
             *[f for f, _ in CRITERIA],
         }
-        self.assertEqual(set(PaperReviewViewSet.bulk_update_fields), expected)
+        self.assertTrue(required <= wired, required - wired)
+        for forbidden in ("event_code", "speaker_name", "email", "company_name",
+                          "speaker_email_ref", "research_email_ref",
+                          "proposal_score", "import_batch_id",
+                          "created_by", "updated_by", "id"):
+            self.assertNotIn(forbidden, wired)
+
+    def test_every_criterion_carries_its_rubric_maximum(self):
+        """
+        The bounds come off the model's own MaxValueValidator now rather than
+        being restated in the ViewSet, so CRITERIA stays the single source of
+        truth. A criterion that lost its validator would lose its ceiling here.
+        """
+        from paper_review.views import PaperReviewViewSet
+        for name, maximum in CRITERIA:
+            cfg = PaperReviewViewSet.bulk_update_fields[name]
+            self.assertEqual(cfg["max"], maximum, name)
+            self.assertEqual(cfg["min"], 0, name)
+            self.assertTrue(cfg["nullable"], name)
+
+    def test_grade_accepts_the_vocabulary_the_data_actually_uses(self):
+        """
+        'B+' is the third most common grade in the Zoho export, 355 of 3492
+        rows. An A-D allow-list would refuse a value the column legitimately
+        holds and the importer writes.
+        """
+        preview, commit = self._run("grade", "B+")
+        self.assertEqual(commit.status_code, 200, commit.content)
+        for row in PaperReview.objects.filter(id__in=self.ids):
+            self.assertEqual(row.grade, "B+")
+
+    def test_a_theme_longer_than_the_column_is_a_400_not_a_dataerror(self):
+        r = self.client.post(self.URL, {
+            "ids": self.ids, "field": "theme", "value": "x" * 256,
+            "commit": False}, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn("255", str(r.data))
 
     def test_proposal_score_is_not_bulk_writable(self):
         """It is COMPUTED — a bulk write would be overwritten by save()."""

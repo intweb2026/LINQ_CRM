@@ -11,7 +11,7 @@ from rest_framework.response import Response
 
 from .permissions import IsAdminRole
 from .serializers import UserListSerializer, UserWriteSerializer, AssignEventsSerializer, CustomRoleSerializer, RolePermissionSerializer
-from .models import CustomRole, RolePermission, CRM_MODULES
+from .models import CustomRole, RolePermission, CRM_MODULES, role_from_team_name
 from .crm_permissions import crm_permission
 
 from rest_framework.authtoken.views import ObtainAuthToken
@@ -293,18 +293,31 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["patch"], url_path="toggle-status")
     def toggle_status(self, request, pk=None):
-        """PATCH /api/users/{id}/toggle-status/ — Toggle status."""
+        """
+        PATCH /api/users/{id}/toggle-status/ — flip active/inactive.
+
+        An ABSENT `status` means "flip it", which is what the Users drawer's
+        Deactivate/Activate button sends. Requiring the field made that button
+        answer 400 "Invalid status. Choose from [...]" on every single click —
+        the endpoint was named toggle-status but refused to toggle anything.
+        An explicit `status` is still honoured, so a caller can set `suspended`.
+        """
         user = self.get_object()
         if user == request.user:
             return Response({"detail": "You cannot deactivate your own account."}, status=400)
-            
+
         new_status = request.data.get("status")
-        if new_status not in User.Status.values:
+        if new_status is None:
+            new_status = (
+                User.Status.INACTIVE if user.status == User.Status.ACTIVE
+                else User.Status.ACTIVE
+            )
+        elif new_status not in User.Status.values:
             return Response({"detail": f"Invalid status. Choose from {User.Status.values}"}, status=400)
-            
+
         user.status = new_status
         user.save()
-        return Response({"user": user.username, "status": user.status})
+        return Response(UserListSerializer(user, context={"request": request}).data)
 
     @action(detail=True, methods=["patch"], url_path="reset-password")
     def reset_password(self, request, pk=None):
@@ -315,6 +328,8 @@ class UserViewSet(viewsets.ModelViewSet):
 
         if not password:
             return Response({"detail": "Password is required."}, status=400)
+        if len(password) < 8:
+            return Response({"detail": "Password must be at least 8 characters."}, status=400)
         if password != confirm:
             return Response({"detail": "Passwords do not match."}, status=400)
 
@@ -324,29 +339,21 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="sync-roles")
     def sync_roles(self, request):
-        """Re-derive every user's role from their current team name and update it."""
-        ROLE_MAP = [
-            (["admin"],                                User.Role.ADMIN),
-            (["market research"],                      User.Role.MARKET_RESEARCH),
-            (["data mining", "dmd"],                   User.Role.DATA_MINING),
-            (["spex"],                                 User.Role.SPEX),
-            (["operation", "ops"],                     User.Role.OPERATIONS),
-            (["speaker sales"],                        User.Role.SPEAKER_SALES),
-            (["telemarketing", "tele marketing","tele"], User.Role.TELEMARKETING),
-            (["sales"],                                User.Role.SALES),
-        ]
+        """
+        Re-derive every user's role from their current team name and update it.
 
-        def _derive(team_name):
-            t = team_name.lower().strip()
-            for keywords, role in ROLE_MAP:
-                if any(kw in t for kw in keywords):
-                    return role
-            return None
+        The keyword chain lives in accounts/models.py and is shared with
+        User.save(); this endpoint used to carry a second hand-written copy of
+        it, which is two places for the same rule to drift apart.
 
+        Still the right escape hatch after a team is RENAMED: save() only derives
+        when a user's team CHANGES, so a rename leaves existing members holding
+        the role the old name implied until this is run.
+        """
         updated = 0
         qs = User.objects.filter(team__isnull=False).select_related("team")
         for user in qs:
-            new_role = _derive(user.team.name)
+            new_role = role_from_team_name(user.team.name)
             if new_role and new_role != user.role:
                 User.objects.filter(pk=user.pk).update(role=new_role)
                 updated += 1

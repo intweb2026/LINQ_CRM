@@ -6,12 +6,62 @@ import { http } from './client';
 
 const BATCH_SIZE = 500;
 
+// Entries are [backend_field, display_label] with an optional third element, a
+// list of extra header spellings that should auto-map onto the field. Aliases
+// exist for source columns whose wording does not resemble the backend name;
+// see autoMap in components/ImportWizard.jsx.
 export const TARGET_FIELDS = {
+  // Every key below is read by events/views.py bulk_import. Fields DERIVED in
+  // Event.save() are deliberately absent, because save() recomputes them from
+  // the sources listed here and would discard anything imported into them:
+  //   name, official_name    <- official_event_name (or event_code when blank)
+  //   city, country, venue   <- location
+  //   accepting_web_bookings <- web_bookings
+  //   tele_marketing_team    <- telemarketing_team
+  //   market_research_team   <- market_research_senior
+  // bulk_import also accepts `name`, but save() overwrites it unconditionally,
+  // so offering it would silently drop the column. Same for the two aliases it
+  // reads, `accepting_web_bookings` and `tele_marketing_team`.
+  //
+  // Order is specific-before-generic — speaker_sales_team before sales_team,
+  // website_live_date before website, vr1_sent_status before status. autoMap
+  // resolves exact matches first, but a header with no exact match falls back to
+  // a substring scan that takes the first hit in this order.
   events: [
-    ['event_code', 'Event Code'], ['official_event_name', 'Official Event Name'], ['event_date', 'Start Date'],
-    ['end_date', 'End Date'], ['location', 'Location'], ['status', 'Status'], ['event_type', 'Event Type'],
-    ['website_live_date', 'Website Live Date'], ['sales_team', 'Sales Team'], ['team_leader', 'Sales Team Leader'],
-    ['website', 'Website'], ['sales_executive', 'Sales Executive (username/email)'],
+    ['event_code', 'Event Code'],
+    ['official_event_name', 'Official Event Name'],
+    ['event_date', 'Start Date'],
+    ['end_date', 'End Date'],
+    ['location', 'Location'],
+    ['event_type', 'Event Type'],
+    ['vr1_sent_status', 'VR1 Sent Status'],
+    ['status', 'Status'],
+    ['website_live_date', 'Website Live Date'],
+    ['website', 'Website'],
+    ['web_bookings', 'Accepting Web Bookings', ['Web Bookings']],
+    ['speaker_sales_team', 'Speaker Sales Team'],
+    ['sales_team', 'Sales Team'],
+    ['team_leader', 'Sales Team Leader'],
+    ['sales_executive', 'Sales Executive (username/email)'],
+    ['spex_team', 'SpEx Team'],
+    ['telemarketing_team', 'Tele Marketing Team', ['Telemarketing Team']],
+    ['market_research_senior', 'Market Research Senior', ['Market Research Team']],
+    ['market_research_junior', 'Market Research Junior'],
+    ['event_management_team', 'Event Management Team'],
+    ['content_check', 'Content Check'],
+    ['marketing_check', 'Marketing Check'],
+    ['sales_check', 'Sales Check'],
+    ['nearest_related_event', 'Nearest Related Event'],
+    ['email_marketing_name', 'Email Marketing Name'],
+    ['branding_name', 'Branding Name'],
+    ['annualisation', 'Annualisation'],
+    ['date_format', 'Date Format'],
+    ['related_event_1', 'Related Event 1'],
+    ['related_event_2', 'Related Event 2'],
+    ['related_event_3', 'Related Event 3'],
+    ['upcoming_event_1', 'Upcoming Event 1'],
+    ['upcoming_event_2', 'Upcoming Event 2'],
+    ['upcoming_event_3', 'Upcoming Event 3'],
   ],
   bookings: [
     ['invoice_number', 'Invoice Number'], ['event_code', 'Event Code'], ['event_name', 'Event Name'],

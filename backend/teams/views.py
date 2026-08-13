@@ -29,6 +29,17 @@ class TeamViewSet(viewsets.ModelViewSet):
             notes=f"Team '{team.name}' created",
         )
 
+    def perform_update(self, serializer):
+        old_name = serializer.instance.name
+        team = serializer.save()
+        if team.name != old_name:
+            TeamActivityLog.objects.create(
+                action_type=TeamActivityLog.ActionType.TEAM_RENAMED,
+                team=team,
+                moved_by=self.request.user,
+                notes=f"Renamed from '{old_name}' to '{team.name}'",
+            )
+
     def destroy(self, request, *args, **kwargs):
         team = self.get_object()
         member_count = team.members.count()

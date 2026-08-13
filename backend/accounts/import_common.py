@@ -395,3 +395,110 @@ def summarise(plan):
 def public_plan(plan):
     """Strip the internal payload before returning the plan to the client."""
     return [{k: v for k, v in entry.items() if k != "_payload"} for entry in plan]
+
+
+# ── Does the value FIT its column ────────────────────────────────────────────
+# Postgres integer column ranges, by Django field class name. Hard-coded rather
+# than read off the field because Django exposes no such attribute, and these are
+# fixed by the SQL types smallint, integer and bigint, not by anything settable.
+_INT_BOUNDS = {
+    "PositiveSmallIntegerField": (0, 32767),
+    "SmallIntegerField":         (-32768, 32767),
+    "PositiveIntegerField":      (0, 2147483647),
+    "IntegerField":              (-2147483648, 2147483647),
+    "PositiveBigIntegerField":   (0, 9223372036854775807),
+    "BigIntegerField":           (-9223372036854775808, 9223372036854775807),
+}
+
+
+def column_errors(model, values, field_to_label):
+    """
+    Values that will not fit their database column, as ERROR entries.
+
+    THE 500 THIS ENDS
+    Both importers classify a row on business rules alone, meaning required fields,
+    event code, dates and numeric ranges. Commit then writes the payload with a
+    plain save(), which runs NO field validation; full_clean() is a serializer step
+    and a form step, never a save step. So a value that is merely too WIDE passes
+    preview as CREATE and only fails at the database, as a psycopg DataError inside
+    the commit's transaction.atomic(). Two consequences follow, both bad.
+
+      * It is a 500, not a row error, so the caller gets a debug page rather than a
+        sentence naming the offending row and column.
+      * The atomic block rolls the WHOLE chunk back, so 499 perfectly good rows are
+        discarded because of one 255-character cell.
+
+    It happened for real, on both importers at once. 'All Paper Reviews.csv' carries
+    355 rows graded 'B+' against a 1-character column, and both exports carry two
+    rows where an outreach message was pasted into Speaker Name, 255 characters
+    against 150. Every commit of those files returned 500 and imported nothing.
+
+    Checked against the MODEL rather than a hand-kept table of widths, so this
+    cannot drift from the schema; widening a column relaxes this automatically.
+
+    `values` should mirror the payload the commit will write, so pass the RESOLVED
+    event code rather than the raw cell. Otherwise a long raw code that resolves to
+    a short canonical one is reported as an error it will not actually cause.
+
+    Sorted by label because both callers build `values` from a set, whose iteration
+    order varies between processes; without this the same bad row reports its
+    problems in a different order on each run.
+    """
+    from django.core.exceptions import FieldDoesNotExist
+
+    errors = []
+    for name, value in values.items():
+        try:
+            field = model._meta.get_field(name)
+        except FieldDoesNotExist:
+            continue
+
+        label = field_to_label.get(name, name)
+
+        if isinstance(value, str):
+            limit = getattr(field, "max_length", None)
+            if limit and len(value) > limit:
+                errors.append({
+                    "field": label,
+                    "problem": f"longer than {limit} characters ({len(value)})",
+                    "value": value[:80] + "…" if len(value) > 80 else value,
+                })
+        # bool is an int subclass and BooleanField has no range; exclude it.
+        elif isinstance(value, int) and not isinstance(value, bool):
+            bounds = _INT_BOUNDS.get(type(field).__name__)
+            if bounds and not (bounds[0] <= value <= bounds[1]):
+                errors.append({
+                    "field": label,
+                    "problem": f"outside the range this column stores "
+                               f"({bounds[0]} to {bounds[1]})",
+                    "value": str(value),
+                })
+
+    return sorted(errors, key=lambda e: e["field"])
+
+
+def catalogue_notice():
+    """
+    A whole-file explanation when the Events catalogue is EMPTY, else None.
+
+    THE CONFUSION THIS ENDS
+    Both importers resolve every row's Event Code against `events`, so with an empty
+    catalogue every single row comes back ERROR "no matching event; prefilter
+    candidates []". That is accurate per row and useless as a diagnosis: a 400-row
+    file returns 400 identical errors, the Import button stays disabled because
+    nothing is importable, and nothing anywhere says the catalogue is the problem.
+    It happened for real — the catalogue was cleared and the next import read as a
+    broken import button.
+
+    Returned as a top-level notice rather than folded into the per-row errors,
+    because it is a fact about the SYSTEM, not about any row in the file.
+    """
+    from events.models import Event
+
+    if Event.objects.exists():
+        return None
+    return (
+        "The Events catalogue is empty, so no row's Event Code can be matched and "
+        "nothing in this file can be imported. Restore the events first (Events → "
+        "Import), then import this file again."
+    )

@@ -6,16 +6,19 @@ import { nf, rel } from '../../lib/helpers';
 import * as webhooksApi from '../../api/webhooks';
 import * as eventsApi from '../../api/events';
 import { useFetch } from '../../hooks/useFetch';
+import { useLiveData } from '../../hooks/useLiveData';
 import { useToast } from '../../context/ToastContext';
 
 export default function WebhookKeys() {
   const toast = useToast();
-  const { data: keys, refetch } = useFetch(webhooksApi.listKeys, [], { initialData: [] });
+  const { data: keys, refetchQuiet: reloadKeys } = useFetch(webhooksApi.listKeys, [], { initialData: [] });
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
   const WH_KEYS = keys || [];
   const EVENTS = events || [];
   const [genOpen, setGenOpen] = useState(false);
-  const refresh = () => refetch();
+  // The delivery counter on each key moves every time the website posts a booking,
+  // so this list is out of date without anyone touching the CRM at all.
+  const { refreshNow: refresh } = useLiveData(reloadKeys, { resources: ['webhooks'] });
 
   async function generate(e) {
     e.preventDefault();

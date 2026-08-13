@@ -27,6 +27,7 @@
  */
 import { useMemo, useState } from 'react';
 import Modal from '../../components/Modal';
+import FileDropZone from '../../components/FileDropZone';
 import { Icon } from '../../lib/icons';
 import { useToast } from '../../context/ToastContext';
 import { parseFile } from '../../lib/importParse';
@@ -66,15 +67,25 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
 
   // Any new file invalidates the previous plan — commit must re-disable, which it
   // does because `previewed` is derived from chunks and this clears them.
-  async function onPickFile(e) {
-    const f = e.target.files && e.target.files[0];
+  //
+  // The preview then runs IMMEDIATELY, without waiting for the button. Import is
+  // disabled until a plan exists, so picking a file and finding a greyed-out Import
+  // is a dead end that gives no clue the missing step is Preview — the state this
+  // was reported from. Previewing writes nothing, so there is nothing to consent to;
+  // the button stays as "Re-preview" for a deliberate re-run.
+  // Takes a File, not a change event — FileDropZone hands over the file whether it
+  // came from the browse dialog or from a drop.
+  async function onPickFile(f) {
     if (!f) return;
     reset();
     setRows([]);
     setFileName(f.name || '');
     try {
       const parsed = await parseFile(f);
-      setRows(Array.isArray(parsed.rows) ? parsed.rows : []);
+      const parsedRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+      setRows(parsedRows);
+      // Passed explicitly: setRows has not landed in state yet at this point.
+      if (parsedRows.length) runPreview(parsedRows);
     } catch {
       toast('Could not read that file — check the format and try again', 'er');
       setFileName('');
@@ -98,6 +109,11 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
     [chunks],
   );
 
+  // One per file, not per chunk: every chunk asks the same server the same
+  // question, so the first non-empty answer is the answer.
+  const notice = useMemo(
+    () => chunks.map((c) => c.notice).find(Boolean) || '', [chunks]);
+
   const unrecognised = useMemo(
     () => [...new Set(chunks.flatMap((c) => c.unrecognised || []))], [chunks]);
   const ignored = useMemo(
@@ -108,10 +124,12 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
   const errorRows = allPlanRows.filter((r) => r.classification === 'ERROR');
   const okRows = allPlanRows.filter((r) => r.classification !== 'ERROR');
 
-  async function runPreview() {
-    if (!rows.length) return;
+  // `sourceRows` defaults to state for the button, and is passed explicitly by
+  // onPickFile, which runs before setRows has landed.
+  async function runPreview(sourceRows = rows) {
+    if (!sourceRows.length) return;
     setPreviewing(true); setFatal(''); setChunks([]);
-    const batches = chunk(rows, IMPORT_MAX_ROWS);
+    const batches = chunk(sourceRows, IMPORT_MAX_ROWS);
     setProgress({ done: 0, total: batches.length });
     const collected = [];
     let id = '';
@@ -124,7 +142,7 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
         collected.push({
           rows: batches[i], plan_hash: res.plan_hash, counts: res.counts,
           rows_plan: res.rows, unrecognised: res.unrecognised_columns,
-          ignored: res.ignored_columns,
+          ignored: res.ignored_columns, notice: res.notice,
         });
         setProgress({ done: i + 1, total: batches.length });
       }
@@ -185,8 +203,11 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
               ? ` · chunk ${progress.done}/${progress.total}` : ''}
           </span>
           <button className="btn btn-s" onClick={onClose}>Cancel</button>
+          {/* runPreview is WRAPPED, not passed bare: onClick would hand the click
+              event to its first parameter (`sourceRows`), and an event has no
+              .length, so the preview would return immediately having done nothing. */}
           <button className="btn btn-s" disabled={!rows.length || previewing || committing}
-            onClick={runPreview}>
+            onClick={() => runPreview()}>
             {previewed ? 'Re-preview' : 'Preview'}
           </button>
           {/* Disabled until a preview returns, and re-disabled the moment the
@@ -200,13 +221,11 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
         </>
       )}>
 
-      <label className="dz" style={{ cursor: 'pointer', display: 'block' }}>
-        <input type="file" accept=".xlsx,.xls,.csv,.json" style={{ display: 'none' }}
-          onChange={onPickFile} />
-        <div className="dz-i"><Icon name="upload" size={20} /></div>
-        <h3>Drop a file, or click to browse</h3>
-        <p>.xlsx, .csv or .json — Zoho column names are matched automatically</p>
-      </label>
+      <FileDropZone
+        onFile={onPickFile}
+        onReject={(msg) => toast(msg, 'er')}
+        disabled={previewing || committing}
+      />
 
       {fileName && rows.length ? (
         <div className="vr ok" style={{ marginTop: 11 }}>
@@ -227,6 +246,17 @@ export default function PaperReviewImportModal({ onClose, onImported }) {
         <div className="vr er" style={{ marginTop: 11 }}>
           <Icon name="warn" size={15} />
           <span>{typeof fatal === 'string' ? fatal : JSON.stringify(fatal)}</span>
+        </div>
+      ) : null}
+
+      {/* A whole-file explanation from the server — currently only "the Events
+          catalogue is empty". Shown ABOVE the per-row errors because when it is
+          set, every row carries the same unhelpful "no matching event" and this is
+          the only line that says why. */}
+      {notice ? (
+        <div className="vr wn" style={{ marginTop: 11 }}>
+          <Icon name="warn" size={15} />
+          <span>{notice}</span>
         </div>
       ) : null}
 

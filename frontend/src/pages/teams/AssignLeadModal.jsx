@@ -5,6 +5,7 @@ import { Av } from '../../components/Badge';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
+import { apiErrorMessage } from '../../api/client';
 import * as teamsApi from '../../api/teams';
 
 export default function AssignLeadModal({ team: t, onClose, onSaved }) {
@@ -20,7 +21,12 @@ export default function AssignLeadModal({ team: t, onClose, onSaved }) {
 
   async function save() {
     if (!sel) { toast('Choose a member', 'er'); return; }
-    await teamsApi.assignLead(t.id, sel);
+    try {
+      await teamsApi.assignLead(t.id, sel);
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not assign the lead.'), 'er');
+      return;
+    }
     onClose(); toast('Lead updated for ' + t.name, 'ok'); onSaved();
   }
 

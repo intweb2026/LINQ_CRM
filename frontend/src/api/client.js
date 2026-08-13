@@ -2,6 +2,7 @@
 // against this client, which talks to the LINQ CRM Django/DRF backend
 // (see backend/config/urls.py — everything lives under /api/).
 import axios from 'axios';
+import { emitDataChanged, normalisePath } from '../lib/liveData';
 
 /**
  * Read env through `process.env.<NAME>` member access, one variable at a time —
@@ -224,9 +225,59 @@ function tokenIsFreshlySet() {
   } catch { return false; }
 }
 
+/**
+ * POSTs that write nothing.
+ *
+ * Both import wizards and the bulk-update modal PREVIEW through POST out of
+ * necessity — the body is a mapped spreadsheet or a list of ids, far past what a
+ * query string holds — but the server's answer is a plan, not a change. Treating
+ * those as writes would refetch every open table on each step of a preview the
+ * user has not committed yet, which is pure noise and, on the bookings table,
+ * an expensive one.
+ */
+const NON_WRITING_POSTS = /(^|\/)(filter_schema|bulk_update_schema|list-worksheets|preview)$/;
+
+/** commit=true is the bulk update that actually lands; commit=false is a plan. */
+function isBulkCommit(config) {
+  try {
+    const body = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
+    return !!(body && body.commit);
+  } catch {
+    // Unreadable body: assume it wrote, because a missed refresh is the bug being
+    // fixed here and a redundant one costs a single request.
+    return true;
+  }
+}
+
+/**
+ * Publish every successful write so open pages can refresh themselves.
+ *
+ * Here rather than in the ~40 resource-module functions that perform writes: an
+ * endpoint added later is live without anyone remembering to wire it, and there
+ * is exactly one place to read to know what counts as a change. See
+ * lib/liveData.js for what listens.
+ */
+function announceWrite(config) {
+  if (!config) return;
+  const method = String(config.method || 'get').toLowerCase();
+  if (method === 'get' || method === 'head' || method === 'options') return;
+
+  const path = normalisePath(config.url);
+  if (!path) return;
+  // Signing in is not a data change, and it happens while nothing is mounted.
+  if (path.startsWith('auth/')) return;
+  if (NON_WRITING_POSTS.test(path)) return;
+  if (/(^|\/)bulk_update$/.test(path) && !isBulkCommit(config)) return;
+
+  emitDataChanged(path);
+}
+
 // Global error handling — retry on network/503, redirect on 401 (unless token was just set)
 http.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    announceWrite(res.config);
+    return res;
+  },
   async (err) => {
     const config = err.config;
     const status = err.response?.status;

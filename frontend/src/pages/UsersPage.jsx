@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
@@ -9,22 +9,39 @@ import { TEAM_ROLES, ROLE_FULL } from '../lib/constants';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import { useFetch } from '../hooks/useFetch';
+import { useLiveData } from '../hooks/useLiveData';
 import NoAccessPage from './NoAccessPage';
 import UserDrawer from './users/UserDrawer';
+import UserFormModal from './users/UserFormModal';
+import ResetPasswordModal from './users/ResetPasswordModal';
 import * as usersApi from '../api/users';
 import * as teamsApi from '../api/teams';
 
 export default function UsersPage() {
   const { canView, can } = useSession();
   const toast = useToast();
-  const { data: users, refetch } = useFetch(usersApi.list, [], { initialData: [] });
-  const { data: teams } = useFetch(teamsApi.list, [], { initialData: [] });
+  const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
+  const { data: teams, refetchQuiet: reloadTeams } = useFetch(teamsApi.list, [], { initialData: [] });
   const USERS = users || [];
   const TEAMS = teams || [];
   const teamName = (id) => (TEAMS.find((t) => t.id === id) || {}).name || 'Unassigned';
-  const refresh = () => refetch();
+  /**
+   * BOTH lists, and not only after a save on this page.
+   *
+   * The table is in client mode, so nothing under it re-fetches on its own: this
+   * is the single path by which anything here changes. Routing it through
+   * useLiveData means it also fires when a user is created in another tab, when a
+   * team is renamed on the Teams board, or when a role's permissions change — all
+   * of which this page renders, and none of which it used to hear about.
+   */
+  const { refreshNow: refresh } = useLiveData(
+    useCallback(() => { reloadUsers(); reloadTeams(); }, [reloadUsers, reloadTeams]),
+    { resources: ['users', 'teams', 'roles'] },
+  );
   const [drawerUser, setDrawerUser] = useState(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [formUser, setFormUser] = useState(undefined); // undefined = closed, null = create new, object = edit
+  const [pwUser, setPwUser] = useState(null);
 
   if (!canView('users')) return <NoAccessPage module="Users" />;
 
@@ -40,7 +57,7 @@ export default function UsersPage() {
       <PageHead title="Users" sub="Access, team assignment and per-user event coverage."
         actions={can('create', 'users') ? <>
           <button className="btn btn-s" onClick={() => setInviteOpen(true)}><Icon name="mail" size={15} />Invite</button>
-          <button className="btn btn-p" onClick={() => toast('Full user form — next release', 'nf')}><Icon name="plus" size={15} />Add user</button>
+          <button className="btn btn-p" onClick={() => setFormUser(null)}><Icon name="plus" size={15} />Add user</button>
         </> : null} />
       <DataTable
         rows={USERS} noun="users" pageSize={50} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
@@ -69,7 +86,9 @@ export default function UsersPage() {
         )}
         onRow={(r) => setDrawerUser(r)}
       />
-      {drawerUser ? <UserDrawer user={drawerUser} onClose={() => setDrawerUser(null)} onChanged={refresh} /> : null}
+      {drawerUser ? <UserDrawer user={drawerUser} onClose={() => setDrawerUser(null)} onChanged={refresh} onEdit={setFormUser} onResetPassword={setPwUser} /> : null}
+      {formUser !== undefined ? <UserFormModal user={formUser} onClose={() => setFormUser(undefined)} onSaved={refresh} /> : null}
+      {pwUser ? <ResetPasswordModal user={pwUser} onClose={() => setPwUser(null)} /> : null}
       {inviteOpen ? (
         <Modal size="sm" title="Invite by email" sub="They receive a link to set their own password." onClose={() => setInviteOpen(false)}
           footer={<><button className="btn btn-s" onClick={() => setInviteOpen(false)}>Cancel</button><button className="btn btn-p" type="submit" form="inviteForm"><Icon name="mail" size={15} />Send invites</button></>}>

@@ -5,7 +5,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.bulk_update import BulkUpdateMixin
+from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
 from accounts.permissions import RBACMixin, IsAdminRole
@@ -128,58 +128,124 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
     }
 
     # ── Mass update ───────────────────────────────────────────────────────────
-    # Every row-group key is a delegate_* OVERRIDE field, never the bare name.
-    # payment_status / payment_date / invoice_number are read-only @property on
-    # BookDelegate (models.py:101-111) and would raise on write, and the 21
-    # invoice-sourced fields on BookDelegateListSerializer (serializers.py:48-76)
-    # are read_only — DRF discards those silently. A wrong name here fails quietly.
+    # Both groups are derived from their model's own columns, which is what keeps
+    # the person-level keys honest: payment_status / payment_date /
+    # invoice_number are read-only @property on BookDelegate (models.py:131-145)
+    # rather than columns, so they cannot appear here at all — only the real
+    # delegate_* OVERRIDE columns do. Hand-written, the bare name was one typo
+    # away, and it fails QUIETLY: the 21 invoice-sourced fields on
+    # BookDelegateListSerializer (serializers.py:48-76) are read_only, so DRF
+    # discards a write to them without complaint.
     #
-    # The delegate_* overrides are bare CharFields with no choices of their own
-    # (models.py:73-77), so every choices list below is sourced from the
-    # corresponding BookEvent enum — the invoice value each override shadows.
-    # attendance is the exception: it has its own choices on BookDelegate:44.
+    # Row group  -> the delegate's own columns; touches exactly the selected rows.
+    # Parent group -> the shared invoice; ALSO changes delegates on the same
+    #                 invoice that the caller never selected. That is the
+    #                 `collateral` set the preview enumerates before Apply.
     bulk_update_label       = "delegates"
     bulk_update_parent_path = "invoice"
     bulk_update_fields = {
-        # ── Row group: per-delegate overrides ─────────────────────────────────
-        # nullable mirrors null=True on the model (models.py:73-77). Clearing an
-        # override makes the delegate inherit from the invoice again, which is a
-        # real thing a rep needs to undo a mistaken override.
-        "delegate_payment_status": {
-            "group": "row", "type": "choice", "label": "Payment Status",
-            "choices": list(BookEvent.PaymentStatus.values), "nullable": True,
-        },
-        "delegate_payment_type": {
-            "group": "row", "type": "choice", "label": "Payment Type",
-            "choices": list(BookEvent.PaymentType.values), "nullable": True,
-        },
-        "delegate_ticket_tier": {
-            "group": "row", "type": "choice", "label": "Ticket Tier",
-            "choices": list(BookEvent.TicketTier.values), "nullable": True,
-        },
-        "delegate_paid_or_free": {
-            "group": "row", "type": "choice", "label": "Paid / Free",
-            "choices": list(BookEvent.PaidOrFree.values), "nullable": True,
-        },
-        "delegate_payment_date": {
-            "group": "row", "type": "date", "label": "Payment Date",
-            "nullable": True,
-        },
-        # attendance is NOT nullable — CharField(default=Pending) at models.py:44
-        "attendance": {
-            "group": "row", "type": "choice", "label": "Attendance",
-            "choices": list(BookDelegate.Attendance.values),
-        },
+        # ── Row group: the delegate's own columns ─────────────────────────────
+        # nullable mirrors null=True per column, so clearing one of the five
+        # delegate_* overrides makes the delegate inherit from the invoice again
+        # — a real thing a rep needs, to undo a mistaken override.
+        **build_bulk_update_fields(
+            BookDelegate,
+            exclude=(
+                # identity: email is half of unique_together (invoice, email),
+                # and a name is not a batch property of anybody.
+                "email", "first_name", "last_name",
+                # derived in save() (models.py:88-97): event_code is re-parsed
+                # into itself plus edition, or inherited from the invoice.
+                "event_code", "edition",
+                # positional, assigned per invoice rather than edited
+                "delegate_number",
+            ),
+            # The delegate_* overrides are bare CharFields with no choices of
+            # their own (models.py:107-111), so each list is sourced from the
+            # corresponding BookEvent enum — the invoice value it shadows.
+            # attendance is the exception: it has its own choices on models.py:46.
+            choices={
+                "delegate_payment_status": list(BookEvent.PaymentStatus.values),
+                "delegate_payment_type":   list(BookEvent.PaymentType.values),
+                "delegate_ticket_tier":    list(BookEvent.TicketTier.values),
+                "delegate_paid_or_free":   list(BookEvent.PaidOrFree.values),
+            },
+            labels={
+                "delegate_payment_status": "Payment Status (override)",
+                "delegate_payment_type":   "Payment Type (override)",
+                "delegate_ticket_tier":    "Ticket Tier (override)",
+                "delegate_paid_or_free":   "Paid / Free (override)",
+                "delegate_payment_date":   "Payment Date (override)",
+                "company_name_raw":        "Company (raw)",
+                "delegate_count":          "Counts Towards Headcount",
+                "add_ons":                 "Add-ons",
+            },
+        ),
         # ── Parent group: written on the shared invoice ───────────────────────
-        # currency is NOT nullable — CharField(default=USD) at book_event:94
-        "invoice.currency": {
-            "group": "parent", "type": "choice", "label": "Currency",
-            "choices": list(BookEvent.Currency.values),
-        },
+        # EVERY key here writes the invoice, so it also changes delegates the
+        # caller did not select. The mixin counts that blast radius as
+        # `collateral` and the modal refuses the two-click path because of it.
+        **build_bulk_update_fields(
+            BookEvent,
+            prefix="invoice",
+            group="parent",
+            exclude=(
+                # identity — unique, and pre-generated by the website
+                "invoice_number",
+                # derived in BookEvent.save() (models.py:167-183): event_code is
+                # re-parsed into itself plus edition, and event_name is rebuilt
+                # from the Event catalogue.
+                "event_code", "edition", "event_name",
+                # website intake provenance — writing these would falsify where
+                # a booking came from
+                "source", "form_name", "form_url",
+                # superseded by paid_or_free, kept only for historical rows
+                "paid_free",
+            ),
+            labels={
+                "accounts_contact_email": "Accounts Contact Email",
+                "add_ons_total_amount":   "Add-ons Total Amount",
+                "pre_tax_amount":         "Pre-tax Amount",
+                "parent_code":            "Parent Code",
+                "add_ons":                "Add-ons",
+                "paid_or_free":           "Paid / Free",
+                "delegate_count":         "Delegate Count (invoice)",
+                "attendance":             "Attendance (invoice)",
+                "discount_code":          "Discount Code",
+            },
+        ),
     }
     bulk_update_side_effects = {
         ("delegate_payment_status", "Cancelled"): "also sets delegate_count → 0",
     }
+
+    def get_bulk_update_side_effects(self, field, raw_value):
+        """
+        Two consequences fire for ANY value, so neither can be keyed by
+        (field, value) in the static dict above.
+
+        booking_code: the Bookings modal keeps the invoice's own copy in step by
+        writing the delegates' shared code back whenever they all agree
+        (frontend/src/api/bookings.js). Nothing does that here, so a bulk write
+        leaves invoice.booking_code holding the old value while revenue
+        classification still reads it (book_event/views.py, config/views.py).
+
+        Any parent write: BookEvent.save() re-derives event_name from the Event
+        catalogue and re-parses edition out of event_code on every save, whatever
+        column was actually set.
+        """
+        if field == "booking_code":
+            return [
+                "the invoice's own booking_code is NOT updated; revenue "
+                "classification and the sync export still read that column"
+            ]
+        config = self.bulk_update_fields.get(field) or {}
+        if config.get("group") == "parent":
+            return [
+                "saving the invoice also re-derives its event_name from the "
+                "Events catalogue and re-parses its edition from the event code"
+            ]
+        return super().get_bulk_update_side_effects(field, raw_value)
     # StableOrderingFilter, not the stock one: the default sort
     # (-_sort_request_date) is heavily tied, and without a pk tiebreaker
     # pagination duplicates and skips rows. See accounts/ordering.py.

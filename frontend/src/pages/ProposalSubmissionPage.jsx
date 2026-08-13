@@ -10,17 +10,30 @@ import {
 } from '../lib/constants';
 import * as proposalApi from '../api/proposalSubmission';
 import { useFetch } from '../hooks/useFetch';
+import { useBulkUpdate } from '../hooks/useBulkUpdate';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import ProposalFormModal from './proposalSubmission/ProposalFormModal';
 import ProposalImportModal from './proposalSubmission/ProposalImportModal';
+import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 
 export default function ProposalSubmissionPage() {
   const { canView, can } = useSession();
-  const { data: proposals, refetch, loading, error } = useFetch(proposalApi.list, [], { initialData: [] });
+  const { data: proposals, refetch, refetchQuiet, loading, error } = useFetch(proposalApi.list, [], { initialData: [] });
   const PROPOSALS = proposals || [];
-  const refresh = () => refetch();
+  /**
+   * Also fires when PAPER REVIEWS are written: importing a review generates the
+   * proposals derived from it, so a page showing proposals goes stale on a write
+   * to a resource it never reads. That is exactly the kind of link a per-page
+   * refresh call misses and a subscription does not.
+   */
+  const { refreshNow: refresh } = useLiveData(refetchQuiet, {
+    resources: ['proposal-submissions', 'paper-reviews'],
+  });
+  // Router path, not the permission module key — see config/urls.py.
+  const bulk = useBulkUpdate('proposal-submissions', refresh);
   const [editProposal, setEditProposal] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -46,10 +59,11 @@ export default function ProposalSubmissionPage() {
 
       {error && !loading ? (
         <EmptyState icon="warn" title="Unable to load proposal submissions" body="Something went wrong while loading this data. Please try again in a moment."
-          action={<button className="btn btn-s btn-sm" onClick={refresh}><Icon name="refresh" size={13} />Try again</button>} />
+          action={<button className="btn btn-s btn-sm" onClick={() => refetch().catch(() => {})}><Icon name="refresh" size={13} />Try again</button>} />
       ) : (
       <DataTable
         rows={PROPOSALS} noun="proposals" pageSize={50} defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        select={can('update', 'proposal_submission')}
         groups={[
           { key: 'id', label: 'Identification' }, { key: 'sp', label: 'Speaker & company' }, { key: 'qc', label: 'Quality & content' },
           { key: 'st', label: 'Status & revenue' }, { key: 'mr', label: 'Internal notes' },
@@ -90,8 +104,24 @@ export default function ProposalSubmissionPage() {
           </div>
         )}
         onRow={can('update', 'proposal_submission') ? (r) => setEditProposal(r) : undefined}
+        bulkActions={(ids, { clear, total }) => (
+          <div className="bulk">
+            {/* The rows on this page, not every match — the count says which. */}
+            <span className="n">{nf(ids.length)}</span> selected
+            {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
+            <div className="sep" />
+            <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
+              <Icon name="edit" size={13} />Update field…
+            </button>
+            <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
+          </div>
+        )}
       />
       )}
+
+      {bulk.ready ? (
+        <BulkUpdateModal {...bulk.props} rowLabel="proposal" totalMatching={PROPOSALS.length} />
+      ) : null}
 
       {editProposal ? <ProposalFormModal proposal={editProposal} onClose={() => setEditProposal(null)} onSaved={refresh} /> : null}
       {newOpen ? <ProposalFormModal onClose={() => setNewOpen(false)} onSaved={refresh} /> : null}

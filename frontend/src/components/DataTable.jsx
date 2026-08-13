@@ -7,8 +7,20 @@ import {
   MAX_SPEC_BYTES, condIsActive, orderingParam, partitionConds, specByteLength, specToJson,
 } from '../lib/filterSpec';
 import useServerRows from '../hooks/useServerRows';
+import useLiveData from '../hooks/useLiveData';
+import { fetchPage } from '../api/client';
 
 const PAGE_SIZE_DEFAULT = 50;
+
+/**
+ * Ceiling on the one-request reload a background refresh uses in infinite mode
+ * (see liveReload). config/pagination.py caps page_size at 500, so a user who has
+ * scrolled past that many rows cannot have the whole span refreshed in a single
+ * request — and refreshing only PART of it would silently drop the rest off the
+ * screen. Past this point background refresh stands down and the explicit
+ * Refresh button remains the way to reload.
+ */
+const MAX_LIVE_SPAN = 500;
 
 const FILTER_OPS = ['Contains', 'Not Contains', 'Is', 'Is Not', 'Starts With', 'Ends With', 'Like', 'Is Empty', 'Is Not Empty'];
 const NO_VALUE_OPS = ['Is Empty', 'Is Not Empty'];
@@ -322,6 +334,13 @@ function EditableCell({ row, col, value }) {
  * In this mode `rows` is ignored; conditions the backend cannot express fall
  * back to filtering the fetched page, and the toolbar says so rather than
  * pretending the result is the full filtered set.
+ *
+ * A server-mode table also keeps ITSELF current — see the liveReload block. It
+ * refreshes when anything writes to its resource, and polls while visible. Where
+ * a write lands on a different path than the one being read, name the extra paths
+ * in `server.live`: bookings are READ from `delegates/` but an import and an
+ * invoice edit both write `invoices/`, so without `live: ['invoices']` neither
+ * would reach the table.
  */
 export default function DataTable({
   rows, cols, noun = 'records', groups, hiddenDefault = [], select = false, infinite = false,
@@ -344,6 +363,9 @@ export default function DataTable({
   // happen to have", and for payment_status the resolved-field semantics mean
   // the browser cannot reproduce the server's answer anyway.
   serverCriteria = null,
+  // Background refresh, server mode only — see the liveReload block below.
+  // `false` opts a table out; a number overrides the poll interval.
+  live = true,
 }) {
   const storeId = tableId || noun;
   const storedRef = useRef(undefined);
@@ -409,7 +431,6 @@ export default function DataTable({
   });
 
   useEffect(() => { if (serverState.schema) setSchemaForSplit(serverState.schema); }, [serverState.schema]);
-  useEffect(() => { if (onServerReady) onServerReady(serverState.refetch); }, [onServerReady, serverState.refetch]);
 
   /**
    * Raw API rows mapped into the shape the columns read.
@@ -460,6 +481,101 @@ export default function DataTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverMode, infinite, dataPage, serverState.rows, fetchKey, mapServerRows]);
 
+  // ── Staying current ───────────────────────────────────────────────────────
+  /**
+   * The count a background reload found, when it is newer than the one the paged
+   * fetch last reported. Reset with the query, which is the only thing that makes
+   * a count meaningless rather than merely old.
+   */
+  const [liveTotal, setLiveTotal] = useState(null);
+  useEffect(() => { setLiveTotal(null); }, [fetchKey]);
+
+  /**
+   * REFRESH AFTER A WRITE — what a parent gets through onServerReady.
+   *
+   * `serverState.refetch` alone was handed out here, and in infinite mode it did
+   * NOTHING VISIBLE. The accumulator drops any response whose
+   * `${fetchKey}#${page}` stamp it has already applied, which is precisely what a
+   * re-fetch of the same page is, so the new rows were fetched and then discarded.
+   * Bookings and Ticket Central are both infinite: creating a booking, marking a
+   * row paid, importing a spreadsheet, or pressing the Refresh button left the
+   * table showing pre-write rows until the user pressed F5 — which is exactly the
+   * "it only shows up after a refresh" complaint, and it was not the request
+   * failing, it was the answer being thrown away.
+   *
+   * Clearing the stamp and returning to page 1 is the right reset for a write:
+   * every table here sorts newest-first by default, so the record just created is
+   * at the top of the page the user is put back on.
+   */
+  const resetAccumulation = useCallback(() => {
+    lastAppliedRef.current = '';
+    setAcc([]);
+    setPage(1);
+  }, []);
+
+  const liveResources = serverMode
+    ? [server.resource, ...(server.live || [])]
+    : null;
+
+  /**
+   * BACKGROUND REFRESH — a poll, or someone else's write arriving.
+   *
+   * Not the same operation as the one above, and the difference is the whole
+   * reason there are two. Resetting to page 1 under a user who has scrolled to
+   * row 300 would throw away their position for a change they did not make; that
+   * is worse behaviour than being briefly stale.
+   *
+   * So in infinite mode this re-fetches EVERYTHING already on screen as one
+   * request — page 1 at a page_size covering the whole accumulated span — and
+   * swaps it in. Nothing moves: same rows in the same order, with new values and
+   * any new arrivals at the top. Above MAX_LIVE_SPAN a single request can no
+   * longer hold the span, and shrinking the list to fit would delete rows from
+   * under the reader, so it stands down instead.
+   */
+  // Destructured, not held as the returned object: that object is rebuilt every
+  // render, so a `refreshRows` depending on it would have a new identity every
+  // render, and the onServerReady effect below would re-register on each one —
+  // which is a parent setState per render, in other words a render loop. The two
+  // functions inside are stable.
+  const { markRefreshed } = useLiveData(
+    useCallback(() => {
+      if (!serverMode) return;
+      if (!infinite) { serverState.refetch({ quiet: true }); return; }
+      const span = page * pageSize;
+      if (span > MAX_LIVE_SPAN) return;
+      fetchPage(server.resource, {
+        page: 1,
+        pageSize: span,
+        ordering,
+        filterSpec: specTooLarge ? null : specJson,
+        search: q || null,
+      })
+        .then((res) => {
+          setAcc(mapServerRows(res.results));
+          setLiveTotal(res.count);
+        })
+        // Silent by design: a failed background refresh must leave the rows on
+        // screen alone and say nothing. The user did not ask for this fetch.
+        .catch(() => {});
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [serverMode, infinite, page, pageSize, ordering, specJson, specTooLarge, q, mapServerRows, serverState.refetch, server && server.resource]),
+    {
+      resources: liveResources,
+      enabled: serverMode && live !== false,
+      poll: typeof live === 'number' ? live : undefined,
+    },
+  );
+
+  const refreshRows = useCallback(() => {
+    resetAccumulation();
+    serverState.refetch();
+    // The write that prompted this is about to arrive over the bus as well;
+    // stamping the clock stops that echo fetching the same page a second time.
+    markRefreshed();
+  }, [resetAccumulation, serverState.refetch, markRefreshed]);
+
+  useEffect(() => { if (onServerReady) onServerReady(refreshRows); }, [onServerReady, refreshRows]);
+
   // ── The rows actually rendered ────────────────────────────────────────────
   // acc is already mapped by the accumulate effect; the non-infinite path maps here.
   const sourceRows = serverMode ? (infinite ? acc : mapServerRows(serverState.rows)) : rows;
@@ -489,7 +605,12 @@ export default function DataTable({
   // true total is unknowable without fetching everything, so the count shown is
   // explicitly labelled as counting loaded rows.
   const clientNarrowed = serverMode && split.clientConds.some(condActive);
-  const total = serverMode && !clientNarrowed ? serverState.count : data.length;
+  // liveTotal first when a background reload has one: it is the more recent
+  // answer to the same query, and leaving the older count in place would show
+  // "Showing 60 of 50" the moment ten new rows arrived.
+  const total = serverMode && !clientNarrowed
+    ? (liveTotal === null ? serverState.count : liveTotal)
+    : data.length;
 
   const totalPages = serverMode && !clientNarrowed
     ? Math.max(1, serverState.totalPages)

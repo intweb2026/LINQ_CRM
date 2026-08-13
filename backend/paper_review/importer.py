@@ -32,13 +32,13 @@ proposal_score from whatever is present and leaving it null when nothing is.
 """
 from accounts.import_common import (
     CREATE, CREATE_WITH_WARNING, ERROR, MAX_ROWS,
-    as_bool, as_int, as_text, build_header_mapper, normalise_row,
+    as_bool, as_int, as_text, build_header_mapper, column_errors, normalise_row,
     parse_import_date, plan_hash, public_plan, summarise,
 )
 from webhooks.event_code_normalization import resolve_with_spacing_tolerance
 
 from .access import has_full_visibility, permitted_event_codes
-from .models import CRITERIA, CRITERIA_FIELDS, CRITERIA_MAX
+from .models import CRITERIA, CRITERIA_FIELDS, CRITERIA_MAX, PaperReview
 
 __all__ = [
     "MAX_ROWS", "CREATE", "CREATE_WITH_WARNING", "ERROR",
@@ -130,6 +130,9 @@ FIELD_TO_LABEL = {
 MR_COLUMNS = ("internal_footnotes",)
 
 REQUIRED = ("event_code", "speaker_name", "email")
+# Descriptive now rather than enforcing: over-length is checked generically
+# against the model by column_errors() in classify_rows, which reads the same 500
+# off URLField.max_length.
 URL_FIELDS = ("linkedin_speaker", "linkedin_company")
 MAX_URL_LEN = 500
 
@@ -317,16 +320,23 @@ def classify_rows(rows, mapping, user, existing_pairs):
                 f" will be imported."
             )
 
-        # ── URL length ────────────────────────────────────────────────────────
-        for field in URL_FIELDS:
-            value = text_fields.get(field, "")
-            if len(value) > MAX_URL_LEN:
-                errors.append({
-                    "field": FIELD_TO_LABEL[field],
-                    "problem": f"longer than {MAX_URL_LEN} characters "
-                               f"({len(value)})",
-                    "value": value[:80] + "…",
-                })
+        # ── does every value FIT its column ───────────────────────────────────
+        # Supersedes the hand-written URL_FIELDS check this used to carry. The two
+        # LinkedIn columns are URLField(max_length=MAX_URL_LEN), so the generic
+        # check reports them identically, and it also covers every other column.
+        # Without this an overlong value passes preview and dies as a DataError
+        # 500 mid-commit, taking the whole chunk down with it; see
+        # accounts/import_common.column_errors.
+        #
+        # The RESOLVED code is checked, not the raw cell, because the payload
+        # writes the resolved one; a long raw spelling that resolves is not a
+        # problem.
+        errors.extend(column_errors(
+            PaperReview,
+            {**text_fields, "event_code": resolved_code,
+             "linkedin_followers": followers, **criteria},
+            FIELD_TO_LABEL,
+        ))
 
         email_key = text_fields.get("email", "").lower()
         pair = (email_key, resolved_code)

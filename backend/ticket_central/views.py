@@ -11,7 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.audit import log_module_wipe
-from accounts.bulk_update import BulkUpdateMixin
+from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.permissions import RBACMixin, IsAdminRole, IsHPAccount
 from accounts.crm_permissions import crm_permission
@@ -51,14 +51,10 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
     # Ticket has no parent FK — every row is independent, so there is no
     # collateral, no split-group UI and no blast-radius warning.
     #
-    # priority, type_of_ticket and relationship are plain CharFields with NO
-    # choices= at the DB level. That is deliberate (see the D4 comments at
-    # models.py:71-75 — Zoho's values don't match a fixed set), which means the
-    # allow-list below is the ONLY value safety these three have. Nothing at the
-    # database or model layer will catch a bad value.
-    #
-    # None of the four wired fields is null=True, so none is `nullable`:
-    # all are CharField(blank=True, default="").
+    # Every editable column is wired except the exclusions listed below the
+    # registry. The date and count columns are all null=True and come through
+    # `nullable`, so an MR can clear a wrongly-entered complete_date across a
+    # batch rather than only overwrite it.
     bulk_update_label = "tickets"
     bulk_update_parent_path = None
 
@@ -79,20 +75,41 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
         },
     )
 
-    _BULK_STATIC_FIELDS = {
-        "priority": {
-            "group": "row", "type": "choice", "label": "Priority",
-            "choices": list(Ticket.Priority.values),
+    _BULK_STATIC_FIELDS = build_bulk_update_fields(
+        Ticket,
+        exclude=(
+            # workflow state and provenance — see the block below for why
+            "status", "ticket_number",
+            "mr_submitted_at", "dmd_submitted_at", "returned_at", "return_reason",
+            # added per request by the property below, with live user emails as
+            # its choices rather than the free text this would produce
+            "assigned_mr",
+        ),
+        # priority, type_of_ticket and relationship carry NO choices= at the DB
+        # level (the D4 notes in models.py:71-85 — Zoho's values don't match a
+        # fixed set), so these lists are the ONLY value safety those three have.
+        # Nothing at the database or model layer will catch a bad value.
+        choices={
+            "priority":       list(Ticket.Priority.values),
+            "type_of_ticket": list(Ticket.TypeOfTicket.values),
+            "relationship":   list(Ticket.Relationship.values),
         },
-        "type_of_ticket": {
-            "group": "row", "type": "choice", "label": "Type of Ticket",
-            "choices": list(Ticket.TypeOfTicket.values),
+        labels={
+            "assign_name":      "Assign Name",
+            "assign_name_lx2":  "Assign Name (LX-2)",
+            "actual_count_lx2": "Actual Count (LX-2)",
+            "complete_date_lx2": "Complete Date (LX-2)",
+            "dm_comments":      "DM Comments",
+            "dm_comments_lx2":  "DM Comments (LX-2)",
+            "mr_comments":      "MR Comments",
+            "type_of_ticket":   "Type of Ticket",
+            "ticket_type":      "Ticket Type (DMD)",
+            "event_month_year": "Event Month/Year",
+            "added_user_text":  "Added User",
+            "link_url":         "Link URL",
+            "hubspot_entry_date": "HubSpot Entry Date",
         },
-        "relationship": {
-            "group": "row", "type": "choice", "label": "Relationship",
-            "choices": list(Ticket.Relationship.values),
-        },
-    }
+    )
 
     @property
     def bulk_update_fields(self):
@@ -119,8 +136,8 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
 
     # EXCLUDED, and why — anything absent from bulk_update_fields is refused:
     #   status         — the three submit actions own every transition
-    #                    (submit_mr:127, submit_dmd:152, return_to_mr:178), each
-    #                    guarding on current status and stamping *_submitted_by/at.
+    #                    (submit_mr, submit_dmd, return_to_mr), each guarding on
+    #                    current status and stamping *_submitted_by/at.
     #                    Creation now goes straight to MR_SUBMITTED, so DRAFT is
     #                    unreachable via the API; a generic writer would be the
     #                    ONLY way to force a ticket back into DRAFT, re-opening
@@ -128,8 +145,17 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
     #                    provenance null.
     #   ticket_number  — assigned at create by the serializer, and by the
     #                    backfill cron for migrated rows. Never caller-writable.
-    #   mr_submitted_by/at, dmd_submitted_by/at, returned_by/at, return_reason
+    #   mr_submitted_at, dmd_submitted_at, returned_at, return_reason
     #                  — provenance, written only by the three submit actions.
+    #                    The matching *_by columns are ForeignKeys and are
+    #                    dropped by the builder along with created_by.
+    #   external_id, idempotency_key, source_spreadsheet_id, source_tab,
+    #   source_row_number, id, created_at, updated_at
+    #                  — DEFAULT_EXCLUDES in accounts/bulk_update.py: source-system
+    #                    keys and audit columns.
+    #
+    #   assigned_mr is NOT excluded — it is added per request in the property
+    #   above, because its options are live users rather than a static list.
 
     filterset_class = TicketFilter
     search_fields   = [
@@ -373,11 +399,66 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
             dedup_field = None
             existing_set = set()
 
+        # A dry run has to hold a REAL transaction open, then roll it back.
+        #
+        # THE BUG THIS FIXES
+        # It used to call transaction.savepoint() here and savepoint_rollback() at the
+        # end. transaction.savepoint() is a documented NO-OP while the connection is
+        # in autocommit — and it is, because ATOMIC_REQUESTS is not set — so `sid` was
+        # None, the rollback did nothing, and a "dry_run" import COMMITTED every row
+        # while reporting them as would_insert. The one operation whose entire purpose
+        # is to write nothing was the one that wrote silently.
+        #
+        # transaction.atomic() + set_rollback(True) is the pair that actually holds and
+        # discards. The work itself lives in _bulk_import_apply so the rollback wraps
+        # ALL of it, and so an exception mid-file cannot leave the block un-exited —
+        # CONN_MAX_AGE is 600s here, so a leaked atomic would poison a reused
+        # connection rather than just failing one request.
+        if dry_run:
+            with transaction.atomic():
+                inserted, updated, skipped_rows, errors = self._bulk_import_apply(
+                    rows, duplicate_mode, dedup_field, existing_set, request)
+                transaction.set_rollback(True)
+        else:
+            inserted, updated, skipped_rows, errors = self._bulk_import_apply(
+                rows, duplicate_mode, dedup_field, existing_set, request)
+
+        if dry_run:
+            return Response({
+                "dry_run":        True,
+                "batch_number":   batch_number,
+                "duplicate_mode": duplicate_mode,
+                "would_insert":   inserted,
+                "would_update":   updated,
+                "would_skip":     len(skipped_rows),
+                "skipped_rows":   skipped_rows[:100],
+                "errors":         errors[:100],
+            })
+
+        return Response({
+            "success":        True,
+            "batch_number":   batch_number,
+            "duplicate_mode": duplicate_mode,
+            "inserted":       inserted,
+            "updated":        updated,
+            "skipped_count":  len(skipped_rows),
+            "skipped_rows":   skipped_rows[:100],
+            "errors":         errors[:100],
+        })
+
+    def _bulk_import_apply(self, rows, duplicate_mode, dedup_field, existing_set, request):
+        """
+        Write one batch. Returns (inserted, updated, skipped_rows, errors).
+
+        Extracted from bulk_import unchanged so the caller can wrap the WHOLE batch in
+        a transaction for dry_run. Per-row atomic blocks remain: one bad row must not
+        take the batch down with it.
+        """
+        from django.db import transaction
+        from .utils import _coerce_row
+
         inserted, updated, skipped_rows, errors = 0, 0, [], []
         seen_in_batch = set()
-
-        # Wrap in a savepoint so dry_run can roll back without aborting the request.
-        sid = transaction.savepoint() if dry_run else None
 
         for idx, row in enumerate(rows):
             key = (row.get(dedup_field) or "").strip() if dedup_field else None
@@ -439,29 +520,7 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
                     "message": str(e)[:300],
                 })
 
-        if dry_run:
-            transaction.savepoint_rollback(sid)
-            return Response({
-                "dry_run":        True,
-                "batch_number":   batch_number,
-                "duplicate_mode": duplicate_mode,
-                "would_insert":   inserted,
-                "would_update":   updated,
-                "would_skip":     len(skipped_rows),
-                "skipped_rows":   skipped_rows[:100],
-                "errors":         errors[:100],
-            })
-
-        return Response({
-            "success":        True,
-            "batch_number":   batch_number,
-            "duplicate_mode": duplicate_mode,
-            "inserted":       inserted,
-            "updated":        updated,
-            "skipped_count":  len(skipped_rows),
-            "skipped_rows":   skipped_rows[:100],
-            "errors":         errors[:100],
-        })
+        return inserted, updated, skipped_rows, errors
 
     @action(detail=False, methods=["post"], url_path="bulk_delete",
             permission_classes=[IsAdminRole])

@@ -31,12 +31,15 @@ from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+from accounts.models import (
+    CRM_MODULES, TEAM_NAME_ROLE_KEYWORDS, CustomRole, role_from_team_name,
+)
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
+from teams.models import Team
 
 User = get_user_model()
 
@@ -157,6 +160,16 @@ class WireProbeTests(TestCase):
             "delegate payload carries booking_code",
             "discount is sent as the stored fraction",
             "transfer body uses the server's field names",
+            # The admin surfaces. Named here because their bugs presented as a
+            # SUCCESSFUL request: a role saved with a same-shaped permission
+            # payload the backend read as all-false, and a Deactivate button
+            # whose empty body the endpoint refused.
+            "role permissions use the backend's can_* field names",
+            "role permissions do NOT send the UI's bare view/create/update/delete keys",
+            "user create sends is_team_lead, not the UI's is_lead",
+            "user create carries custom_role_id",
+            "toggle-status patches the user's toggle action with an empty body",
+            "team create carries name, colour and description",
         ):
             self.assertIn(surface, names, f"probe no longer covers: {surface}")
 
@@ -178,6 +191,11 @@ class WireLiteralReplayTests(TestCase):
     def setUp(self):
         self.probe = require_probe(self)
         self.factory = APIRequestFactory()
+        # The admin-surface replays below go through the router rather than a
+        # hand-built request, so the URL a captured body is posted to is the same
+        # one the browser uses.
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
         inv = BookEvent.objects.create(
             invoice_number="WP-1", event_code="WP - AA",
             payment_status="Pending", ticket_tier="",
@@ -209,3 +227,137 @@ class WireLiteralReplayTests(TestCase):
         """A count must cost one row, not ~35k across ~70 requests."""
         params = self.probe["literals"]["delegates_count_params"]
         self.assertEqual(params["page_size"], 1, params)
+
+    def test_captured_role_permissions_body_actually_grants_them(self):
+        """
+        THE REGRESSION TEST FOR THE ROLE BUG.
+
+        The frontend's grid and the backend's columns are different names for the
+        same four booleans, and the request carrying the wrong set still returned
+        200 — set_permissions defaults every absent key to False, so a role saved
+        with every box ticked came back with none of them. Replaying the body the
+        real api/roles.js builds is the only way to see that from a test: both
+        payloads are well-formed JSON and both are accepted.
+        """
+        body = self.probe["literals"]["role_permissions_body"]
+        self.assertIsNotNone(body, "probe captured no role permissions body")
+
+        role = CustomRole.objects.create(name="wp_grid", display_label="WP Grid")
+        resp = self.client.put(
+            f"/api/roles/{role.id}/permissions/", body, format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        stored = {p.module: p for p in role.permissions.all()}
+        self.assertEqual(set(stored), set(CRM_MODULES), "not every module was written")
+        for module, perm in stored.items():
+            self.assertTrue(
+                perm.can_view and perm.can_create and perm.can_update and perm.can_delete,
+                f"{module} was ticked in the UI and stored as "
+                f"view={perm.can_view} create={perm.can_create} "
+                f"update={perm.can_update} delete={perm.can_delete}",
+            )
+
+    def test_captured_user_create_body_is_accepted_and_answers_with_an_id(self):
+        """
+        The Add user form's body, replayed.
+
+        Two things at once: the field names have to land (is_team_lead, team_id,
+        custom_role_id), and the RESPONSE has to carry the read shape. It used to
+        echo the write serializer, which has no `id` and no `full_name`, so the
+        frontend mapped a freshly created user to `{id: undefined}`.
+        """
+        body = dict(self.probe["literals"]["user_create_body"])
+        team = Team.objects.create(name="WP Sales")
+        target_role = CustomRole.objects.create(name="wp_target", display_label="WP Target")
+        body["team_id"] = team.id
+        body["custom_role_id"] = target_role.id
+
+        resp = self.client.post("/api/users/", body, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+        data = resp.json()
+        self.assertIn("id", data, f"write response carries no id: {sorted(data)}")
+        self.assertEqual(data["username"], body["username"])
+        self.assertEqual(data["full_name"], "Ada Lovelace")
+
+        created = User.objects.get(username=body["username"])
+        self.assertTrue(created.is_team_lead, "the Team lead checkbox was discarded")
+        self.assertEqual(created.team_id, team.id)
+        self.assertEqual(created.custom_role_id, target_role.id)
+        self.assertTrue(
+            created.check_password(body["password"]),
+            "the password was accepted and not set",
+        )
+
+    def test_captured_team_create_body_is_accepted(self):
+        body = self.probe["literals"]["team_create_body"]
+        resp = self.client.post("/api/teams/", body, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        team = Team.objects.get(name=body["name"])
+        self.assertEqual(team.color, body["color"])
+        self.assertEqual(team.description, body["description"])
+        self.assertTrue(team.slug, "the server derived no slug")
+
+    def test_the_forms_team_to_role_preview_matches_what_save_does(self):
+        """
+        The Add user form fills Role in from the Team, using a JavaScript copy of
+        the keyword chain in accounts/models.py. A preview that disagrees with
+        the server is worse than none, because the user sees one role, saves, and
+        gets another with no indication anything happened.
+
+        Both sides are ordered keyword scans, so drift shows up on exactly the
+        names where order decides the answer, and nowhere else. Every name the
+        probe evaluated is put through the Python implementation here.
+        """
+        js_answers = self.probe["literals"]["team_name_role_map"]
+        self.assertTrue(js_answers, "probe evaluated no team names")
+
+        disagreements = []
+        for name, js_role in js_answers.items():
+            py_role = role_from_team_name(name)
+            py_role = py_role.value if py_role is not None else None
+            if py_role != js_role:
+                disagreements.append(f"{name!r}: js={js_role!r} python={py_role!r}")
+        self.assertEqual(
+            disagreements, [],
+            "the form previews a different role than User.save() stores:\n  "
+            + "\n  ".join(disagreements),
+        )
+
+    def test_the_two_keyword_chains_are_the_same_list_in_the_same_order(self):
+        """
+        Order IS the behaviour, so matching answers on a sample is necessary but
+        not sufficient; a reordering that happens not to change any sampled name
+        would still be a live divergence waiting for the first team called
+        something the sample does not cover.
+        """
+        js_pairs = [tuple(p) for p in self.probe["literals"]["team_name_role_keywords"]]
+        py_pairs = [(kw, role.value) for kw, role in TEAM_NAME_ROLE_KEYWORDS]
+        self.assertEqual(
+            js_pairs, py_pairs,
+            "frontend/src/lib/roleFromTeam.js has drifted from "
+            "accounts/models.py TEAM_NAME_ROLE_KEYWORDS",
+        )
+
+    def test_captured_toggle_status_body_flips_the_status(self):
+        """
+        The captured body is `{}` — that IS the request. The endpoint used to
+        require a `status` key and answered 400 for every click of a button whose
+        entire job is to toggle.
+        """
+        body = self.probe["literals"]["user_toggle_body"]
+        self.assertEqual(body, {}, "the drawer no longer sends an empty body")
+
+        subject = User.objects.create_user(
+            username="wp_toggle", password="x", email="wp_toggle@iq-hub.com",
+        )
+        self.assertEqual(subject.status, "active")
+
+        resp = self.client.patch(
+            f"/api/users/{subject.id}/toggle-status/", body, format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        subject.refresh_from_db()
+        self.assertEqual(subject.status, "inactive")
+        self.assertFalse(subject.is_active, "is_active did not follow status")

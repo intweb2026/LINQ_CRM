@@ -4,27 +4,54 @@ import { Icon } from '../lib/icons';
 import { useToast } from '../context/ToastContext';
 import { parseFile } from '../lib/importParse';
 import * as importApi from '../api/import';
+import FileDropZone from './FileDropZone';
 
 const STEPS = ['Upload', 'Map fields', 'Review', 'Import'];
 const SKIP = '— Skip this column —';
 
-// Guesses a target field for a source column name by loose substring match —
-// starting point only; the mapping step lets the user correct any of it.
+const nrm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Guesses a target field for a source column name — starting point only; the
+// mapping step lets the user correct any of it.
+//
+// Exact matches on the key, the label or a declared alias are resolved across
+// ALL fields before any loose matching. The loose test is symmetric, so a header
+// like "Sales Team" matches speaker_sales_team (its key contains the header) just
+// as "Speaker Sales Team" matches sales_team (the header contains its key).
+// Without the exact pass, whichever field is declared first wins BOTH columns and
+// one of them silently overwrites the other in buildRows().
 function autoMap(headers, fields) {
   const map = {};
   headers.forEach((h) => {
-    const norm = h.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const hit = fields.find(([key, label]) => {
-      const kn = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const ln = label.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return norm === kn || norm === ln || norm.includes(kn) || kn.includes(norm);
+    const norm = nrm(h);
+    const exact = fields.find(([key, label, aliases]) => (
+      norm === nrm(key) || norm === nrm(label) || (aliases || []).some((a) => nrm(a) === norm)
+    ));
+    const hit = exact || fields.find(([key]) => {
+      const kn = nrm(key);
+      return norm.includes(kn) || kn.includes(norm);
     });
     map[h] = hit ? hit[0] : SKIP;
   });
   return map;
 }
 
-export default function ImportWizard({ kind, onClose }) {
+/**
+ * `onImported` — called once the batches are in, so the table behind the wizard
+ * shows what was just imported.
+ *
+ * It did not exist. This component took `{ kind, onClose }` only, on all four
+ * pages that mount it, so the single largest way data enters this CRM — a
+ * spreadsheet of bookings, tickets or events — landed in the database and left
+ * the screen showing the old rows. "Import 4,000 bookings" followed by a table
+ * that still says 12,000 reads as an import that silently failed, and the only
+ * way to see otherwise was F5.
+ *
+ * Fired on the failure path too, not only on success. Rows go up in batches of
+ * 500, so a request that throws on batch seven has already written six — and the
+ * table behind is then MORE wrong than after a clean import, not less.
+ */
+export default function ImportWizard({ kind, onClose, onImported }) {
   const toast = useToast();
   const fields = importApi.TARGET_FIELDS[kind] || importApi.TARGET_FIELDS.bookings;
   const [step, setStep] = useState(0);
@@ -35,8 +62,10 @@ export default function ImportWizard({ kind, onClose }) {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
 
-  async function onPickFile(e) {
-    const f = e.target.files && e.target.files[0];
+  // Takes a File, not a change event: the same handler now serves the browse dialog
+  // and a dropped file, which are different events carrying the file in different
+  // places (target.files vs dataTransfer.files). FileDropZone normalises that.
+  async function onPickFile(f) {
     if (!f) return;
     setFile(f);
     setParsing(true);
@@ -77,9 +106,13 @@ export default function ImportWizard({ kind, onClose }) {
       setImporting(false);
       setStep(2);
       toast(err.response?.data?.detail || 'Import failed — check the file and try again', 'er');
+      // A throw part-way through a multi-batch import leaves the earlier batches
+      // written, so the table behind is stale either way.
+      onImported?.();
       return;
     }
     setImporting(false);
+    onImported?.();
   }
 
   return (
@@ -114,12 +147,12 @@ export default function ImportWizard({ kind, onClose }) {
     >
       {step === 0 && (
         <>
-          <label className="dz" style={{ cursor: 'pointer', display: 'block' }}>
-            <input type="file" accept=".xlsx,.xls,.csv,.json" style={{ display: 'none' }} onChange={onPickFile} />
-            <div className="dz-i"><Icon name="upload" size={20} /></div>
-            <h3>Drop a file, or click to browse</h3>
-            <p>.xlsx, .csv or .json — up to 50 MB</p>
-          </label>
+          <FileDropZone
+            onFile={onPickFile}
+            onReject={(msg) => toast(msg, 'er')}
+            hint=".xlsx, .csv or .json — up to 50 MB"
+            disabled={parsing || importing}
+          />
           {parsing ? <div className="hint" style={{ marginTop: 11 }}>Reading file…</div> : null}
           {file && parsed && (
             <div className="vr ok" style={{ marginTop: 11 }}>

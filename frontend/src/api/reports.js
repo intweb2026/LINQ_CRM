@@ -4,7 +4,6 @@
 // have no dedicated backend aggregate endpoint — computed here from the real
 // bookings/users/teams lists rather than fabricated.
 import { http, fetchAllPages } from './client';
-import * as bookingsApi from './bookings';
 import * as ticketsApi from './tickets';
 import * as webhooksApi from './webhooks';
 
@@ -46,10 +45,10 @@ export const syncLogs = () => fetchAllPages('reports/sync-logs/').then((rows) =>
 // to build the dashboard's GROUP BYs in the browser. Both callers now read
 // /api/stats/dashboard_aggregate/ instead (config/views.py DashboardAggregateView).
 
-export async function overview() {
+export async function overview(period) {
   // Same SQL aggregate as dashboard() — this used to walk every delegate row
   // a second time to produce the identical two fields.
-  const { data } = await http.get('stats/dashboard_aggregate/');
+  const { data } = await http.get('stats/dashboard_aggregate/', { params: { period } });
   return {
     booking_team_productivity: data.booking_team_productivity || [],
     months: data.months || [],
@@ -69,14 +68,24 @@ export async function overview() {
  *   /api/stats/dashboard_aggregate/  the GROUP BYs (config/views.py)
  *   /api/tickets/stats/              ticket counts
  *   /api/webhooks/logs/?status=failed&page_size=1   read for `count`
+ *
+ * `period` is a DASH_PERIODS key and reaches the backend verbatim, which 400s on
+ * anything it does not know rather than quietly answering for all time. The
+ * ticket and webhook counts are NOT period-scoped — their dates are their own
+ * (assign_date, received_at) and have nothing to do with when a booking was
+ * raised; the returned `period.applies_to` says which figures the window covers.
  */
-export async function dashboard() {
+export async function dashboard(period) {
   const [agg, ticketStats, whFailed] = await Promise.all([
-    http.get('stats/dashboard_aggregate/').then((r) => r.data),
+    http.get('stats/dashboard_aggregate/', { params: { period } }).then((r) => r.data),
     ticketsApi.stats().catch(() => ({})),
     webhooksApi.countByStatus('failed').catch(() => 0),
   ]);
 
+  // Calendar-year total and the H1→H2 swing, both read off the same monthly
+  // series. Only meaningful for the unfiltered view: inside a 7-day window there
+  // is no half-year to compare, which is why DashboardPage hides them there
+  // rather than rendering a confident -100%.
   const now = new Date();
   const yearPrefix = String(now.getFullYear());
   const yearMonths = (agg.months || []).filter((m) => m.label.startsWith(yearPrefix));
@@ -85,13 +94,21 @@ export async function dashboard() {
   const h2 = yearMonths.filter((m) => +m.label.slice(5, 7) > 6).reduce((s, m) => s + m.total, 0);
   const delta = h1 ? Math.round(((h2 - h1) / h1) * 100) : 0;
 
-  const BOOKING_TEAM_TYPES = ['sales', 'spex', 'speaker_sales'];
   const teams = agg.booking_team_productivity || [];
   return {
+    period: agg.period || {}, attribution: agg.attribution || {},
+    // `outstanding` is all-time whatever the window is — the action queue is a
+    // worklist, and an unpaid invoice does not stop being unpaid because the
+    // dashboard is showing the last 7 days. Falls back to the windowed line so a
+    // response from a backend without the field still renders something real.
+    outstanding: agg.outstanding || agg.all,
     all: agg.all, sales: agg.sales, spex: agg.spex, speaker: agg.speaker,
     months: agg.months || [], channels: agg.channels || [],
     team_productivity: teams,
-    booking_team_productivity: teams.filter((t) => BOOKING_TEAM_TYPES.includes(t.team_type)),
+    // `pipeline` is set by the backend for exactly the teams that sell bookings
+    // (sales, telemarketing, spex, speaker_sales) — asking the payload beats
+    // re-listing the team types here and having the two lists drift.
+    booking_team_productivity: teams.filter((t) => t.pipeline),
     tickets: ticketStats, whFailed,
     year, delta,
   };

@@ -7,17 +7,26 @@ import { fdate, nf, uniq } from '../lib/helpers';
 import { PAPER_REVIEW_CRITERIA, PAPER_GRADES, PAPER_GRADE_TONE, PAPER_SESSION_OPTIONS } from '../lib/constants';
 import * as paperReviewApi from '../api/paperReview';
 import { useFetch } from '../hooks/useFetch';
+import { useBulkUpdate } from '../hooks/useBulkUpdate';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import PaperReviewFormModal from './paperReview/PaperReviewFormModal';
 import PaperReviewImportModal from './paperReview/PaperReviewImportModal';
+import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 
 export default function PaperReviewPage() {
   const { canView, can } = useSession();
-  const { data: reviews, refetch, loading, error } = useFetch(paperReviewApi.list, [], { initialData: [] });
+  const { data: reviews, refetch, refetchQuiet, loading, error } = useFetch(paperReviewApi.list, [], { initialData: [] });
   const REVIEWS = reviews || [];
-  const refresh = () => refetch();
+  // Quiet, so a background refresh cannot replace a table full of rows with the
+  // error panel below on one dropped request. `refetch` stays wired to the Try
+  // again button, where an error IS what the user is asking about.
+  const { refreshNow: refresh } = useLiveData(refetchQuiet, { resources: ['paper-reviews'] });
+  // 'paper-reviews' is the router path (config/urls.py), not the module key used
+  // for permissions — the two differ here and a wrong one 404s the schema fetch.
+  const bulk = useBulkUpdate('paper-reviews', refresh);
   const [editReview, setEditReview] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -45,10 +54,11 @@ export default function PaperReviewPage() {
 
       {error && !loading ? (
         <EmptyState icon="warn" title="Unable to load paper reviews" body="Something went wrong while loading this data. Please try again in a moment."
-          action={<button className="btn btn-s btn-sm" onClick={refresh}><Icon name="refresh" size={13} />Try again</button>} />
+          action={<button className="btn btn-s btn-sm" onClick={() => refetch().catch(() => {})}><Icon name="refresh" size={13} />Try again</button>} />
       ) : (
       <DataTable
         rows={VISIBLE} noun="reviews" pageSize={50} defaultSort={{ key: 'paper_submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        select={can('update', 'paper_review')}
         extraToolbar={dupeCount > 0 || dupesOnly ? (
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-3)', whiteSpace: 'nowrap' }}
             title="A duplicate is another review with the same speaker email on the same event. The count only covers events you are assigned to, so a duplicate on someone else's event reads as none.">
@@ -106,8 +116,24 @@ export default function PaperReviewPage() {
           </div>
         )}
         onRow={can('update', 'paper_review') ? (r) => setEditReview(r) : undefined}
+        bulkActions={(ids, { clear, total }) => (
+          <div className="bulk">
+            {/* The rows on this page, not every match — the count says which. */}
+            <span className="n">{nf(ids.length)}</span> selected
+            {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
+            <div className="sep" />
+            <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
+              <Icon name="edit" size={13} />Update field…
+            </button>
+            <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
+          </div>
+        )}
       />
       )}
+
+      {bulk.ready ? (
+        <BulkUpdateModal {...bulk.props} rowLabel="review" totalMatching={REVIEWS.length} />
+      ) : null}
 
       {editReview ? <PaperReviewFormModal review={editReview} onClose={() => setEditReview(null)} onSaved={refresh} /> : null}
       {newOpen ? <PaperReviewFormModal onClose={() => setNewOpen(false)} onSaved={refresh} /> : null}

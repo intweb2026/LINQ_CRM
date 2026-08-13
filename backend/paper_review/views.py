@@ -44,7 +44,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from accounts.audit import log_module_wipe
-from accounts.bulk_update import BulkUpdateMixin
+from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
@@ -61,6 +61,7 @@ from .importer import (
     AUDIT_COLUMNS, classify_rows, file_has_mr_content, map_headers, plan_hash,
     public_plan, summarise,
 )
+from accounts.import_common import catalogue_notice
 from .models import CRITERIA, CRITERIA_FIELDS, RUBRIC_TOTAL, PaperReview
 from .notifications import send_paper_review_notification
 from .proposal_bridge import ProposalBridgeError, create_proposal_for_review
@@ -122,45 +123,48 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
     ordering = ["-paper_submission_date"]
 
     # ── Mass update (C2) ──────────────────────────────────────────────────────
-    # Whitelist only. PaperReview has no parent FK, so every row is independent:
-    # no collateral, no split-group UI, no blast-radius warning.
+    # PaperReview has no parent FK, so every row is independent: no collateral,
+    # no split-group UI, no blast-radius warning.
     #
-    # Identity fields (event_code, speaker_name, email, company_name), the
-    # LinkedIn URLs and the two email refs are deliberately absent — mass-setting
-    # them would overwrite per-person data with one value.
+    # Every editable column is wired EXCEPT:
+    #   event_code, speaker_name, email, company_name — identity. Mass-setting
+    #       them would overwrite per-person data with one value, and event_code
+    #       is what the RBAC scope matches on.
+    #   speaker_email_ref, research_email_ref — NOT user-entered. They cache the
+    #       notification recipients resolved from the event, are read-only in the
+    #       serializer and absent from the form (models.py:66-69).
+    #   proposal_score — COMPUTED. save() recomputes it from the six criteria on
+    #       every write, so a bulk write would be overwritten in the same
+    #       statement and read as a silent no-op. Bulk-updating any CRITERION
+    #       moves the score instead, which is the point — see
+    #       get_bulk_update_side_effects below.
+    #   import_batch_id, created_by, updated_by, created_at, updated_at, id —
+    #       DEFAULT_EXCLUDES in accounts/bulk_update.py.
     #
-    # proposal_score is ABSENT because it is COMPUTED: PaperReview.save()
-    # recomputes it from the six criteria on every write, so a bulk write to it
-    # would be overwritten in the same statement and read as a silent no-op.
-    # Bulk-updating any CRITERION therefore moves the score, which is the point —
-    # see bulk_update_side_effects below.
-    bulk_update_fields = {
-        "grade": {
-            "group": "row", "type": "choice", "label": "Grade",
-            "choices": ["A", "B", "C", "D"],
-        },
-        "session_location_on_agenda": {
-            "group": "row", "type": "text", "label": "Session or Location on Agenda",
-        },
-        "nos": {
-            "group": "row", "type": "boolean", "label": "NOS?",
-        },
-        "feedback_to_speaker": {
-            "group": "row", "type": "text",
-            "label": "Feedback to Speaker or Request Information",
-        },
-        "internal_footnotes": {
-            "group": "row", "type": "text", "label": "Internal Footnotes",
-        },
-        **{
-            field: {
-                "group": "row", "type": "integer",
-                "label": FIELD_TO_LABEL[field], "nullable": True,
-                "max": maximum,
-            }
-            for field, maximum in CRITERIA
-        },
-    }
+    # The six criteria carry their rubric maxima automatically: each is a
+    # PositiveSmallIntegerField with MaxValueValidator(<max>), which the builder
+    # reads into "max" (and 0 into "min"). CRITERIA stays the single source of
+    # truth — it is what defines those validators in the first place.
+    bulk_update_fields = build_bulk_update_fields(
+        PaperReview,
+        exclude=(
+            "event_code", "speaker_name", "email", "company_name",
+            "speaker_email_ref", "research_email_ref",
+            "proposal_score",
+        ),
+        # grade has no choices= at the DB level. The real vocabulary is not one
+        # letter per row: the Zoho export carries A, B, B+, C, D and E, with 'B+'
+        # the third most common at 355 of 3492 rows (models.py:106-115). Offering
+        # only A-D here would refuse a value the column legitimately holds and
+        # that the importer writes. Kept identical to qc_grade's list in
+        # proposal_submission, which proposal_bridge copies this column into.
+        choices={"grade": ["A", "B", "B+", "C", "D", "E"]},
+        # The importer's column names, reused verbatim: a field must not be
+        # called one thing in the import wizard, the CSV header and the export,
+        # and something else in the mass-update picker. It already carries the
+        # rubric maxima in the criterion labels ("Closeness to Topic (10)").
+        labels=FIELD_TO_LABEL,
+    )
     bulk_update_parent_path = None          # no parent — row writes only
     bulk_update_label       = "paper reviews"
     # Every criterion moves the computed total, and the preview must say so rather
@@ -180,37 +184,10 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
             ]
         return super().get_bulk_update_side_effects(field, raw_value)
 
-    def _coerce(self, value, config):
-        """
-        Extend the shared coercer with an "integer" type, bounded per field.
-
-        BulkUpdateMixin._coerce knows only choice / date / boolean / text.
-        Declaring a criterion "text" would pass a raw string through to
-        obj.save(): "9" happens to work, but "abc" raises ValueError deep in the
-        ORM and surfaces as an unhandled 500 instead of a 400 naming the field.
-        Overridden HERE rather than in accounts/bulk_update.py because four
-        modules now share that file — the same call proposal_submission made, and
-        its "max" bound is the addition this module needs on top.
-        """
-        if config.get("type") == "integer":
-            if value is None:
-                if config.get("nullable"):
-                    return None, None
-                return None, "This field cannot be cleared."
-            # bool is an int subclass in Python — reject before int() accepts it.
-            if isinstance(value, bool):
-                return None, "Value must be a whole number."
-            try:
-                coerced = int(str(value).strip())
-            except (TypeError, ValueError):
-                return None, f"'{value}' is not a whole number."
-            if coerced < 0:
-                return None, "Value cannot be negative."
-            maximum = config.get("max")
-            if maximum is not None and coerced > maximum:
-                return None, f"Value cannot exceed {maximum}."
-            return coerced, None
-        return super()._coerce(value, config)
+    # The "integer" type, its min/max bounds and the 400-not-500 guarantee for a
+    # non-numeric value now live in accounts/bulk_update.py._coerce_number. This
+    # module carried a private copy, as did proposal_submission; a fix to either
+    # had to be found in both.
 
     # ── Compound filter engine ────────────────────────────────────────────────
     filter_spec_fields = build_filter_spec_fields(
@@ -692,6 +669,9 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
             "importable": counts[CREATE] + counts[CREATE_WITH_WARNING],
             "unrecognised_columns": unrecognised,
             "ignored_columns": ignored,
+            # Why NOTHING in the file can import, when the reason is the system
+            # rather than the rows. See accounts/import_common.catalogue_notice.
+            "notice": catalogue_notice(),
             # B2 — stated in the preview, so nobody has to infer it from
             # behaviour after the fact.
             "workflows_suppressed": {

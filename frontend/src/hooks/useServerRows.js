@@ -68,10 +68,26 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
   // still sitting in state from the last one.
   const reqKey = `${page}|${pageSize}|${ordering || ''}|${effectiveSpec || ''}|${search || ''}`;
 
+  /**
+   * Set by refetch({ quiet: true }) and consumed by the next run of the effect
+   * below — a BACKGROUND refresh, from a poll or from another tab's write (see
+   * hooks/useLiveData.js). It suppresses the loading flag and, more importantly,
+   * the failure path: `setRows([])` on a dropped background poll would empty a
+   * table the user was reading, so a refresh nobody asked for would be capable of
+   * destroying the screen it exists to keep current.
+   *
+   * A ref rather than part of the reload state because the effect re-runs for
+   * ordinary reasons too (page, sort, filter), and every one of those IS the user
+   * waiting on a fetch and must show as loading.
+   */
+  const quietRef = useRef(false);
+
   useEffect(() => {
     if (!enabled || !resource || !gateOpen) return undefined;
+    const quiet = quietRef.current;
+    quietRef.current = false;
     let cancelled = false;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     const timer = setTimeout(() => {
       fetchPage(resource, { page, pageSize, ordering, filterSpec: effectiveSpec, search })
         .then((res) => {
@@ -83,12 +99,12 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
           setError('');
         })
         .catch((err) => {
-          if (cancelled) return;
+          if (cancelled || quiet) return;
           setRows([]);
           setCount(0);
           setError(err?.response?.data?.detail || err?.message || 'Could not load records.');
         })
-        .finally(() => { if (!cancelled) setLoading(false); });
+        .finally(() => { if (!cancelled && !quiet) setLoading(false); });
     }, DEBOUNCE_MS);
     return () => { cancelled = true; clearTimeout(timer); };
     // reqKey is derived from the params already listed here; including it would
@@ -96,7 +112,10 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resource, enabled, gateOpen, page, pageSize, ordering, effectiveSpec, search, reloadKey]);
 
-  const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
+  const refetch = useCallback((opts) => {
+    quietRef.current = !!(opts && opts.quiet);
+    setReloadKey((k) => k + 1);
+  }, []);
 
   /**
    * Which page `rows` holds — and null unless those rows answer the CURRENT

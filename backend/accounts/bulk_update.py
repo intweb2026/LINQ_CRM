@@ -26,13 +26,155 @@ of it.
 import hashlib
 import json
 import logging
+from decimal import Decimal, InvalidOperation
 
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import transaction
 from django.utils.dateparse import parse_date
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
+
+
+# ── Registry builder ─────────────────────────────────────────────────────────
+# Sibling of accounts/filter_spec.py's build_filter_spec_fields, and deliberately
+# the same shape: derive the registry from the model's own columns, then subtract
+# an EXPLICIT exclusion list. Deny-by-default is preserved — the builder emits
+# only concrete, editable, writable columns, and everything a module refuses is
+# named at the call site with its reason.
+#
+# Django field class -> our type. Anything unmapped is SKIPPED rather than
+# guessed: ForeignKey needs a picker the modal does not have, JSONField has no
+# scalar input, DateTimeField carries a timezone the date input cannot express,
+# and UUIDField is provenance. An unrecognised field is therefore not
+# mass-writable, which is the safe direction to fail in.
+_DJANGO_TYPE_MAP = {
+    "CharField":                 "text",
+    "TextField":                 "text",
+    "EmailField":                "text",
+    "URLField":                  "text",
+    "SlugField":                 "text",
+    "BooleanField":              "boolean",
+    "IntegerField":              "integer",
+    "PositiveIntegerField":      "integer",
+    "PositiveSmallIntegerField": "integer",
+    "SmallIntegerField":         "integer",
+    "BigIntegerField":           "integer",
+    "DecimalField":              "decimal",
+    "FloatField":                "decimal",
+    "DateField":                 "date",
+}
+
+# Never mass-writable on any module: surrogate keys, import provenance and audit
+# columns. A caller setting `created_by` across 1000 rows is rewriting history,
+# not editing data.
+DEFAULT_EXCLUDES = {
+    "id", "created_at", "updated_at", "created_by", "updated_by",
+    "import_batch_id", "external_id", "idempotency_key",
+    "source_spreadsheet_id", "source_tab", "source_row_number",
+}
+
+_POSITIVE_FIELDS = {"PositiveIntegerField", "PositiveSmallIntegerField"}
+
+
+def _validator_bounds(field):
+    """
+    (minimum, maximum) for a numeric column, from its class and its validators.
+
+    Positive* fields floor at 0 by their column type; MinValueValidator /
+    MaxValueValidator carry the per-field rubric bounds (paper_review's six
+    criteria) and the >= 0 rule on proposal_submission.qc_score. Reading them
+    here means the bound is declared once, on the model, rather than repeated in
+    every ViewSet that wires the field.
+    """
+    minimum = 0 if type(field).__name__ in _POSITIVE_FIELDS else None
+    maximum = None
+    for v in getattr(field, "validators", ()):
+        limit = getattr(v, "limit_value", None)
+        if callable(limit):                     # e.g. a lambda returning today
+            continue
+        if isinstance(v, MinValueValidator) and limit is not None:
+            minimum = limit if minimum is None else max(minimum, limit)
+        elif isinstance(v, MaxValueValidator) and limit is not None:
+            maximum = limit if maximum is None else min(maximum, limit)
+    return minimum, maximum
+
+
+def build_bulk_update_fields(model, exclude=(), labels=None, choices=None,
+                             group="row", prefix="", extra=None):
+    """
+    Derive a `bulk_update_fields` registry from `model`'s concrete columns.
+
+    exclude  names to leave out, ON TOP of DEFAULT_EXCLUDES. Every caller states
+             its own reasons inline; that comment is the record of why a column
+             is not mass-writable.
+    labels   {field: "Human Label"} — anything unnamed is Title Cased.
+    choices  {field: [...]} for columns with no `choices=` at the DB level. Those
+             exist deliberately in ticket_central and proposal_submission (the
+             real Zoho picklists were never confirmed), so the allow-list here is
+             the ONLY value safety they have.
+    group    "row" or "parent".
+    prefix   dotted parent path, e.g. "invoice" -> keys come out as
+             "invoice.currency", which is what the mixin expects for parent writes.
+    extra    merged last, so a hand-written entry always wins over the derived one.
+    """
+    exclude = set(exclude) | DEFAULT_EXCLUDES
+    labels = labels or {}
+    choices = choices or {}
+    out = {}
+
+    for f in model._meta.get_fields():
+        if not getattr(f, "concrete", False) or f.many_to_many or f.one_to_many:
+            continue
+        # editable=False covers AutoField, auto_now and auto_now_add: columns the
+        # ORM itself owns, which a caller must never set.
+        if f.primary_key or not getattr(f, "editable", True):
+            continue
+        name = f.name
+        if name in exclude:
+            continue
+        ftype = _DJANGO_TYPE_MAP.get(type(f).__name__)
+        if ftype is None:
+            continue
+
+        cfg = {
+            "group": group,
+            "type":  ftype,
+            "label": labels.get(name, name.replace("_", " ").title()),
+        }
+        # nullable MUST mirror null=True — it is what lets the modal offer
+        # "clear this field", and what makes the backend refuse a null anywhere
+        # else. Emitted only when true so the wire shape stays as it was.
+        if getattr(f, "null", False):
+            cfg["nullable"] = True
+
+        declared = choices.get(name) or [c[0] for c in (f.choices or ())]
+        if declared:
+            cfg["type"] = "choice"
+            cfg["choices"] = list(declared)
+        elif ftype == "text":
+            # Enforced in _coerce so an over-length value is a 400 naming the
+            # limit, not a DataError from the database rendered as a 500.
+            if getattr(f, "max_length", None):
+                cfg["max_length"] = f.max_length
+        elif ftype in ("integer", "decimal"):
+            minimum, maximum = _validator_bounds(f)
+            if minimum is not None:
+                cfg["min"] = minimum
+            if maximum is not None:
+                cfg["max"] = maximum
+            if ftype == "decimal":
+                if getattr(f, "max_digits", None):
+                    cfg["max_digits"] = f.max_digits
+                if getattr(f, "decimal_places", None) is not None:
+                    cfg["decimal_places"] = f.decimal_places
+
+        out[f"{prefix}.{name}" if prefix else name] = cfg
+
+    if extra:
+        out.update(extra)
+    return out
 
 
 class BulkUpdateMixin:
@@ -95,8 +237,11 @@ class BulkUpdateMixin:
         """Validate + coerce a submitted value. Returns (coerced, error_or_None)."""
         ftype = config.get("type", "text")
 
-        # An empty date input is the browser's way of saying "cleared".
-        if ftype == "date" and value == "":
+        # An emptied date or number input is the browser's way of saying
+        # "cleared". Text is excluded deliberately: "" is a legitimate value for
+        # a CharField(blank=True), and the vast majority of the wired text
+        # columns are exactly that.
+        if ftype in ("date", "integer", "decimal") and value == "":
             value = None
 
         # An explicit null is a real operation — clear the field — but only
@@ -119,10 +264,18 @@ class BulkUpdateMixin:
             return None, f"'{value}' is not a valid true/false value."
 
         if ftype == "choice":
-            choices = config.get("choices") or []
-            if value not in choices:
-                return None, f"'{value}' is not a valid choice for this field."
-            return value, None
+            # Matched on the STRING form as well as the value itself, and the
+            # declared choice is what gets returned. Choices are not always
+            # strings — BookDelegate.delegate_count declares [(0, "0"), (1, "1")]
+            # — and a <select> can only ever submit "0", which a bare
+            # `value not in choices` would reject against an int list.
+            # bool is excluded from the loose match because `True == 1`.
+            for choice in config.get("choices") or []:
+                if value is choice or value == choice:
+                    return choice, None
+                if not isinstance(value, bool) and str(value) == str(choice):
+                    return choice, None
+            return None, f"'{value}' is not a valid choice for this field."
 
         if ftype == "date":
             if not isinstance(value, str):
@@ -132,10 +285,85 @@ class BulkUpdateMixin:
                 return None, f"'{value}' is not a valid ISO date (YYYY-MM-DD)."
             return parsed, None
 
+        if ftype in ("integer", "decimal"):
+            return self._coerce_number(value, config, ftype)
+
         # "text"
         if not isinstance(value, str):
             return None, "Value must be a string."
+        limit = config.get("max_length")
+        # A 256-character value into a max_length=255 column raises a DataError
+        # deep in the ORM and surfaces as a 500. Caught here so it is a 400 that
+        # names the limit instead.
+        if limit and len(value) > limit:
+            return None, (
+                f"Value is too long — {len(value)} characters, "
+                f"maximum {limit}."
+            )
         return value, None
+
+    def _coerce_number(self, value, config, ftype):
+        """
+        Shared numeric coercion for the "integer" and "decimal" types.
+
+        WHY THIS IS NOT "text"
+        Declaring a numeric column as text passes the raw string through to
+        obj.save(): "9" happens to work because the ORM casts it, but "abc"
+        raises ValueError deep inside and surfaces as an unhandled 500 rather
+        than a 400 naming the field. paper_review and proposal_submission each
+        carried a private copy of this for exactly that reason; both now call
+        here, so the bounds and the error strings exist once.
+        """
+        # bool is an int subclass in Python — reject before int() accepts it.
+        if isinstance(value, bool):
+            return None, ("Value must be a whole number." if ftype == "integer"
+                          else "Value must be a number.")
+
+        raw = str(value).strip()
+        if ftype == "integer":
+            try:
+                coerced = int(raw)
+            except (TypeError, ValueError):
+                return None, f"'{value}' is not a whole number."
+        else:
+            try:
+                coerced = Decimal(raw)
+            except (TypeError, ValueError, InvalidOperation):
+                return None, f"'{value}' is not a number."
+            if not coerced.is_finite():
+                return None, f"'{value}' is not a number."
+
+        minimum = config.get("min")
+        if minimum is not None and coerced < minimum:
+            # Kept as the original wording for the >= 0 case: it is what every
+            # positive column means, and it reads better than the generic form.
+            return None, ("Value cannot be negative." if minimum == 0
+                          else f"Value cannot be less than {minimum}.")
+
+        maximum = config.get("max")
+        if maximum is not None and coerced > maximum:
+            return None, f"Value cannot exceed {maximum}."
+
+        if ftype == "decimal":
+            places = config.get("decimal_places")
+            digits = config.get("max_digits")
+            # as_tuple() rather than the string form so "1E+3" is measured as the
+            # four-digit number it is rather than the three characters it looks
+            # like. exponent < 0 means fractional places; >= 0 means trailing
+            # zeroes that still count towards the column width.
+            _, significand, exponent = coerced.as_tuple()
+            used_places = -exponent if exponent < 0 else 0
+            whole = len(significand) - used_places if exponent < 0 else len(significand) + exponent
+            if places is not None and used_places > places:
+                return None, f"Value has too many decimal places — maximum {places}."
+            if digits is not None:
+                allowed = digits - (places or 0)
+                if whole > allowed:
+                    return None, (
+                        f"Value is too large for this field — maximum "
+                        f"{allowed} digits before the decimal point."
+                    )
+        return coerced, None
 
     def get_bulk_update_side_effects(self, field, raw_value):
         """

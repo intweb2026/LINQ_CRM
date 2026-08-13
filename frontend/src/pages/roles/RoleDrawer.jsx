@@ -13,7 +13,10 @@ export default function RoleDrawer({ role: r, perms, onClose, onEdit }) {
   const { data: teams } = useFetch(teamsApi.list, [], { initialData: [] });
   const teamName = (id) => ((teams || []).find((t) => t.id === id) || {}).name || 'Unassigned';
   if (!r) return null;
-  const members = (users || []).filter((u) => u.role === r.name);
+  // custom_role_id, not `u.role` — see the same fix in RolesPage. This drawer's
+  // "N members" heading and its list both came from the legacy job-function
+  // enum, so it disagreed with the count on the card that opened it.
+  const members = (users || []).filter((u) => u.custom_role_id === r.id);
 
   return (
     <Drawer

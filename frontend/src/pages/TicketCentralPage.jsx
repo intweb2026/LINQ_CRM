@@ -8,11 +8,14 @@ import { fdate, fmy, nf, plur } from '../lib/helpers';
 import { TK_STATUS, TK_PRIORITY, TK_TYPES, TK_TICKET_TYPES, TK_RELATIONSHIPS } from '../lib/constants';
 import * as ticketsApi from '../api/tickets';
 import { useFetch } from '../hooks/useFetch';
+import { useBulkUpdate } from '../hooks/useBulkUpdate';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
+import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 
 const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim">—</span> : null);
@@ -89,15 +92,21 @@ export default function TicketCentralPage() {
   // rows (~72 sequential requests) before the table could render a single row.
   // DataTable now pages against the server. Tab counts already came from
   // tickets/stats/, which is a real aggregate.
-  const { data: stats, refetch: refetchStats } = useFetch(ticketsApi.stats, [], { initialData: {} });
+  const { data: stats, refetchQuiet: reloadStats } = useFetch(ticketsApi.stats, [], { initialData: {} });
   const [tableRefetch, setTableRefetch] = useState(null);
   // Wrapped in an updater: React treats a bare function passed to a state setter
   // as an updater and would call it instead of storing it.
   const keepRefetch = useCallback((fn) => setTableRefetch(() => fn), []);
+  // The tab counts are their own aggregate, so they need their own subscription —
+  // the table looks after its rows (see DataTable's liveReload). Both move when
+  // anything writes tickets/, including a colleague moving one through the
+  // workflow from their own browser.
+  const { refreshNow: refreshStats } = useLiveData(reloadStats, { resources: ['tickets'] });
   const refresh = useCallback(() => {
     if (tableRefetch) tableRefetch();
-    refetchStats().catch(() => {});
-  }, [tableRefetch, refetchStats]);
+    refreshStats();
+  }, [tableRefetch, refreshStats]);
+  const bulk = useBulkUpdate('tickets', refresh);
   // null = closed; a row = edit that ticket; NEW = the add form. Same component
   // either way, so the two layouts cannot drift apart.
   const [formTicket, setFormTicket] = useState(null);
@@ -156,12 +165,22 @@ export default function TicketCentralPage() {
         bulkActions={(ids, { clear }) => (
           <div className="bulk">
             <span className="n">{ids.length}</span> selected<div className="sep" />
-            <button className="btn btn-sm btn-p" onClick={async () => { const n = await ticketsApi.bulkSubmit(ids); clear(); refresh(); toast(n ? plur(n, 'ticket') + ' submitted to Data Mining' : 'Only draft tickets can be submitted', n ? 'ok' : 'wn'); }}><Icon name="send" size={13} />Submit to DMD</button>
+            {/* TicketViewSet has declared bulk_update_fields all along — priority,
+                type of ticket, the DMD assignment columns — and nothing here
+                reached them, so editing many tickets meant opening each one. */}
+            <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
+              <Icon name="edit" size={13} />Update field…
+            </button>
+            <button className="btn btn-sm btn-s" onClick={async () => { const n = await ticketsApi.bulkSubmit(ids); clear(); refresh(); toast(n ? plur(n, 'ticket') + ' submitted to Data Mining' : 'Only draft tickets can be submitted', n ? 'ok' : 'wn'); }}><Icon name="send" size={13} />Submit to DMD</button>
             <button className="btn btn-sm btn-s" onClick={() => toast('Exporting ' + plur(ids.length, 'ticket') + '…', 'nf')}><Icon name="download" size={13} />Export</button>
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
           </div>
         )}
       />
+
+      {bulk.ready ? (
+        <BulkUpdateModal {...bulk.props} rowLabel="ticket" totalMatching={S.total} />
+      ) : null}
 
       {formTicket ? (
         <TicketFormModal
@@ -170,7 +189,7 @@ export default function TicketCentralPage() {
           onSaved={refresh}
         />
       ) : null}
-      {importOpen ? <ImportWizard kind="tickets" onClose={() => setImportOpen(false)} /> : null}
+      {importOpen ? <ImportWizard kind="tickets" onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
     </>
   );
 }

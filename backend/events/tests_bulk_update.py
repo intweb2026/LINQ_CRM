@@ -297,17 +297,111 @@ class EventBulkUpdateTests(TestCase):
         self.assertEqual(Event.objects.count(), 3)
 
     # ── schema hygiene ────────────────────────────────────────────────────────
-    def test_choices_match_model_enum(self):
+    def _schema_fields(self):
         req = self.factory.get("/bulk_update_schema/")
         force_authenticate(req, user=self.user)
-        f = SCHEMA(req).data["fields"]
-        self.assertEqual(f["status"]["choices"], list(Event.Status.values))
-        self.assertEqual(set(f.keys()),
-                         {"status", "web_bookings", "location", "official_event_name"})
+        return SCHEMA(req).data["fields"]
 
-    def test_no_field_is_nullable(self):
-        """Every wired Event column is NOT NULL in the schema."""
-        req = self.factory.get("/bulk_update_schema/")
-        force_authenticate(req, user=self.user)
-        for key, cfg in SCHEMA(req).data["fields"].items():
-            self.assertFalse(cfg.get("nullable", False), f"{key} should not be nullable")
+    def test_choices_match_model_enum(self):
+        self.assertEqual(self._schema_fields()["status"]["choices"],
+                         list(Event.Status.values))
+
+    def test_every_editable_column_is_wired_except_the_documented_exclusions(self):
+        """
+        The registry is DERIVED from the model, so a column added to Event later
+        becomes mass-updatable automatically. That is the intent — but it also
+        means a new DERIVED column would be silently offered, so the exclusion
+        list is asserted here rather than left to the builder.
+        """
+        wired = set(self._schema_fields())
+        for excluded in [*DERIVED_FIELDS, "event_code", "sales_executive",
+                         "id", "created_at", "updated_at", "import_batch_id"]:
+            self.assertNotIn(excluded, wired)
+
+        concrete = {
+            f.name for f in Event._meta.get_fields()
+            if getattr(f, "concrete", False) and getattr(f, "editable", True)
+            and not f.primary_key and not f.is_relation
+        }
+        missing = concrete - wired - set(DERIVED_FIELDS) - {
+            "event_code", "created_at", "updated_at", "import_batch_id",
+        }
+        self.assertEqual(missing, set(), f"not offered for mass update: {missing}")
+
+    def test_nullable_mirrors_the_model_column(self):
+        """
+        `nullable` is what lets the modal offer "clear this field" and what makes
+        the backend refuse a null anywhere else, so it must track null=True
+        exactly — in both directions.
+        """
+        columns = {f.name: f for f in Event._meta.get_fields()
+                   if getattr(f, "concrete", False)}
+        for key, cfg in self._schema_fields().items():
+            self.assertEqual(
+                bool(cfg.get("nullable", False)), bool(columns[key].null),
+                f"{key}: nullable disagrees with the model column",
+            )
+
+    def test_end_date_can_be_cleared_but_event_date_cannot(self):
+        """The concrete consequence of the rule above."""
+        fields = self._schema_fields()
+        self.assertTrue(fields["end_date"]["nullable"])
+        self.assertFalse(fields["event_date"].get("nullable", False))
+
+        cleared = self._post({
+            "ids": self.ids, "field": "event_date", "value": None, "commit": False,
+        })
+        self.assertEqual(cleared.status_code, 400)
+        self.assertIn("cannot be cleared", cleared.data["detail"])
+
+    # ── the newly wired types ─────────────────────────────────────────────────
+    def test_capacity_is_an_integer_and_rejects_garbage_with_a_400(self):
+        bad = self._preview(self.ids, "capacity", "abc")
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("whole number", bad.data["detail"])
+
+        r = self._commit(self.ids, "capacity", "750")
+        self.assertEqual(r.status_code, 200, r.data)
+        for e in Event.objects.filter(id__in=self.ids):
+            self.assertEqual(e.capacity, 750)
+
+    def test_capacity_below_zero_is_refused_rather_than_raising_at_save(self):
+        r = self._preview(self.ids, "capacity", -1)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("negative", r.data["detail"])
+
+    def test_expected_revenue_is_a_decimal(self):
+        from decimal import Decimal
+        r = self._commit(self.ids, "expected_revenue", "1250.50")
+        self.assertEqual(r.status_code, 200, r.data)
+        for e in Event.objects.filter(id__in=self.ids):
+            self.assertEqual(e.expected_revenue, Decimal("1250.50"))
+
+    def test_a_date_column_round_trips(self):
+        import datetime
+        r = self._commit(self.ids, "website_live_date", "2026-09-01")
+        self.assertEqual(r.status_code, 200, r.data)
+        for e in Event.objects.filter(id__in=self.ids):
+            self.assertEqual(e.website_live_date, datetime.date(2026, 9, 1))
+
+    def test_over_length_text_is_a_400_naming_the_limit_not_a_database_error(self):
+        r = self._preview(self.ids, "event_type", "x" * 101)   # max_length=100
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("100", r.data["detail"])
+
+    def test_telemarketing_team_declares_its_derived_column(self):
+        """It writes tele_marketing_team in save(); the preview must say so."""
+        r = self._preview(self.ids, "telemarketing_team", "Team A")
+        self.assertEqual(r.data["side_effects"], ["also overwrites tele_marketing_team"])
+        c = self._commit(self.ids, "telemarketing_team", "Team A")
+        self.assertEqual(c.status_code, 200, c.data)
+        for e in Event.objects.filter(id__in=self.ids):
+            self.assertEqual(e.tele_marketing_team, "Team A")
+
+    def test_market_research_senior_declares_its_derived_column(self):
+        r = self._preview(self.ids, "market_research_senior", "Rita")
+        self.assertEqual(r.data["side_effects"], ["also overwrites market_research_team"])
+        c = self._commit(self.ids, "market_research_senior", "Rita")
+        self.assertEqual(c.status_code, 200, c.data)
+        for e in Event.objects.filter(id__in=self.ids):
+            self.assertEqual(e.market_research_team, "Rita")

@@ -4,14 +4,18 @@ import { Icon } from '../../lib/icons';
 import { nf, rel } from '../../lib/helpers';
 import { useToast } from '../../context/ToastContext';
 import { useFetch } from '../../hooks/useFetch';
+import { useLiveData } from '../../hooks/useLiveData';
 import * as reportsApi from '../../api/reports';
 
 const ST2T = { synced: 'green', syncing: 'amber', error: 'red' };
 
 export default function ReportsRegistry() {
   const toast = useToast();
-  const { data: sheets, refetch } = useFetch(reportsApi.sheets, [], { initialData: [] });
+  const { data: sheets, refetchQuiet: reloadSheets } = useFetch(reportsApi.sheets, [], { initialData: [] });
   const SHEETS = sheets || [];
+  // `syncing` is a transient status the server moves off on its own, so this card
+  // grid is stale the moment a sync starts unless something re-reads it.
+  const { refreshNow: refresh } = useLiveData(reloadSheets, { resources: ['reports/sources'] });
   const [q, setQ] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const filtered = SHEETS.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
@@ -21,7 +25,7 @@ export default function ReportsRegistry() {
       <div className="tb">
         <div className="tb-s"><input className="in in-s" placeholder="Search sources…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <div className="tb-sp" />
-        <button className="btn btn-p btn-sm" onClick={() => { toast('Syncing all sources…', 'nf'); reportsApi.syncAll().then(refetch); }}><Icon name="refresh" size={13} />Sync all</button>
+        <button className="btn btn-p btn-sm" onClick={() => { toast('Syncing all sources…', 'nf'); reportsApi.syncAll().then(refresh); }}><Icon name="refresh" size={13} />Sync all</button>
         <button className="btn btn-s btn-sm" onClick={() => setAddOpen(true)}><Icon name="plus" size={13} />Add source</button>
       </div>
       <div className="cg">
@@ -43,7 +47,7 @@ export default function ReportsRegistry() {
         ))}
       </div>
       {addOpen ? (
-        <AddSheetSourceModal onClose={() => setAddOpen(false)} onSaved={refetch} />
+        <AddSheetSourceModal onClose={() => setAddOpen(false)} onSaved={refresh} />
       ) : null}
     </>
   );

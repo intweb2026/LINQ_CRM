@@ -4,12 +4,14 @@ import { Icon } from '../../lib/icons';
 import { CRM_MODULES, PERM_ACTIONS } from '../../lib/constants';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import { apiErrorMessage } from '../../api/client';
 import * as rolesApi from '../../api/roles';
 
 export default function RoleEditModal({ role: r, perms, onClose, onSaved }) {
   const toast = useToast();
   const confirm = useConfirm();
   const isNew = !r;
+  const [busy, setBusy] = useState(false);
   const [label, setLabel] = useState(r ? r.display_label : '');
   const [color, setColor] = useState(r ? r.color : '#009CBC');
   const [description, setDescription] = useState(r ? r.description : '');
@@ -26,16 +28,38 @@ export default function RoleEditModal({ role: r, perms, onClose, onSaved }) {
 
   async function save() {
     if (!label.trim()) { toast('Display label is required', 'er'); return; }
-    await rolesApi.save({ id: r?.id, name: r?.name, display_label: label.trim(), color, description, permissions: grid });
+    setBusy(true);
+    try {
+      await rolesApi.save({
+        id: r?.id, name: r?.name, display_label: label.trim(), color, description,
+        // A system role's checkboxes are disabled, so there is nothing to send —
+        // and an is_all_access role would have its implicit "everything" written
+        // out as explicit rows for no reason.
+        permissions: r && r.system ? null : grid,
+      });
+    } catch (err) {
+      // Stay open with the server's reason. This used to close and toast success
+      // unconditionally, so a duplicate name — the derived `name` key is unique —
+      // read as "Role created" while nothing had been.
+      toast(apiErrorMessage(err, isNew ? 'Could not create the role.' : 'Could not save the role.'), 'er');
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
     onClose();
     toast((isNew ? 'Role created: ' : 'Role updated: ') + label.trim(), 'ok');
     onSaved();
   }
   async function del() {
     onClose();
-    const ok = await confirm({ title: 'Delete role?', sub: r.display_label, danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>Members holding this role keep their access until reassigned.</p> });
+    const ok = await confirm({ title: 'Delete role?', sub: r.display_label, danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>Anyone holding it loses all module access until they are given another one.</p> });
     if (ok) {
-      await rolesApi.remove(r.name);
+      try {
+        await rolesApi.remove(r.name);
+      } catch (err) {
+        toast(apiErrorMessage(err, 'Could not delete the role.'), 'er');
+        return;
+      }
       toast('Role deleted: ' + r.display_label, 'ok');
       onSaved();
     }
@@ -44,9 +68,9 @@ export default function RoleEditModal({ role: r, perms, onClose, onSaved }) {
   return (
     <Modal size="lg" title={isNew ? 'Create role' : 'Edit ' + r.display_label} sub={isNew ? 'Define a new permission set.' : 'Adjust view / create / update / delete per module.'} onClose={onClose}
       footer={<>
-        <button className="btn btn-s" onClick={onClose}>Cancel</button>
-        {r && !r.system ? <button className="btn btn-do" onClick={del}><Icon name="trash" size={15} />Delete role</button> : null}
-        <button className="btn btn-p" onClick={save}><Icon name="check" size={15} />{isNew ? 'Create role' : 'Save changes'}</button>
+        <button className="btn btn-s" onClick={onClose} disabled={busy}>Cancel</button>
+        {r && !r.system ? <button className="btn btn-do" onClick={del} disabled={busy}><Icon name="trash" size={15} />Delete role</button> : null}
+        <button className="btn btn-p" onClick={save} disabled={busy}><Icon name="check" size={15} />{busy ? 'Saving…' : (isNew ? 'Create role' : 'Save changes')}</button>
       </>}>
       <div className="fs">
         <div className="fs-t"><Icon name="shield" size={13} />Identity</div>

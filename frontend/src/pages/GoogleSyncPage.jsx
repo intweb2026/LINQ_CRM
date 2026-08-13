@@ -9,6 +9,7 @@ import { nf, fdate, ftime } from '../lib/helpers';
 import { GSYNC_TYPE_LABEL, GSYNC_TRIGGER_LABEL } from '../lib/constants';
 import * as gsyncApi from '../api/googleSync';
 import { useFetch } from '../hooks/useFetch';
+import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
@@ -68,9 +69,12 @@ export default function GoogleSyncPage() {
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
-  const { data: logs, refetch } = useFetch(gsyncApi.list, [], { initialData: [] });
+  const { data: logs, refetchQuiet: reloadLogs } = useFetch(gsyncApi.list, [], { initialData: [] });
   const GSYNC_LOGS = logs || [];
-  const refresh = () => refetch();
+  // A sync is a long server-side job, and the cron schedule starts them without
+  // anyone asking. The log this page renders is therefore written mostly by the
+  // backend, which is precisely the case a poll exists for.
+  const { refreshNow: refresh } = useLiveData(reloadLogs, { resources: ['google-sync'] });
 
   if (!canView('webhooks')) return <NoAccessPage module="Google Sync" />;
 
