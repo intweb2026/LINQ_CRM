@@ -10,7 +10,10 @@ class BookDelegateFilter(django_filters.FilterSet):
     last_name    = django_filters.CharFilter(lookup_expr="icontains")
     email        = django_filters.CharFilter(lookup_expr="icontains")
     position     = django_filters.CharFilter(lookup_expr="icontains")
-    booking_code = django_filters.CharFilter(field_name="invoice__booking_code", lookup_expr="icontains")
+    # The delegate's own column, matching what the Bookings table displays and
+    # edits. It was invoice__booking_code, which now disagrees with the cell for
+    # any invoice whose delegates carry different codes.
+    booking_code = django_filters.CharFilter(lookup_expr="icontains")
     invoice_number = django_filters.CharFilter(field_name="invoice__invoice_number", lookup_expr="icontains")
     
     # Exact / Multiple

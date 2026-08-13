@@ -23,6 +23,7 @@ class BookDelegateInlineSerializer(serializers.ModelSerializer):
             "dietary_requirements", "notes",
             "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
             "delegate_paid_or_free", "delegate_ticket_tier",
+            "booking_code", "delegate_number",
             "delegate_count", "discount", "add_ons", "reference",
             "effective_payment_status", "effective_payment_type", "effective_payment_date",
             "effective_paid_or_free", "effective_ticket_tier", "edition",
@@ -53,7 +54,11 @@ class BookDelegateListSerializer(serializers.ModelSerializer):
     book_event_id          = serializers.IntegerField(source="invoice.id",           read_only=True)
     request_date           = serializers.DateField(source="invoice.request_date",    read_only=True)
     invoice_date           = serializers.DateField(source="invoice.invoice_date",    read_only=True)
-    booking_code           = serializers.CharField(source="invoice.booking_code",    read_only=True)
+    # The DELEGATE's own column now (models.py), not invoice.booking_code: one
+    # invoice can carry delegates on different booking codes, and the previous
+    # source= meant every row on an invoice reported the same value no matter what
+    # was stored against the delegate. Left writable so the Bookings modal can
+    # save it — it was read_only here, which is why editing it did nothing.
     currency               = serializers.CharField(source="invoice.currency",        read_only=True)
     discount               = serializers.DecimalField(max_digits=10, decimal_places=2)
     discount_code          = serializers.CharField(source="invoice.discount_code",   read_only=True)
@@ -206,6 +211,7 @@ class BookDelegateWriteSerializer(serializers.ModelSerializer):
             "company", "attendance", "dietary_requirements", "notes",
             "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
             "delegate_paid_or_free", "delegate_ticket_tier",
+            "booking_code", "delegate_number",
             "delegate_count", "discount", "add_ons", "reference",
         ]
 

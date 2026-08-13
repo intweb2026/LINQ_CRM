@@ -47,6 +47,19 @@ class BookDelegate(models.Model):
         max_length=20, choices=Attendance.choices,
         default=Attendance.PENDING, db_index=True,
     )
+    # Per-delegate booking code. It lives HERE as well as on the invoice because
+    # one invoice can carry delegates booked on different terms — a Speaker and a
+    # Group Pass on the same invoice is a real combination — and BookEvent has
+    # exactly one booking_code to describe all of them. Populated for every
+    # existing row by migration 0009, and defaulted from the invoice in save()
+    # below so a row created without one is never left blank.
+    #
+    # The invoice column is NOT retired: revenue classification reads
+    # invoice__booking_code (book_event/views.py:195, config/views.py:244) and
+    # sync/bookings_sync.py exports it. The Bookings modal keeps it in step by
+    # writing the delegates' shared code back to the invoice whenever every
+    # delegate on it agrees — see frontend/src/api/bookings.js.
+    booking_code    = models.CharField(max_length=100, blank=True, default="", db_index=True)
     delegate_number = models.IntegerField(default=1)
     delegate_count = models.IntegerField(default=1, choices=[(0, "0"), (1, "1")])  # Strictly 0 or 1
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -82,6 +95,12 @@ class BookDelegate(models.Model):
         elif self.invoice:
             self.event_code = self.invoice.event_code
             self.edition = self.invoice.edition
+        # Inherit the invoice's code when this delegate has none of its own, the
+        # same way event_code is inherited above. Without it, rows created by the
+        # website intake — which sets booking_code on the invoice only — would read
+        # as blank in the Bookings table now that the column is delegate-sourced.
+        if not self.booking_code and self.invoice_id:
+            self.booking_code = self.invoice.booking_code
         super().save(*args, **kwargs)
 
     # Per-delegate payment overrides (null = inherit from invoice)

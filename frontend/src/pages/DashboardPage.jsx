@@ -13,7 +13,7 @@ import * as reportsApi from '../api/reports';
 import { useFetch } from '../hooks/useFetch';
 import { useSession } from '../context/SessionContext';
 import NewBookingModal from './bookings/NewBookingModal';
-import NewTicketModal from './tickets/NewTicketModal';
+import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
 
 const EMPTY_STATS = {
@@ -337,7 +337,7 @@ export default function DashboardPage() {
       </div>
 
       {newBookingOpen ? <NewBookingModal onClose={() => setNewBookingOpen(false)} /> : null}
-      {newTicketOpen ? <NewTicketModal onClose={() => setNewTicketOpen(false)} /> : null}
+      {newTicketOpen ? <TicketFormModal onClose={() => setNewTicketOpen(false)} /> : null}
       {importOpen ? <ImportWizard kind="bookings" onClose={() => setImportOpen(false)} /> : null}
     </>
   );

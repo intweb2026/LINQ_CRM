@@ -43,10 +43,13 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
+from accounts.audit import log_module_wipe
 from accounts.bulk_update import BulkUpdateMixin
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
+from accounts.permissions import IsHPAccount
+from proposal_submission.models import ProposalSubmission
 
 from .access import (
     has_full_visibility, may_see_mr_fields, may_use_event_code,
@@ -844,3 +847,48 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
                 fields.pop(name, None)
             response.data["fields"] = fields
         return response
+
+    @action(detail=False, methods=["delete"], url_path="clear_all",
+            permission_classes=[IsHPAccount])
+    def clear_all(self, request):
+        """
+        DELETE /api/paper-reviews/clear_all/ — HP only (accounts.permissions.IsHPAccount).
+
+        NOT scoped by get_queryset(). Every other read and write in this viewset is
+        narrowed to the caller's event codes by scope_queryset(); this one is
+        deliberately the whole table, because "clear all data" that silently left
+        another team's reviews behind would report success having done half the job.
+        The gate is that only one account can call it at all.
+
+        WHAT SURVIVES, AND WHY THAT IS CORRECT
+        ProposalSubmission.source_paper_review is on_delete=SET_NULL, so the proposals
+        this module generated (Part A, proposal_bridge.py) are UNLINKED rather than
+        destroyed — they belong to Proposal Submission, which has its own wipe. Its
+        `qc_score_stale` flag already models a proposal whose review has moved on, so
+        an unlinked proposal is a state that module understands.
+
+        NotificationLog rows ARE deleted: they are this module's own record of the
+        Part B emails, and keeping send history for reviews that no longer exist just
+        leaves rows nothing can be traced back to.
+        """
+        from django.db import transaction
+
+        from .models import NotificationLog
+
+        with transaction.atomic():
+            deleted = {
+                "paper_reviews": PaperReview.objects.count(),
+                "notification_logs": NotificationLog.objects.count(),
+            }
+            unlinked = ProposalSubmission.objects.filter(
+                source_paper_review__isnull=False).count()
+            NotificationLog.objects.all().delete()
+            PaperReview.objects.all().delete()
+            log_module_wipe(request.user, "PAPER REVIEW", deleted)
+        return Response({
+            "detail": "Successfully removed all paper review data.",
+            "deleted": deleted,
+            # Reported rather than left for someone to discover: these proposals still
+            # exist, they just no longer point at a review.
+            "proposals_unlinked": unlinked,
+        })

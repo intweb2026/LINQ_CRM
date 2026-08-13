@@ -49,29 +49,17 @@ class ApiKeyAuthentication(BaseAuthentication):
 
 
 
-class OriginAuthentication(BaseAuthentication):
-    """
-    Allows requests without an API key if the Origin or Referer matches
-    settings.CORS_ALLOWED_ORIGINS.
-    """
-    def authenticate(self, request):
-        origin = request.META.get("HTTP_ORIGIN", "") or request.META.get("HTTP_REFERER", "")
-        if not origin:
-            return None
+# OriginAuthentication used to live here: it authenticated any request whose
+# Origin/Referer matched settings.CORS_ALLOWED_ORIGINS. Removed, because those are
+# ordinary request headers that a non-browser client sets at will — a bare
+# `curl -H "Origin: https://<any-listed-domain>"` was a full bypass of X-API-KEY,
+# and every origin added to the CORS list widened the bypass. CORS is a browser
+# policy; it cannot authenticate a server-to-server caller. Send the key.
 
-        from urllib.parse import urlparse
-        domain = urlparse(origin).netloc.split(":")[0]
-        
-        allowed = [urlparse(o).netloc.split(":")[0] for o in getattr(settings, "CORS_ALLOWED_ORIGINS", [])]
-        
-        if domain in allowed:
-            return (_API_KEY_USER, f"origin:{domain}")
-        
-        return None
 
 class HasApiKey(BasePermission):
-    """Passes for requests authenticated with ApiKeyAuthentication or OriginAuthentication."""
-    message = "Valid X-API-KEY header or authorised Origin required."
+    """Passes for requests authenticated with ApiKeyAuthentication."""
+    message = "Valid X-API-KEY header required."
 
     def has_permission(self, request, view):
         return isinstance(request.user, ApiKeyUser)

@@ -1,32 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Modal from '../../components/Modal';
+import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
 import * as eventsApi from '../../api/events';
-import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
-import DelegateTable, { blankDelegate } from './DelegateTable';
+import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
+import { apiErrorMessage } from '../../api/client';
 
 export default function NewBookingModal({ onClose, onCreated }) {
   const toast = useToast();
   const today = new Date().toISOString().slice(0, 10);
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
   const EVENTS = events || [];
-  const owners = (users || []).filter((u) => u.role === 'sales' && u.status === 'active');
   const openEvents = EVENTS.filter((e) => e.status !== 'Completed');
+  // Starts EMPTY, and stays empty until someone chooses. It used to auto-select the
+  // first open event as soon as the list arrived, so a booking saved without
+  // touching the field silently landed on whichever event happened to sort first.
   const [eventCode, setEventCode] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('INV-' + (2026000 + Math.floor(Math.random() * 900)));
-  const [delegates, setDelegates] = useState([blankDelegate(today, owners[0]?.name || '')]);
   const ev = EVENTS.find((e) => e.event_code === eventCode) || {};
-  useEffect(() => {
-    if (!eventCode && openEvents.length) setEventCode(openEvents[0].event_code);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openEvents.length]);
+  // Sales Executive comes from the event, so a new booking has no owner to show
+  // until an event code is picked.
+  const salesExec = ev.sales_exec || '';
+  const [delegates, setDelegates] = useState([blankDelegate(today)]);
 
   function addDelegate() {
-    setDelegates((d) => [...d, blankDelegate(today, owners[0]?.name || '')]);
+    setDelegates((d) => [...d, blankDelegate(today, salesExec)]);
   }
   function removeDelegate(i) {
     setDelegates((d) => d.filter((_, idx) => idx !== i));
@@ -35,14 +36,17 @@ export default function NewBookingModal({ onClose, onCreated }) {
   async function create() {
     if (!eventCode) { toast('Select an event', 'er'); return; }
     if (!invoiceNumber.trim()) { toast('Invoice number is required', 'er'); return; }
-    const missing = delegates.find((d) => !d.name.trim() || !d.company_name.trim() || !d.email.trim());
-    if (missing) { toast('Each delegate needs a name, company and email', 'er'); return; }
+    const problem = delegateProblem(delegates);
+    if (problem) { toast(problem, 'er'); return; }
     try {
       await bookingsApi.createInvoice({
         invoice_number: invoiceNumber.trim(), event_code: ev.event_code, event_name: ev.name, request_date: today, invoice_date: today,
       }, delegates.map(({ key, ...d }) => d));
     } catch (err) {
-      toast(err.response?.data?.invoice_number ? 'That invoice number already exists' : 'Could not create booking — check the form and try again', 'er');
+      // The server's own words. It names the field, and for a delegate it names
+      // the row too — guessing at the reason here is what made a rejected
+      // booking look like a broken button.
+      toast(apiErrorMessage(err, 'Could not create booking — check the form and try again'), 'er');
       return;
     }
     onClose();
@@ -57,9 +61,9 @@ export default function NewBookingModal({ onClose, onCreated }) {
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
         <div className="fg c3">
           <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
-            <select className="in" value={eventCode} onChange={(e) => setEventCode(e.target.value)}>
-              {openEvents.map((e) => <option key={e.id} value={e.event_code}>{e.event_code}</option>)}
-            </select>
+            <Select className="in mono" value={eventCode} placeholder="Select an event…"
+              options={openEvents.map((e) => e.event_code).filter(Boolean).sort((a, b) => a.localeCompare(b))}
+              onChange={setEventCode} />
           </div>
           <div className="fd"><label className="fd-l">Event name</label><input className="in" value={ev?.name || ''} readOnly /></div>
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
@@ -70,7 +74,7 @@ export default function NewBookingModal({ onClose, onCreated }) {
           <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><Icon name="users" size={13} />Delegate details</span>
           <button className="btn btn-s btn-sm" onClick={addDelegate}><Icon name="plus" size={13} />Add delegate</button>
         </div>
-        <DelegateTable rows={delegates} onChange={setDelegates} onRemove={removeDelegate} eventCode={ev?.event_code} eventName={ev?.name} invoiceNumber={invoiceNumber} ownerNames={owners.map((u) => u.name)} />
+        <DelegateTable rows={delegates} onChange={setDelegates} onRemove={removeDelegate} eventCode={ev?.event_code} eventName={ev?.name} invoiceNumber={invoiceNumber} salesExec={salesExec} />
       </div>
     </Modal>
   );

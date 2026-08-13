@@ -35,6 +35,12 @@ export function remove(id) {
   return http.delete(`proposal-submissions/${id}/`).then(() => true);
 }
 
+// DELETE /api/proposal-submissions/clear_all/ — HP only (accounts/permissions.py
+// IsHPAccount), and the WHOLE table rather than the caller's event scope. Paper
+// reviews are untouched; the ones that generated proposals through the bridge will
+// regenerate them if those reviews are re-imported.
+export const clearAll = () => http.delete('proposal-submissions/clear_all/').then((r) => r.data);
+
 // The event codes this user may actually attach a proposal to — NOT the whole
 // catalogue. The endpoint existed on the ViewSet from the start but nothing read
 // it, so the form picker offered all 142 events and every code the user was not

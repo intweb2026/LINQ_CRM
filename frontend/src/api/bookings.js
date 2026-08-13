@@ -4,9 +4,18 @@
 // delegate). /api/invoices/ is used only for invoice-level create/update
 // (an invoice groups 1+ delegate rows) — see book_event/serializers.py.
 //
-// Known gaps — fields this UI expects with no backend equivalent, defaulted
-// rather than fabricated: `transfer_to_event`, `checked_in` (a separate
-// Yes/No "checked in" flag distinct from the `attendance` status enum).
+// There are no longer any fields here without a backend equivalent.
+//
+// `transfer_to_event` used to be one: a free-text column with nothing behind it, so
+// naming an event in it moved nothing. Transferring is now an action —
+// transferDelegate() below, against BookDelegateViewSet.transfer.
+//
+// `checked_in` USED to be in that list — a Yes/No flag with nothing behind it,
+// shown next to the real `attendance` enum as if the two were different facts.
+// They are not: the Zoho importers already treat Zoho's "Attendance - IN?"
+// checkbox as `attendance` ("true" → Confirmed, else Pending — see
+// book_event/management/commands/import_booking_excel.py:291). The Bookings tab
+// now shows ONE field, the checkbox, backed by `attendance`.
 import {
   http, fetchAllPages, fetchPage, assertIdArray,
   bulkUpdate as bulkUpdateOn, fetchBulkUpdateSchema,
@@ -15,6 +24,87 @@ import {
 // The DRF resource these rows come from. Shared by the mass-update and
 // filter_spec surfaces so the path is declared once.
 export const RESOURCE = 'delegates';
+
+// ── Discount units ──────────────────────────────────────────────────────────
+// The database stores a FRACTION: 0.2 means 20%, on both book_delegates.discount
+// and book_events.discount, and every non-zero value in the export is one of
+// 0.1/0.2/0.25/0.3/0.5. The UI works in PERCENT throughout — a row's `discount`
+// is the number 20, and the editor's option is the label '20%' — so the two
+// converters below are the only places the units meet.
+//
+// The previous discountToNumber() read '20%' as 20 and sent that, writing a value
+// 100× larger than every row already in the table.
+
+/** Stored fraction → the percent number the UI holds. '0.20' → 20, '0.00' → 0. */
+function fractionToPercent(v) {
+  const n = parseFloat(String(v ?? ''));
+  if (!Number.isFinite(n)) return 0;
+  // Scale then round to one decimal: 0.2 * 100 is not exactly 20 in binary
+  // floating point, and 20.000000000000004 must not reach the cell.
+  return Math.round(n * 1000) / 10;
+}
+
+/** Percent from the UI → the fraction to store. 20 | '20' | '20%' → 0.2. */
+function percentToFraction(v) {
+  if (v == null || v === '') return 0;
+  const n = parseFloat(String(v).replace('%', ''));
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((n / 100) * 10000) / 10000;
+}
+
+/**
+ * The five fields stored BOTH on the invoice and as a per-delegate override that
+ * shadows it, paired [what the UI calls it, the override column].
+ *
+ * Why the pairing matters on write: the modal shows one value per delegate, and
+ * writing it as an override on every row leaves the invoice's own column stale —
+ * so the Bookings table (which reads the resolved value) and every report that
+ * reads invoice.payment_status would disagree about the same booking. When all
+ * the delegates on an invoice agree, the value therefore goes on the INVOICE and
+ * the overrides are cleared; overrides are only used to carry a genuine
+ * per-delegate difference.
+ */
+const OVERRIDE_FIELDS = [
+  ['payment_status', 'delegate_payment_status'],
+  ['payment_type', 'delegate_payment_type'],
+  ['payment_date', 'delegate_payment_date'],
+  ['paid_or_free', 'delegate_paid_or_free'],
+  ['ticket_tier', 'delegate_ticket_tier'],
+];
+
+/** The value every delegate shares for `key`, or undefined if they differ. */
+function agreedValue(delegates, key) {
+  if (!delegates.length) return undefined;
+  const first = delegates[0][key] ?? '';
+  return delegates.every((d) => (d[key] ?? '') === first) ? first : undefined;
+}
+
+/**
+ * Split the delegates' person-level values into "belongs on the invoice" and
+ * "stays as a per-delegate override".
+ *
+ * Returns { invoiceFields, inherited } where `inherited` names the override
+ * columns to NULL out because the invoice now carries the value.
+ */
+function splitPersonLevel(delegates) {
+  const invoiceFields = {};
+  const inherited = {};
+  OVERRIDE_FIELDS.forEach(([uiKey, overrideKey]) => {
+    const agreed = agreedValue(delegates, uiKey);
+    if (agreed !== undefined && agreed !== '' && agreed !== null) {
+      invoiceFields[uiKey] = agreed;
+      inherited[overrideKey] = true;
+    }
+  });
+  // booking_code is per delegate now (book_delegate/models.py), but revenue
+  // classification still reads invoice__booking_code (book_event/views.py:195,
+  // config/views.py:244). Keeping the invoice in step whenever the delegates agree
+  // stops those figures drifting away from what the Bookings tab shows. The
+  // delegate values are NOT cleared — they are the authoritative ones.
+  const agreedCode = agreedValue(delegates, 'booking_code');
+  if (agreedCode) invoiceFields.booking_code = agreedCode;
+  return { invoiceFields, inherited };
+}
 
 function toFrontend(d) {
   return {
@@ -36,75 +126,124 @@ function toFrontend(d) {
     payment_date: d.effective_payment_date,
     payment_type: d.effective_payment_type,
     ticket_tier: d.effective_ticket_tier,
-    discount: d.discount,
+    // Percent, not the stored fraction — see fractionToPercent. The raw value
+    // reached the cell as the string "0.00", which is what made a zero discount
+    // read as 0.00 instead of 0.
+    discount: fractionToPercent(d.discount),
     add_ons: d.add_ons || '',
     reference: d.reference || '',
     event_name: d.event_name || '',
-    transfer_to_event: '',
     added_time: d.created_at,
     modified_time: d.updated_at,
     owner: d.sales_executive_name || '—',
-    checked_in: 'No',
     position: d.position || '',
     attendance: d.attendance,
-    delegate_count: d.delegate_count,
+    // Read for the "MANUAL"/"WEBSITE" chip in the edit modal's header only. The
+    // editable Source field and its column are gone — it was never a decision
+    // anyone made per booking, it records how the row arrived.
     source: d.source,
   };
 }
 
+/**
+ * The invoice half of a booking write — ONLY the keys the caller actually set.
+ *
+ * THE BUG THIS FIXES
+ * Every key used to be emitted with an `|| <default>` fallback, and the edit modal
+ * passes a meta of just {invoice_number, event_code, event_name}. So a PATCH from
+ * "Save changes" carried, silently:
+ *
+ *     payment_status: 'Pending'   ← reset, whatever the invoice actually was
+ *     booking_code:   ''          ← wiped; SpEx/speaker revenue is classified from it
+ *     company_name:   ''          ← wiped, along with contact_name/email/phone
+ *     request_date:   null        ← wiped, along with invoice_date (the default sort)
+ *     discount:       0           ← wiped
+ *     source:         'manual'    ← a website booking relabelled as hand-entered
+ *
+ * Nothing surfaced it: the request succeeded, and the delegate rows the modal
+ * shows are resolved through their own overrides, so the table looked unchanged
+ * while the invoice underneath had been emptied.
+ *
+ * Undefined-means-absent is the whole point — a PATCH must be able to leave a
+ * column alone. Pass an explicit null to CLEAR a nullable column.
+ */
 function invoiceToBackend(meta) {
-  return {
+  const out = {
     invoice_number: meta.invoice_number,
     event_code: meta.event_code,
-    event_date: meta.event_date || null,
-    request_date: meta.request_date || null,
-    invoice_date: meta.invoice_date || null,
-    booking_code: meta.booking_code || '',
-    company_name: meta.company_name || '',
-    contact_name: meta.name || meta.contact_name || '',
-    contact_email: meta.email || meta.contact_email || '',
-    contact_phone: meta.phone_number || '',
-    accounts_contact_email: meta.accounts_contact_email || '',
-    currency: meta.currency || 'USD',
-    ticket_tier: meta.ticket_tier || '',
-    payment_status: meta.payment_status || 'Pending',
-    payment_type: meta.payment_type || '',
-    payment_date: meta.payment_date || null,
-    paid_or_free: meta.paid_or_free || '',
-    discount: meta.discount || 0,
-    reference: meta.reference || '',
-    source: meta.source || 'manual',
+    event_name: meta.event_name,
+    event_date: meta.event_date,
+    request_date: meta.request_date,
+    invoice_date: meta.invoice_date,
+    booking_code: meta.booking_code,
+    company_name: meta.company_name,
+    contact_name: meta.name ?? meta.contact_name,
+    contact_email: meta.email ?? meta.contact_email,
+    contact_phone: meta.phone_number,
+    accounts_contact_email: meta.accounts_contact_email,
+    currency: meta.currency,
+    ticket_tier: meta.ticket_tier,
+    payment_status: meta.payment_status,
+    payment_type: meta.payment_type,
+    payment_date: meta.payment_date,
+    paid_or_free: meta.paid_or_free,
+    discount: meta.discount === undefined ? undefined : percentToFraction(meta.discount),
+    reference: meta.reference,
+    source: meta.source,
   };
+  Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
+  return out;
 }
 
-// The UI presents discount as a percent string ('10%', '25%', ...) but the
-// backend's `discount` column is a plain DecimalField (book_delegate/models.py)
-// with no '%' handling — sending the raw string 400s on every create/update.
-function discountToNumber(v) {
-  if (v == null || v === '') return 0;
-  const n = parseFloat(String(v).replace('%', ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
-function delegateToBackend(d) {
+/**
+ * The delegate half. `inherited` names the override columns to NULL because the
+ * invoice is carrying that value — see splitPersonLevel.
+ *
+ * booking_code, delegate_number, delegate_payment_date and delegate_paid_or_free
+ * were all missing from this payload, so the modal's Booking Code, Delegate
+ * Number, Date Paid and Paid/Free edits were dropped in the browser before the
+ * request was even built.
+ *
+ * company_name_raw was missing for the same reason and cost more: Delegate
+ * Company is a REQUIRED column in both booking modals (DelegateTable marks it
+ * with an asterisk and neither modal will submit without it), and the value
+ * typed into it reached nothing. It is the column the Bookings table shows as
+ * "Delegate Company" (BookDelegate.company_display falls back to it) and one of
+ * the fields that tab searches — so every booking entered by hand read blank
+ * there and could not be found by company name.
+ */
+function delegateToBackend(d, inherited = {}) {
+  const override = (column, value) => (inherited[column] ? null : (value || null));
+  // Whitespace is stripped at the boundary rather than trusted from the cell:
+  // " jane@acme.test " passes the server's "@" test and stores a padded address,
+  // which then fails to match the unique (invoice, email) pair it should have.
+  const name = typeof d.name === 'string' ? d.name.trim() : d.name;
   const out = {
     id: (d.id && String(d.id).match(/^\d+$/)) ? d.id : undefined,
-    first_name: d.name ? d.name.split(' ')[0] : d.first_name,
-    last_name: d.name ? d.name.split(' ').slice(1).join(' ') : d.last_name || '',
-    email: d.email,
+    first_name: name ? name.split(/\s+/)[0] : d.first_name,
+    last_name: name ? name.split(/\s+/).slice(1).join(' ') : d.last_name || '',
+    email: typeof d.email === 'string' ? d.email.trim() : d.email,
+    company_name_raw: d.company_name === undefined ? undefined : String(d.company_name ?? '').trim(),
     phone_number: d.phone_number || '',
     position: d.position || '',
     ticket_package: d.ticket_package || '',
     sponsorship_level: d.sponsorship_level || '',
+    // The Attendance - IN? checkbox. 'Pending' is the model default, so an
+    // unchecked box on a row with no stored value is not a change.
     attendance: d.attendance || 'Pending',
     notes: d.notes || '',
     dietary_requirements: d.dietary_requirements || '',
-    discount: discountToNumber(d.discount),
+    discount: percentToFraction(d.discount),
     add_ons: d.add_ons || '',
     reference: d.reference || '',
-    delegate_payment_status: d.payment_status || d.delegate_payment_status,
-    delegate_payment_type: d.payment_type || d.delegate_payment_type,
-    delegate_ticket_tier: d.ticket_tier || d.delegate_ticket_tier,
+    booking_code: d.booking_code || '',
+    delegate_number: Number.isFinite(Number(d.delegate_number)) && d.delegate_number !== ''
+      ? Number(d.delegate_number) : 1,
+    delegate_payment_status: override('delegate_payment_status', d.payment_status),
+    delegate_payment_type: override('delegate_payment_type', d.payment_type),
+    delegate_payment_date: override('delegate_payment_date', d.payment_date),
+    delegate_paid_or_free: override('delegate_paid_or_free', d.paid_or_free),
+    delegate_ticket_tier: override('delegate_ticket_tier', d.ticket_tier),
   };
   Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
   return out;
@@ -176,7 +315,7 @@ export function update(id, patch) {
   if (patch.payment_type !== undefined) body.delegate_payment_type = patch.payment_type;
   if (patch.payment_date !== undefined) body.delegate_payment_date = patch.payment_date;
   if (patch.ticket_tier !== undefined) body.delegate_ticket_tier = patch.ticket_tier;
-  if (patch.discount !== undefined) body.discount = discountToNumber(patch.discount);
+  if (patch.discount !== undefined) body.discount = percentToFraction(patch.discount);
   if (patch.attendance !== undefined) body.attendance = patch.attendance;
   if (patch.add_ons !== undefined) body.add_ons = patch.add_ons;
   if (patch.reference !== undefined) body.reference = patch.reference;
@@ -236,18 +375,58 @@ export const listByInvoice = (invoiceNumber) =>
   http.get(`delegates/by_invoice/${invoiceNumber}/`).then((r) => r.data.map(toFrontend));
 
 export function createInvoice(meta, delegates) {
-  const body = { ...invoiceToBackend(meta), delegates: delegates.map(delegateToBackend) };
+  const { invoiceFields, inherited } = splitPersonLevel(delegates);
+  const body = {
+    ...invoiceToBackend({ ...invoiceFields, ...meta }),
+    delegates: delegates.map((d) => delegateToBackend(d, inherited)),
+  };
   return http.post('invoices/', body).then((r) => r.data);
 }
 
+/**
+ * Save the invoice and its full delegate list in one PATCH.
+ *
+ * `meta` wins over the delegates' shared values, so an explicit invoice-level
+ * field from the caller is never second-guessed by the consensus rule.
+ * sales_executive is deliberately NOT sent: the backend derives it from the event
+ * code (book_event/serializers.py _apply_event_sales_executive), which is what
+ * makes the Sales Executive column follow a transfer to another event.
+ */
 export function saveInvoiceDelegates(invoiceNumber, meta, delegates, bookEventId) {
-  const body = { ...invoiceToBackend(meta), delegates: delegates.map(delegateToBackend) };
+  const { invoiceFields, inherited } = splitPersonLevel(delegates);
+  const body = {
+    ...invoiceToBackend({ ...invoiceFields, ...meta }),
+    delegates: delegates.map((d) => delegateToBackend(d, inherited)),
+  };
   return http.patch(`invoices/${bookEventId}/`, body).then((r) => r.data);
 }
 
 export function removeInvoice(bookEventId) {
   return http.delete(`invoices/${bookEventId}/`).then(() => true);
 }
+
+/**
+ * Move one delegate's credit to another event.
+ *
+ * ONE request, not three. The transfer marks this row "Credit Transferred" and
+ * creates a booking on the target event as "Paid (Transferred)"; done as separate
+ * calls from here, a failure in the middle would leave the delegate credited on two
+ * events or on none. The server does all of it in one transaction — see
+ * BookDelegateViewSet.transfer.
+ *
+ * Resolves with { source, created }; rejects with the server's `detail` for the
+ * cases the UI must show verbatim (invoice number taken on another event, delegate
+ * already on the target invoice).
+ */
+export function transferDelegate(delegateId, { targetEventCode, invoiceNumber }) {
+  return http.post(`delegates/${delegateId}/transfer/`, {
+    target_event_code: targetEventCode,
+    invoice_number: invoiceNumber,
+  }).then((r) => r.data);
+}
+
+/** The number the transfer modal offers for the new booking. */
+export const suggestTransferInvoiceNumber = (invoiceNumber) => `${invoiceNumber || 'INV'}-T`;
 
 /**
  * The single oldest delegate still awaiting payment, or null.

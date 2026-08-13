@@ -31,7 +31,14 @@ export default function LoginPage() {
         user = await loginWithCode(email.trim(), code.trim());
       }
       toast('Signed in as ' + user.name, 'ok');
-      nav('/dashboard');
+      // "/" resolves to the landing page — Reports, or Dashboard for roles without
+      // Reports access — inside the router; see HomeRedirect in App.jsx. Deciding
+      // it here would read a stale `canView` instead: this closure captured the
+      // permission matrix as it was BEFORE login() awaited and replaced it.
+      //
+      // replace: true because a signed-in user who presses Back onto /login is
+      // only bounced forward again, which traps the button on the landing page.
+      nav('/', { replace: true });
     } catch {
       toast('Sign in failed — check your details and try again', 'er');
     } finally {

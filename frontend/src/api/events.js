@@ -35,6 +35,11 @@ function toFrontend(e) {
     vr1_status: e.vr1_sent_status || 'Not Sent',
     sales_team: e.sales_team,
     sales_lead: e.team_leader,
+    // The event's sales executive, resolved the same way the backend resolves it
+    // (book_event/models.py auto_assign_sales): the FK first, then the free-text
+    // `sales_team` the Events tab keeps in step with it. Read by the Bookings tab,
+    // where Sales Executive is owned by the event rather than by the booking.
+    sales_exec: e.sales_executive_name || e.sales_team || '',
     speaker_team: e.speaker_sales_team,
     tele_team: e.telemarketing_team,
     mr_senior: e.market_research_senior,
@@ -110,3 +115,9 @@ export function remove(id) {
 export function create(payload) {
   return http.post('events/', toBackend(payload)).then((r) => toFrontend(r.data));
 }
+
+// DELETE /api/events/clear_all/ — HP only (accounts/permissions.py IsHPAccount).
+// Clears the CATALOGUE only. Bookings hold their event as a text code rather than a
+// foreign key, so they survive with codes that no longer resolve — which is why the
+// confirmation says so and why clearing bookings is its own action.
+export const clearAll = () => http.delete('events/clear_all/').then((r) => r.data);

@@ -3,11 +3,17 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
-import { NAV } from '../lib/nav';
+import { NAV, homeFor } from '../lib/nav';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import * as bookingsApi from '../api/bookings';
 import { plur } from '../lib/helpers';
+
+// 'paper-review' -> 'Paper Review'. The last-resort name for a shell route with no
+// NAV entry. Every route has one today, so this is defensive: it keeps the next
+// such page named after itself rather than inheriting whatever label a hardcoded
+// fallback happens to carry.
+const titleFromSegment = (s) => s.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 export default function AppShell() {
   const { canView } = useSession();
@@ -50,9 +56,18 @@ export default function AppShell() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const activeId = loc.pathname.replace('/', '').split('/')[0] || 'dashboard';
-  let group = 'Home', label = 'Dashboard';
-  NAV.forEach((g) => g.items.forEach((it) => { if (it.id === activeId) { group = g.g; label = it.l; } }));
+  // "/" reads as the landing page for the one render before the index route
+  // redirects, so the crumb and tab title never flash a page the user is not on.
+  const seg = loc.pathname.split('/')[1] || homeFor(canView).path.slice(1);
+  // Matched on `path`, not on `id`. The two are NOT interchangeable: 'paper_review'
+  // is underscored where /paper-review is hyphenated, so an id comparison never
+  // matched those entries and they fell through to the fallback below — which used
+  // to be a hardcoded "Home / Dashboard", i.e. Paper Review and Proposal Submission
+  // both announced themselves as the Dashboard in the breadcrumb and the tab title.
+  // Now that Dashboard is a nav item of its own, that mislabel would point at a
+  // real, visible page.
+  let group = 'Home', label = titleFromSegment(seg);
+  NAV.forEach((g) => g.items.forEach((it) => { if (it.path === '/' + seg) { group = g.g; label = it.l; } }));
 
   useEffect(() => { document.title = 'IQ-Hub — ' + label; window.scrollTo(0, 0); setMobileOpen(false); }, [label]);
 

@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
-import { NAV } from '../lib/nav';
+import { NAV, homeFor } from '../lib/nav';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
 import * as eventsApi from '../api/events';
@@ -15,7 +15,13 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   const toast = useToast();
   const nav = useNavigate();
   const loc = useLocation();
-  const activeId = loc.pathname.replace('/', '').split('/')[0] || 'dashboard';
+  const home = homeFor(canView);
+  // Compared against each item's `path`, not its `id` — see nav.js: 'paper_review'
+  // is underscored where /paper-review is hyphenated, so the id comparison this
+  // replaces left Paper Review and Proposal Submission permanently unhighlighted
+  // while sitting on those very pages. "/" only exists for the instant before the
+  // index route redirects, so it reads as the landing page.
+  const activePath = '/' + (loc.pathname.split('/')[1] || home.path.slice(1));
 
   // The bookings badge is a COUNT — one row off the paginator, not every page of
   // ~35k delegates length-filtered in the browser. This component mounts in the
@@ -34,7 +40,7 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   return (
     <nav className={'rail' + (mobileOpen ? ' open' : '')} aria-label="Main navigation">
       <div className="rail-head">
-        <div className="rail-mark" role="button" tabIndex={0} title="iQ Hub — go to Dashboard" onClick={() => nav('/dashboard')}>
+        <div className="rail-mark" role="button" tabIndex={0} title={'iQ Hub — go to ' + home.label} onClick={() => nav(home.path)}>
           <img src="/static/logo-light.png" alt="iQ Hub" className="lg-light" />
           <img src="/static/logo-dark.webp" alt="iQ Hub" className="lg-dark" />
           <img src="/static/logo-icon.webp" alt="iQ Hub" className="lg-icon" />
@@ -55,7 +61,7 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
               {vis.map((i) => {
                 const b = i.hasBadge ? badges[i.id] : null;
                 return (
-                  <button key={i.id} className={'rail-item' + (activeId === i.id ? ' on' : '')} onClick={() => { nav(i.path); onNavigate?.(); }}>
+                  <button key={i.id} className={'rail-item' + (activePath === i.path ? ' on' : '')} onClick={() => { nav(i.path); onNavigate?.(); }}>
                     <span className="rail-ic"><Icon name={i.ic} size={17} /></span>
                     <span className="rail-lb">{i.l}</span>
                     {b ? <span className="rail-bdg">{b > 999 ? '999+' : b}</span> : null}

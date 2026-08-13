@@ -43,6 +43,12 @@ def validate_api_key(request):
     if not api_key.is_active:
         return None, "This API key has been deactivated."
 
+    # Soft narrowing only — NOT a security boundary, and never the thing that
+    # grants access. A server-to-server sender transmits no Origin/Referer at all,
+    # so this check is skipped entirely for exactly the traffic we expect; and a
+    # caller who wanted past it would simply omit the header. The key is the
+    # credential. Leave allowed_domains empty unless a specific sender is known to
+    # be browser-originated.
     if api_key.allowed_domains:
         origin = (
             request.META.get("HTTP_ORIGIN", "") or
@@ -78,43 +84,36 @@ def validate_webhook_secret(request):
 
 def authenticate_request(request):
     """
-    Try X-CRM-API-KEY (DB) first, then X-WEBHOOK-SECRET (legacy).
-    Fallback to Origin/Referer check against CORS_ALLOWED_ORIGINS if headers are missing.
+    Try X-CRM-API-KEY (DB) first, then X-WEBHOOK-SECRET (legacy static).
     Returns (api_key_obj_or_None, error_str_or_None).
+
+    There is deliberately NO Origin/Referer fallback. `Origin` and `Referer` are
+    ordinary request headers: only a browser is bound to set them truthfully, and
+    a webhook sender is not a browser. Authenticating on them meant anyone who
+    could name one of our sending domains — public information — could post
+    bookings with no key at all:
+
+        curl -X POST .../ingest/ -H "Origin: https://one-of-our-sites.com"
+
+    It also scaled the wrong way. Every domain added to CORS_ALLOWED_ORIGINS
+    became another key-less way in, so the list we would have to grow to onboard
+    senders was the same list that granted them access. CORS is a browser policy
+    and cannot carry server-to-server authentication; the key does that.
     """
     api_key_obj, api_key_err = validate_api_key(request)
     if api_key_obj is not None:
         return api_key_obj, None
 
-    # api_key_err == "missing" means header wasn't present; try legacy
+    # api_key_err == "missing" means the header wasn't present; try the legacy secret
     if api_key_err == "missing":
         ok, secret_err = validate_webhook_secret(request)
         if ok:
             return None, None
-        
-        # Final fallback: Origin check
-        origin = request.META.get("HTTP_ORIGIN", "") or request.META.get("HTTP_REFERER", "")
-        if origin:
-            from urllib.parse import urlparse
-            domain = urlparse(origin).netloc.split(":")[0]
-            
-            # Ensure we strip spaces and handle potential empty strings in CORS list
-            raw_allowed = getattr(settings, "CORS_ALLOWED_ORIGINS", [])
-            if isinstance(raw_allowed, str):
-                raw_allowed = [s.strip() for s in raw_allowed.split(",") if s.strip()]
-            
-            allowed_domains = []
-            for o in raw_allowed:
-                netloc = urlparse(o.strip()).netloc
-                if netloc:
-                    allowed_domains.append(netloc.split(":")[0])
-            
-            if domain and domain in allowed_domains:
-                return None, None # Authenticated via domain whitelist
-
-    # Both headers absent and origin not allowed
-    if api_key_err == "missing":
-        return None, "Authentication required: provide X-CRM-API-KEY or authorised Origin."
+        # A wrong secret now reports itself instead of being flattened into the
+        # generic "authentication required" — those are different operator problems.
+        if secret_err != "missing":
+            return None, secret_err
+        return None, "Authentication required: send your key in the X-CRM-API-KEY header."
 
     return None, api_key_err
 

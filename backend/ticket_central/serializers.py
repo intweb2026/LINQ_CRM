@@ -36,8 +36,14 @@ class TicketListSerializer(serializers.ModelSerializer):
             "complete_date", "hubspot_entry_date", "dm_comments",
             "assign_name_lx2", "actual_count_lx2", "complete_date_lx2",
             "dm_comments_lx2", "source_spreadsheet_id", "source_tab",
-            "idempotency_key",
-            # Audit / method fields
+            "source_row_number", "idempotency_key",
+            # Audit / method fields.
+            # added_user_text is Zoho's "Added User" (D16) and return_reason/
+            # returned_at are what a returned ticket was actually sent back for —
+            # both are columns/fields the Ticket Central table and edit form show,
+            # and the list endpoint is the only place the UI reads a ticket from
+            # (it never fetches the detail route), so they have to be here.
+            "added_user_text", "return_reason", "returned_at",
             "created_by_name", "mr_submitted_by_name", "dmd_submitted_by_name",
             "mr_submitted_at", "dmd_submitted_at",
         ]

@@ -148,6 +148,15 @@ class WireProbeTests(TestCase):
             "client.bulkUpdate", "client.assertIdArray", "filterSpec.partitionConds",
             "bookings.bulkRemove", "is_empty criterion carries no value key",
             "filter_spec is single-encoded", "rejects a Set loudly",
+            # The Bookings modal's invoice write. Named here because both bugs it
+            # covers were invisible from the browser — the request succeeded and
+            # the table still looked correct — so nothing else would report their
+            # return: an over-eager PATCH that empties invoice columns nobody
+            # edited, and delegate fields dropped before the request is built.
+            "invoice PATCH omits invoice fields the caller never set",
+            "delegate payload carries booking_code",
+            "discount is sent as the stored fraction",
+            "transfer body uses the server's field names",
         ):
             self.assertIn(surface, names, f"probe no longer covers: {surface}")
 

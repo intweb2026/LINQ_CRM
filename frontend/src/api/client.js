@@ -95,6 +95,74 @@ export function serializeParams(params) {
 }
 
 /**
+ * The first readable line out of a DRF error body, whatever shape it arrived in.
+ *
+ * THE BUG THIS FIXES
+ * The Bookings modal used to GUESS at the reason for a 400:
+ *
+ *     err.response?.data?.invoice_number
+ *       ? 'That invoice number already exists'
+ *       : 'Could not create booking — check the form and try again'
+ *
+ * The server had already said exactly what was wrong. A delegate email with no
+ * "@" comes back as {"delegates": ["Delegate #1 has an invalid email."]} — the
+ * row AND the field, named — and the user was shown "check the form and try
+ * again", which names neither. The booking looked impossible to save.
+ *
+ * Four shapes turn up on this backend and all four are handled:
+ *   {"detail": "…"}              APIException, permission denial
+ *   {"field": ["…", "…"], …}     serializer field errors
+ *   {"non_field_errors": ["…"]}  serializer-level validate()
+ *   ["…"] or "…"                 raise ValidationError("…") with a bare value
+ */
+const NAMES_ITSELF = new Set(['detail', 'delegates', 'non_field_errors', 'ids']);
+
+// Django builds its uniqueness message from the MODEL's verbose name — "book
+// event with this invoice number already exists." — naming an internal table
+// nobody using the CRM has heard of. The field is named by the prefix already.
+const UNIQUE_MESSAGE = /^.+ with this .+ already exists\.?$/i;
+
+/** invoice_number -> "Invoice number". */
+function humanizeField(key) {
+  const words = String(key).replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Unwrap DRF's nested lists down to the first message it actually holds. */
+function firstMessage(value) {
+  if (Array.isArray(value)) return value.length ? firstMessage(value[0]) : null;
+  if (value === null || value === undefined || value === '') return null;
+  // A per-item error map ({"0": {"email": [...]}}) — descend rather than render
+  // it as "[object Object]".
+  if (typeof value === 'object') {
+    const nested = Object.values(value).map(firstMessage).find(Boolean);
+    return nested || null;
+  }
+  return String(value);
+}
+
+export function apiErrorMessage(err, fallback = 'Something went wrong.') {
+  const data = err?.response?.data;
+  if (data === undefined || data === null) return err?.message || fallback;
+  if (typeof data === 'string') return data.trim() || fallback;
+  if (Array.isArray(data)) return firstMessage(data) || fallback;
+  if (typeof data !== 'object') return fallback;
+
+  // `detail` wins when it is present: DRF uses it for the whole-request reason
+  // (permission, throttle, parse error), which outranks any field.
+  if (firstMessage(data.detail)) return firstMessage(data.detail);
+
+  const entry = Object.entries(data).find(([, v]) => firstMessage(v));
+  if (!entry) return fallback;
+  const [key, raw] = entry;
+  const message = firstMessage(raw);
+
+  if (NAMES_ITSELF.has(key)) return message;
+  if (UNIQUE_MESSAGE.test(message)) return `${humanizeField(key)} already exists.`;
+  return `${humanizeField(key)}: ${message}`;
+}
+
+/**
  * Fail loudly when an ID collection is not a real Array.
  *
  * Two bugs have already shipped at this seam and both were invisible to green

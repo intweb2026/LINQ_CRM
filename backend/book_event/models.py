@@ -26,6 +26,14 @@ class BookEvent(models.Model):
         CREDIT_PENDING_PAID  = "Credit Pending (Paid)",  "Credit Pending (Paid)"
         CREDIT_TRANSFERRED   = "Credit Transferred",     "Credit Transferred"
         PAID_TRANSFERRED     = "Paid (Transferred)",     "Paid (Transferred)"
+        # A booking held by an IQ-Hub staff member rather than a paying delegate.
+        # UNPAID and FREE stay declared below them: no row in the export carries
+        # "Unpaid", and exactly one delegate override carries "Free", but dropping
+        # a choice a stored value uses would make that row fail full_clean() and
+        # vanish from every choice-validated filter. The Bookings UI no longer
+        # OFFERS them (frontend/src/lib/constants.js PAYMENT_STATUSES); the model
+        # continues to accept what is already in the database.
+        IQ_STAFF             = "IQ Staff",               "IQ Staff"
 
     class PaymentType(models.TextChoices):
         STRIPE        = "Stripe",        "Stripe"
@@ -177,8 +185,38 @@ class BookEvent(models.Model):
 
     @classmethod
     def auto_assign_sales(cls, event_code: str):
-        """Return the first sales user assigned to this event_code."""
+        """
+        The sales executive for `event_code`, as the EVENTS TAB defines it.
+
+        One resolver for every path that creates or re-homes a booking (website
+        intake, the Bookings modal, the importers) so a manually-entered booking
+        and a webhook-created one on the same event cannot end up owned by
+        different people.
+
+        Order, and why:
+          1. Event.sales_executive — the FK the Events tab writes, and which
+             Event.save() keeps in step with the `sales_team` text field in both
+             directions (events/models.py:104-152). This is the authoritative
+             answer whenever the event has been maintained through the UI.
+          2. User.assigned_events — the older m2m this method used exclusively.
+             Kept as the fallback so events assigned only through that relation
+             still resolve exactly as they did before.
+
+        Returns None when neither answers; callers must treat "unassigned" as a
+        legitimate outcome rather than an error, because an event can genuinely
+        have no sales executive yet.
+        """
         from accounts.models import User
+        from events.models import Event
+
+        event = (
+            Event.objects
+            .filter(event_code=event_code)
+            .select_related("sales_executive")
+            .first()
+        )
+        if event and event.sales_executive_id:
+            return event.sales_executive
         return (
             User.objects
             .filter(role=User.Role.SALES, assigned_events__event_code=event_code)

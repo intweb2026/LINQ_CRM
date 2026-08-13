@@ -11,6 +11,7 @@ import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import PaperReviewFormModal from './paperReview/PaperReviewFormModal';
 import PaperReviewImportModal from './paperReview/PaperReviewImportModal';
+import ClearAllButton from '../components/ClearAllButton';
 
 export default function PaperReviewPage() {
   const { canView, can } = useSession();
@@ -37,6 +38,9 @@ export default function PaperReviewPage() {
         actions={<>
           {can('create', 'paper_review') ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button> : null}
           {can('create', 'paper_review') ? <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New review</button> : null}
+          <ClearAllButton noun="paper review" count={REVIEWS.length}
+            onClear={paperReviewApi.clearAll} onCleared={refresh}
+            extra="Proposal submissions generated from these reviews are NOT deleted — they are unlinked from the review and stay in Proposal Submission, which has its own clear-all." />
         </>} />
 
       {error && !loading ? (

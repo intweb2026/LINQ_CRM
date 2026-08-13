@@ -39,6 +39,38 @@ _DELETE_ACTIONS = frozenset({
 })
 
 
+def has_module_action(user, module: str, action: str) -> bool:
+    """
+    Does `user` hold `action` ("view"/"create"/"update"/"delete") on `module`?
+
+    Exists for actions that need MORE THAN ONE right, which the permission class
+    cannot express — it maps one action to one bucket. A delegate transfer both
+    creates a booking on the target event and rewrites the one being transferred
+    away, so it is gated on create (by the class, via the POST fallback) AND on
+    update (by the view, through this helper).
+
+    The precedence is the class's, deliberately duplicated nowhere else: HP
+    bypasses, is_all_access grants everything, can_view is a prerequisite, and a
+    user with no custom role has nothing.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.username == "HP":
+        return True
+    custom_role = getattr(user, "custom_role", None)
+    if custom_role is None:
+        return False
+    if custom_role.is_all_access:
+        return True
+    try:
+        perm = custom_role.permissions.get(module=module)
+    except Exception:
+        return False
+    if not perm.can_view:
+        return False
+    return bool(getattr(perm, f"can_{action}", False))
+
+
 def crm_permission(module: str):
     """Return a DRF permission class for the given CRM module."""
 

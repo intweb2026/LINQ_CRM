@@ -1,11 +1,15 @@
 // Badge counts are no longer inline functions closing over seed data — see
 // Sidebar.jsx, which fetches real counts and looks them up by nav id.
-// Dashboard is intentionally ABSENT from this list. There is no backend model
-// behind it — Reports (mod 'reports', /reports) is the real reporting surface —
-// so it is not offered in the sidebar or the command palette (both read this
-// array). The /dashboard route itself still exists in App.jsx and stays the
-// post-login landing page; AppShell falls back to the "Home / Dashboard"
-// breadcrumb for it precisely because no NAV entry matches.
+//
+// The sidebar and the command palette both read this array, so an entry here is
+// what makes a page reachable without typing its URL. `mod: null` marks a page
+// that is not module-gated — Dashboard renders for every role and hides the
+// sections a role cannot see, which is also why it is the landing page for roles
+// without Reports access (see homeFor below).
+//
+// `id` is a badge/lookup key, NOT the route: 'paper_review' is underscored where
+// its path is hyphenated. Anything deriving state from the current URL therefore
+// matches on `path` — see AppShell and Sidebar.
 export const NAV = [
   { g: 'Pipeline', items: [
     { id: 'bookings', l: 'Bookings', ic: 'receipt', mod: 'bookings', path: '/bookings', hasBadge: true },
@@ -17,9 +21,9 @@ export const NAV = [
     { id: 'events', l: 'Events', ic: 'calendar', mod: 'events', path: '/events', hasBadge: true },
   ] },
   { g: 'Insights', items: [
+    { id: 'dashboard', l: 'Dashboard', ic: 'grid', mod: null, path: '/dashboard' },
     { id: 'reports', l: 'Reports', ic: 'chart', mod: 'reports', path: '/reports' },
     { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', path: '/performance' },
-    { id: 'myteam', l: 'My Team', ic: 'users', mod: null, path: '/myteam' },
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },
@@ -31,3 +35,21 @@ export const NAV = [
 ];
 
 export const NAV_FLAT = NAV.flatMap((g) => g.items);
+
+/**
+ * Where a session opens, and where every "go home" affordance points.
+ *
+ * Reports is the landing page. It is module-gated ('reports') and Dashboard is
+ * not — DashboardPage renders for anybody and hides sections per permission —
+ * so a role without Reports access has to land on Dashboard instead, otherwise
+ * signing in would drop the user straight onto "No access to Reports".
+ *
+ * Every caller that used to hardcode '/dashboard' (App routes, LoginPage, the
+ * sidebar logo, NoAccessPage) resolves through here, so the landing page is
+ * decided in exactly one place.
+ */
+export function homeFor(canView) {
+  return canView('reports')
+    ? { path: '/reports', label: 'Reports', ic: 'chart' }
+    : { path: '/dashboard', label: 'Dashboard', ic: 'grid' };
+}

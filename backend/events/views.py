@@ -3,11 +3,16 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Count, Q, Sum, DecimalField
 from django.db.models.functions import Coalesce
-from rest_framework import viewsets
+# `status` was missing while clear_all's exception path already referenced
+# status.HTTP_500_INTERNAL_SERVER_ERROR — so a failure inside the wipe raised
+# NameError from the handler meant to report it, turning a clean 500-with-reason
+# into an unhandled error.
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.permissions import RBACMixin, IsAdminRole, IsSalesOrAdmin
+from accounts.audit import log_module_wipe
+from accounts.permissions import RBACMixin, IsAdminRole, IsSalesOrAdmin, IsHPAccount
 from accounts.bulk_update import BulkUpdateMixin
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
@@ -650,15 +655,26 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "errors":             errors[:20],
         })
 
-    @action(detail=False, methods=["delete"], url_path="clear_all")
+    @action(detail=False, methods=["delete"], url_path="clear_all",
+            permission_classes=[IsHPAccount])
     def clear_all(self, request):
-        """DELETE /api/events/clear_all/ — restricted to 'HP' username"""
-        if request.user.username != 'HP':
-            return Response({"detail": "Only the administrator can clear all events."}, status=status.HTTP_403_FORBIDDEN)
-            
+        """
+        DELETE /api/events/clear_all/ — HP only, see accounts.permissions.IsHPAccount.
+
+        Only the catalogue itself. Bookings are NOT touched: BookEvent stores its
+        event code as text rather than a foreign key, so deleting the catalogue
+        leaves every booking in place with a code that no longer resolves to an
+        event — which is why the confirmation in the UI says so, and why clearing
+        bookings is a separate action on its own module.
+        """
         try:
             with transaction.atomic():
+                deleted = {"events": Event.objects.count()}
                 Event.objects.all().delete()
-            return Response({"detail": "Successfully removed all event data."})
+                log_module_wipe(request.user, "EVENTS", deleted)
+            return Response({
+                "detail": "Successfully removed all event data.",
+                "deleted": deleted,
+            })
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

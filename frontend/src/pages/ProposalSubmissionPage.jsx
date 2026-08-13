@@ -14,6 +14,7 @@ import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import ProposalFormModal from './proposalSubmission/ProposalFormModal';
 import ProposalImportModal from './proposalSubmission/ProposalImportModal';
+import ClearAllButton from '../components/ClearAllButton';
 
 export default function ProposalSubmissionPage() {
   const { canView, can } = useSession();
@@ -29,12 +30,19 @@ export default function ProposalSubmissionPage() {
   return (
     <>
       <PageHead title="Proposal Submission"
-        actions={can('create', 'proposal_submission') ? (
-          <>
-            <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
-            <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New proposal</button>
-          </>
-        ) : null} />
+        actions={<>
+          {can('create', 'proposal_submission') ? (
+            <>
+              <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
+              <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New proposal</button>
+            </>
+          ) : null}
+          {/* Outside the create gate: its audience is the HP account, and nesting it
+              would make that the intersection of two unrelated checks. */}
+          <ClearAllButton noun="proposal submission" count={PROPOSALS.length}
+            onClear={proposalApi.clearAll} onCleared={refresh}
+            extra="Paper reviews are not touched. Proposals that were generated from a review will be recreated if that review is imported again." />
+        </>} />
 
       {error && !loading ? (
         <EmptyState icon="warn" title="Unable to load proposal submissions" body="Something went wrong while loading this data. Please try again in a moment."

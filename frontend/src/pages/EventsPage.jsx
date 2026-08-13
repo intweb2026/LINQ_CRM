@@ -13,6 +13,7 @@ import EventDrawer from './events/EventDrawer';
 import EditEventModal from './events/EditEventModal';
 import NewEventModal from './events/NewEventModal';
 import ImportWizard from '../components/ImportWizard';
+import ClearAllButton from '../components/ClearAllButton';
 
 export default function EventsPage() {
   const { canView, can } = useSession();
@@ -29,10 +30,18 @@ export default function EventsPage() {
   return (
     <>
       <PageHead title="Events" sub="The catalogue with edition history and every team ownership column. Open an event for its edition breakdown and growth."
-        actions={can('create', 'events') ? <>
-          <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
-          <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New event</button>
-        </> : null} />
+        actions={<>
+          {can('create', 'events') ? <>
+            <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
+            <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New event</button>
+          </> : null}
+          {/* Outside the create gate on purpose: this button answers to the HP
+              account, not to a module permission, and nesting it inside another
+              check would make its audience the INTERSECTION of the two. */}
+          <ClearAllButton noun="events" count={EVENTS.length}
+            onClear={eventsApi.clearAll} onCleared={refresh}
+            extra="Bookings are not deleted with the catalogue — they store their event as a text code, so they will survive with codes that no longer resolve to an event." />
+        </>} />
 
       <DataTable
         rows={EVENTS} noun="events" pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"

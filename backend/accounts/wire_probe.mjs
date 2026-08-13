@@ -76,13 +76,23 @@ const clientPath = join(dir, "api_client.mjs").replace(/\\/g, "/");
 const patchClientImport = (s) =>
   s.replace(/from ['"]\.\/client['"]/g, `from "file://${clientPath}"`);
 
-const { serializeParams, bulkUpdate, assertIdArray } = clientMod;
+const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMod;
 const spec = await load("lib/filterSpec.js");
 const { specToJson, partitionConds, toCriterion } = spec;
 const bookings = await load("api/bookings.js", patchClientImport);
 const tickets = await load("api/tickets.js", patchClientImport);
 const webhooks = await load("api/webhooks.js", patchClientImport);
-const companies = await load("api/companies.js", patchClientImport);
+// api/companies.js was loaded here until the Companies tab was removed. The
+// import outlived the file, so `node wire_probe.mjs` died with ENOENT before a
+// single check ran — the whole point of the probe, unavailable, on a suite that
+// otherwise looks fine. Anything added here must be a module the app still ships.
+const delegateRows = await load("pages/bookings/DelegateTable.jsx", (s) =>
+  // Only the pure row helpers are wanted; the JSX component below them cannot be
+  // parsed by bare Node. Everything from the component's export onwards is cut.
+  s.slice(0, s.indexOf("export default function DelegateTable"))
+   // Multi-line aware: this file's constants import is spread over four lines,
+   // and a line-at-a-time strip left the closing brace behind as a syntax error.
+   .replace(/^import[\s\S]*?from\s+['"][^'"]*['"];?/gm, ""));
 
 const results = { checks: [], literals: {} };
 const check = (name, pass, detail = "") =>
@@ -256,6 +266,15 @@ const mapCases = [
    { sales_executive_name: "Rep One" }, "owner", "Rep One"],
   ["bookings.fromApi added_time <- created_at", bookings.fromApi,
    { created_at: "2026-01-02T03:04:05Z" }, "added_time", "2026-01-02T03:04:05Z"],
+  // discount is stored as a FRACTION and displayed as a percent. The raw value
+  // reached the cell before, which is how a zero discount read as "0.00".
+  ["bookings.fromApi discount fraction -> percent", bookings.fromApi,
+   { discount: "0.20" }, "discount", 20],
+  ["bookings.fromApi zero discount is 0, not '0.00'", bookings.fromApi,
+   { discount: "0.00" }, "discount", 0],
+  // booking_code is the DELEGATE's column now, not the invoice's.
+  ["bookings.fromApi booking_code is the delegate's own", bookings.fromApi,
+   { booking_code: "Group Pass" }, "booking_code", "Group Pass"],
   ["webhooks.fromApi db_status <- db_insert_status", webhooks.fromApi,
    { db_insert_status: "inserted", db_status: RAW }, "db_status", "inserted"],
   ["webhooks.fromApi records = inserted + updated", webhooks.fromApi,
@@ -264,10 +283,14 @@ const mapCases = [
    { processing_duration: 1.5, duration_ms: 99999 }, "duration_ms", 1500],
   ["webhooks.fromApi retries <- retry_count", webhooks.fromApi,
    { retry_count: 6, retries: 99 }, "retries", 6],
-  ["companies.fromApi delegate_count", companies.fromApi,
-   { delegate_count: 4242 }, "delegate_count", 4242],
-  ["tickets.fromApi source_event defaults to empty", tickets.fromApi,
-   { ticket_number: "T-1" }, "source_event", ""],
+  // tickets.fromApi is a pass-through now: `source_event` was a UI-only field with
+  // no backend column, so it was always '' and the column reading it was always
+  // blank. The assertion that matters is that a row's real fields survive the
+  // mapper untouched — the table and the ticket form both read them by name.
+  ["tickets.fromApi passes the row's own fields through", tickets.fromApi,
+   { ticket_number: "T-1" }, "ticket_number", "T-1"],
+  ["tickets.fromApi keeps added_user_text", tickets.fromApi,
+   { added_user_text: "zoho_linq-corporate" }, "added_user_text", "zoho_linq-corporate"],
 ];
 
 for (const [name, fn, row, key, want] of mapCases) {
@@ -279,8 +302,193 @@ for (const [name, fn, row, key, want] of mapCases) {
 // Every server-mode caller must actually EXPORT a mapper. A page wired with
 // `server={{ resource }}` and no mapRow is the original defect.
 for (const [name, mod] of [["bookings", bookings], ["tickets", tickets],
-                           ["webhooks", webhooks], ["companies", companies]]) {
+                           ["webhooks", webhooks]]) {
   check(`${name}.fromApi is exported for server mode`, typeof mod.fromApi === "function", typeof mod.fromApi);
+}
+
+// ── 7. The Bookings modal's invoice write ───────────────────────────────────
+// Two bugs, both invisible from the browser because the request SUCCEEDED:
+//
+//   a) Every invoice key was emitted with an `|| <default>` fallback, so a PATCH
+//      built from the edit modal's meta ({invoice_number, event_code, event_name})
+//      also carried payment_status:'Pending', booking_code:'', company_name:'',
+//      request_date:null, discount:0 and source:'manual' — silently emptying the
+//      invoice under a table that still looked right, because the delegate rows
+//      resolve through their own overrides.
+//   b) booking_code, delegate_number, delegate_payment_date and
+//      delegate_paid_or_free were absent from the delegate payload, so those four
+//      editors in the modal could not save at all.
+//
+// KEY ABSENCE is the assertion. A PATCH that names a column owns it, so "did not
+// send it" is the only form "leave it alone" can take.
+const feDelegate = (over = {}) => ({
+  id: 501, name: "Ada Lovelace", company_name: "Acme Ltd", email: "ada@acme.test",
+  phone_number: "", accounts_contact_email: "", payment_status: "Paid",
+  booking_code: "Speaker", delegate_number: 2, request_date: "2026-01-02",
+  invoice_date: "2026-01-03", paid_or_free: "Paid", payment_date: "2026-01-04",
+  payment_type: "Stripe", ticket_tier: "EB", discount: 20, add_ons: "", reference: "",
+  attendance: "Confirmed", ...over,
+});
+const EDIT_META = { invoice_number: "INV-9", event_code: "GSTU - VV", event_name: "GSTU 2026" };
+
+captured.length = 0;
+await bookings.saveInvoiceDelegates("INV-9", EDIT_META, [feDelegate()], 77);
+const invBody = captured[captured.length - 1].body;
+const invDel = invBody.delegates[0];
+results.literals.invoice_patch_body = invBody;
+
+check("invoice PATCH omits invoice fields the caller never set",
+  !["company_name", "contact_name", "contact_email", "contact_phone", "source",
+    "currency", "request_date", "invoice_date", "discount", "reference",
+   ].some((k) => k in invBody),
+  Object.keys(invBody).join(","));
+check("invoice PATCH carries the delegates' agreed payment status, not 'Pending'",
+  invBody.payment_status === "Paid", invBody.payment_status);
+check("agreed person-level values clear the per-delegate override",
+  invDel.delegate_payment_status === null && invDel.delegate_ticket_tier === null
+  && invDel.delegate_payment_date === null,
+  JSON.stringify({ s: invDel.delegate_payment_status, t: invDel.delegate_ticket_tier, d: invDel.delegate_payment_date }));
+check("delegate payload carries booking_code", invDel.booking_code === "Speaker", invDel.booking_code);
+check("delegate payload carries delegate_number", invDel.delegate_number === 2, invDel.delegate_number);
+check("delegate payload carries the Attendance - IN? value",
+  invDel.attendance === "Confirmed", invDel.attendance);
+check("discount is sent as the stored fraction, not the percent shown",
+  invDel.discount === 0.2, invDel.discount);
+check("invoice PATCH does not send sales_executive — the server derives it",
+  !("sales_executive" in invBody), Object.keys(invBody).join(","));
+
+// Delegate Company is a REQUIRED column in both modals and reached nothing: the
+// payload had no company_name_raw key at all, so every hand-entered booking
+// stored a blank company under a form that refused to submit without one.
+check("delegate payload carries the company as company_name_raw",
+  invDel.company_name_raw === "Acme Ltd", JSON.stringify(invDel.company_name_raw));
+
+// Whitespace is stripped at the boundary. A padded address passes the server's
+// "@" test and stores " ada@acme.test ", which then does not match the unique
+// (invoice, email) pair it is supposed to collide with.
+captured.length = 0;
+await bookings.saveInvoiceDelegates("INV-9", EDIT_META, [
+  feDelegate({ name: "  Ada   Lovelace  ", email: "  ada@acme.test  ", company_name: " Acme Ltd " }),
+], 77);
+const trimmed = captured[captured.length - 1].body.delegates[0];
+check("delegate email is trimmed before it is sent",
+  trimmed.email === "ada@acme.test", JSON.stringify(trimmed.email));
+check("a padded name still splits into first and last",
+  trimmed.first_name === "Ada" && trimmed.last_name === "Lovelace",
+  JSON.stringify([trimmed.first_name, trimmed.last_name]));
+check("delegate company is trimmed before it is sent",
+  trimmed.company_name_raw === "Acme Ltd", JSON.stringify(trimmed.company_name_raw));
+
+// ── 7b. The modal must reject what the server rejects ───────────────────────
+// THE BUG: the modals tested `!d.email.trim()` and nothing else, so "harrison"
+// was posted and the invoice endpoint answered
+//   400 {"delegates":["Delegate #1 has an invalid email."]}
+// — which the modal replaced with "check the form and try again". Neither the
+// row nor the field was named, so "Save booking" read as a dead button.
+const { delegateProblem } = delegateRows;
+check("export exists: DelegateTable.delegateProblem",
+  typeof delegateProblem === "function", typeof delegateProblem);
+
+const okRow = { name: "Ada Lovelace", company_name: "Acme Ltd", email: "ada@acme.test" };
+const problemCases = [
+  ["a complete row has no problem", [okRow], null],
+  ["an email with no @ is caught in the form", [{ ...okRow, email: "harrison" }],
+   "Delegate 1 has an invalid email address: harrison"],
+  ["a domain with no dot is caught", [{ ...okRow, email: "ada@acme" }],
+   "Delegate 1 has an invalid email address: ada@acme"],
+  ["a padded address is not reported as invalid", [{ ...okRow, email: "  ada@acme.test " }], null],
+  ["the offending ROW is named, not just the field",
+   [okRow, { ...okRow, email: "nope" }], "Delegate 2 has an invalid email address: nope"],
+  ["a missing email is still caught", [{ ...okRow, email: "  " }], "Delegate 1 needs an email address"],
+  ["a missing name is still caught", [{ ...okRow, name: "" }], "Delegate 1 needs a name"],
+  ["a missing company is still caught", [{ ...okRow, company_name: "" }], "Delegate 1 needs a company"],
+  // The old guard read `d.name.trim()` directly, which THREW on a row whose
+  // field was absent rather than empty — a TypeError in the click handler.
+  ["an absent field does not throw", [{}], "Delegate 1 needs a name"],
+];
+for (const [name, rows, want] of problemCases) {
+  let got;
+  try { got = delegateProblem(rows); } catch (e) { got = `THREW ${e.message}`; }
+  check(name, got === want, `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+}
+
+// ── 7c. The server's reason has to reach the user ───────────────────────────
+const errCases = [
+  ["a delegate error is passed through verbatim",
+   { delegates: ["Delegate #1 has an invalid email."] }, "Delegate #1 has an invalid email."],
+  ["a field error names its field",
+   { invoice_number: ["This field may not be blank."] }, "Invoice number: This field may not be blank."],
+  ["Django's model-speak uniqueness message is rewritten",
+   { invoice_number: ["book event with this invoice number already exists."] },
+   "Invoice number already exists."],
+  ["detail outranks the fields beside it",
+   { detail: "You do not have permission.", invoice_number: ["x"] }, "You do not have permission."],
+  ["non_field_errors is not prefixed", { non_field_errors: ["Nope."] }, "Nope."],
+  ["a bare list body is unwrapped", ["Nope."], "Nope."],
+  ["a string body is used as-is", "Nope.", "Nope."],
+  // The local copy in TicketFormModal rendered this shape as "[object Object]".
+  ["a nested per-item error map is descended into",
+   { delegates: { 0: { email: ["Enter a valid email address."] } } }, "Enter a valid email address."],
+  ["an empty field list falls through to the next key",
+   { invoice_number: [], delegates: ["Delegate #2 is missing a name."] },
+   "Delegate #2 is missing a name."],
+];
+for (const [name, data, want] of errCases) {
+  const got = apiErrorMessage({ response: { data } }, "FALLBACK");
+  check(name, got === want, `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+}
+check("a bodyless failure falls back to the error's own message",
+  apiErrorMessage(new Error("Network Error"), "FALLBACK") === "Network Error", "");
+check("an unreadable body falls back",
+  apiErrorMessage({ response: { data: {} } }, "FALLBACK") === "FALLBACK", "");
+
+// Delegates that DISAGREE: the invoice must be left alone and each row must carry
+// its own override, which is the only thing overrides exist for.
+captured.length = 0;
+await bookings.saveInvoiceDelegates("INV-9", EDIT_META, [
+  feDelegate(),
+  feDelegate({ id: 502, email: "b@acme.test", payment_status: "Cancelled" }),
+], 77);
+const mixedBody = captured[captured.length - 1].body;
+check("differing person-level values are not written to the invoice",
+  !("payment_status" in mixedBody), Object.keys(mixedBody).join(","));
+check("differing person-level values stay as per-delegate overrides",
+  mixedBody.delegates[0].delegate_payment_status === "Paid"
+  && mixedBody.delegates[1].delegate_payment_status === "Cancelled",
+  JSON.stringify(mixedBody.delegates.map((d) => d.delegate_payment_status)));
+
+// ── 8. The delegate transfer request ────────────────────────────────────────
+// The endpoint reads `target_event_code` and `invoice_number`
+// (BookDelegateViewSet.transfer). The UI holds those values in camelCase, so the
+// conversion happens in api/bookings.js — and a slip there is a 400 on a button
+// that otherwise looks wired up, which is precisely the class of bug this probe
+// exists for. The URL is asserted too: a detail action posted to the wrong path
+// answers 404 and reads as "transfer is broken" rather than "the path is wrong".
+captured.length = 0;
+await bookings.transferDelegate(501, { targetEventCode: "XFR - BB", invoiceNumber: "DST-1" });
+const xfer = captured[captured.length - 1];
+results.literals.delegate_transfer_body = xfer.body;
+
+check("transfer posts to the delegate's transfer action",
+  xfer.verb === "POST" && xfer.url === "delegates/501/transfer/", `${xfer.verb} ${xfer.url}`);
+check("transfer body uses the server's field names",
+  xfer.body.target_event_code === "XFR - BB" && xfer.body.invoice_number === "DST-1",
+  JSON.stringify(xfer.body));
+
+// ── 9. Module wipes: the verb, and the path ─────────────────────────────────
+// All five clear_all endpoints are DELETE. Ticket Central's was POST until the
+// buttons were added, and a POST to a DELETE-only action answers 405 — on a control
+// that is invisible to everyone except one account, so nobody else would ever hit
+// it and report the breakage. Pinned here for exactly that reason.
+for (const [name, mod, url] of [
+  ["bookings", bookings, "invoices/clear_all/"],
+  ["tickets", tickets, "tickets/clear_all/"],
+]) {
+  captured.length = 0;
+  await mod.clearAll();
+  const wipe = captured[captured.length - 1];
+  check(`${name} clear-all is DELETE ${url}`,
+    wipe.verb === "DELETE" && wipe.url === url, `${wipe.verb} ${wipe.url}`);
 }
 
 results.pass = results.checks.every((c) => c.pass);

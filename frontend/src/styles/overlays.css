@@ -196,6 +196,28 @@ table.gt th.num,table.gt td.num{text-align:right}
 .fg.c3{grid-template-columns:repeat(3,1fr)}
 .fg.c4{grid-template-columns:repeat(4,1fr)}
 .fg .f{grid-column:1/-1}
+/* A COLUMN of fields inside .fg, for forms that have to read top-to-bottom in
+   each column rather than left-to-right across the row — .fg alone is row-major,
+   which would scatter a laid-out form's field order. Columns of unequal length
+   are the norm here, hence align-self:start. */
+.fcol{display:flex;flex-direction:column;gap:12px;align-self:start;min-width:0}
+/* Label BESIDE the field instead of above it, right-aligned against the input —
+   the layout of the Zoho Creator form the ticket modal reproduces. Scoped to a
+   modifier so the label-above default the rest of the app uses is untouched. */
+.fd-h{flex-direction:row;align-items:center;gap:10px}
+.fd-h>.fd-l{flex:0 0 128px;text-align:right;line-height:1.35}
+.fd-h>:not(.fd-l){flex:1;min-width:0}
+/* Fields the current role/status may not write. Greyed and inert, but still
+   present and readable: which fields exist is part of what the form communicates,
+   and a missing field reads as missing data. */
+.in:disabled,.in[readonly]{background:var(--surface-2);color:var(--text-3);cursor:not-allowed;box-shadow:none}
+.in:disabled:hover,.in[readonly]:hover{border-color:var(--border-s)}
+/* Link field + its open-in-new-tab button, sharing one row. */
+.fd-lnk{display:flex;gap:6px;align-items:center}
+.fd-lnk .in{flex:1;min-width:0}
+.fd-lnk-go{flex-shrink:0;display:grid;place-items:center;width:35px;height:35px;border:1px solid var(--border-s);border-radius:var(--r-md);background:var(--surface);color:var(--t-600);box-shadow:var(--sh-xs)}
+.fd-lnk-go:hover{border-color:var(--t-400);background:var(--t-50)}
+.fd-lnk-go[aria-disabled=true]{color:var(--text-4);pointer-events:none;background:var(--surface-2)}
 
 /* wizard */
 .wz{display:flex;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none}
@@ -358,6 +380,9 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
   .scrim{left:0}
   .kpis{grid-template-columns:1fr 1fr}
   .fg,.fg.c3,.fg.c4,.ro{grid-template-columns:1fr}
+  /* One column of narrow fields has no room for a 128px label gutter. */
+  .fd-h{flex-direction:column;align-items:stretch;gap:5px}
+  .fd-h>.fd-l{flex:none;text-align:left}
   .bulk{left:50%}
   .dn{flex-direction:column;align-items:flex-start;gap:15px}
   .dn-c{margin:0 auto}

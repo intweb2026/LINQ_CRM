@@ -5,6 +5,41 @@ DRF permission classes and RBAC queryset mixin.
 """
 from rest_framework.permissions import BasePermission
 
+# The one account permitted to destroy a whole module's data.
+#
+# DECLARED ONCE, here. Five endpoints answer "clear all" now (bookings, events,
+# ticket central, paper review, proposal submission) and each used to carry its own
+# `request.user.username != 'HP'` literal. Five copies of an identity check is five
+# chances for one of them to be dropped in a refactor and quietly widen who can
+# wipe a table — and the widening would not show up until someone did.
+HP_USERNAME = "HP"
+
+
+class IsHPAccount(BasePermission):
+    """
+    ONLY the HP account. Not admins, not is_all_access roles, not superusers.
+
+    This is deliberately NOT IsAdminRole with a narrower message. IsAdminRole admits
+    three kinds of caller (role == admin, is_all_access, and HP), and every one of
+    those is a legitimate administrator who must nevertheless NOT be able to empty a
+    module — the whole point of this class is that the destructive action has one
+    owner. `is_superuser` is not consulted for the same reason: a Django superuser
+    can already do anything through /admin, but the CRM's own wipe endpoints answer
+    to this account and no other.
+
+    Attached per-action with `permission_classes=[IsHPAccount]`, which REPLACES the
+    viewset's module permission rather than adding to it. That is correct here and
+    not a loosening: crm_permission already lets the HP account through every module
+    gate, so the union with a module check would be exactly this test.
+    """
+    message = "This action is restricted to the HP account."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user and user.is_authenticated and user.username == HP_USERNAME
+        )
+
 
 class IsAdminRole(BasePermission):
     message = "Admin role required."

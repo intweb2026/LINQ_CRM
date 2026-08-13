@@ -12,9 +12,10 @@ from rest_framework.authentication import TokenAuthentication, SessionAuthentica
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.permissions import RBACMixin, IsSalesOrAdmin, IsAdminRole
+from accounts.audit import log_module_wipe
+from accounts.permissions import RBACMixin, IsSalesOrAdmin, IsAdminRole, IsHPAccount
 from accounts.crm_permissions import crm_permission
-from .authentication import ApiKeyAuthentication, OriginAuthentication, HasApiKey
+from .authentication import ApiKeyAuthentication, HasApiKey
 from .models import BookEvent, WebhookLog
 from .serializers import (
     BookEventListSerializer, BookEventDetailSerializer,
@@ -107,25 +108,36 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             "ticket_tier":    invoice.ticket_tier,
         })
 
-    @action(detail=False, methods=["delete"], url_path="clear_all")
+    @action(detail=False, methods=["delete"], url_path="clear_all",
+            permission_classes=[IsHPAccount])
     def clear_all(self, request):
-        """DELETE /api/invoices/clear_all/ — restricted to 'HP' username"""
-        if request.user.username != 'HP':
-            return Response({"detail": "Only the administrator can clear all bookings."}, status=status.HTTP_403_FORBIDDEN)
-            
+        """
+        DELETE /api/invoices/clear_all/ — HP only, see accounts.permissions.IsHPAccount.
+
+        The gate is the permission class, not an inline username test. It was the
+        latter, one copy per module, which is how "only HP" drifts.
+        """
         from book_delegate.models import BookDelegate
         from historical_event_registry.models import HistoricalEventReference, EventEditionMetrics
         from .models import SyncLog
-        
+
         try:
             with transaction.atomic():
+                deleted = {
+                    "delegates": BookDelegate.objects.count(),
+                    "invoices": BookEvent.objects.count(),
+                }
                 BookDelegate.objects.all().delete()
                 BookEvent.objects.all().delete()
                 WebhookLog.objects.all().delete()
                 SyncLog.objects.all().delete()
                 HistoricalEventReference.objects.all().delete()
                 EventEditionMetrics.objects.all().delete()
-            return Response({"detail": "Successfully removed all booking module data."})
+                log_module_wipe(request.user, "BOOKINGS", deleted)
+            return Response({
+                "detail": "Successfully removed all booking module data.",
+                "deleted": deleted,
+            })
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -404,7 +416,7 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
 
     @action(
         detail=False, methods=["post"], url_path="create_from_website",
-        authentication_classes=[ApiKeyAuthentication, OriginAuthentication, TokenAuthentication, SessionAuthentication],
+        authentication_classes=[ApiKeyAuthentication, TokenAuthentication, SessionAuthentication],
         permission_classes=[HasApiKey | IsSalesOrAdmin],
     )
     def create_from_website(self, request):

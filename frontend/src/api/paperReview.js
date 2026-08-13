@@ -25,6 +25,13 @@ export function remove(id) {
   return http.delete(`paper-reviews/${id}/`).then(() => true);
 }
 
+// DELETE /api/paper-reviews/clear_all/ — HP only (accounts/permissions.py
+// IsHPAccount), and the WHOLE table rather than the caller's event scope. The
+// proposals this module generated survive: the FK is SET_NULL, so they are unlinked
+// and remain Proposal Submission's data, with its own wipe. The response reports
+// `proposals_unlinked` for that reason.
+export const clearAll = () => http.delete('paper-reviews/clear_all/').then((r) => r.data);
+
 // The event codes this user may actually attach a review to — NOT the whole
 // catalogue. The form picker reads this because access.py is the only authority
 // on scope: offering all 142 events to a scoped user means every code they are

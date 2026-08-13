@@ -10,9 +10,10 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from accounts.audit import log_module_wipe
 from accounts.bulk_update import BulkUpdateMixin
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
-from accounts.permissions import RBACMixin, IsAdminRole
+from accounts.permissions import RBACMixin, IsAdminRole, IsHPAccount
 from accounts.crm_permissions import crm_permission
 from .models import Ticket, TicketSequence
 from .serializers import (
@@ -74,6 +75,7 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
             "dm_comments": "DM Comments", "dm_comments_lx2": "DM Comments (LX-2)",
             "type_of_ticket": "Type of Ticket", "ticket_type": "Ticket Type (DMD)",
             "event_month_year": "Event Month/Year",
+            "added_user_text": "Added User",
         },
     )
 
@@ -506,23 +508,29 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
             "out_of_scope": skipped,
         })
 
-    @action(detail=False, methods=["post"], url_path="clear_all",
-            permission_classes=[IsAdminRole])
+    # DELETE, not POST. The verb was the odd one out among the module wipes — two
+    # used DELETE, this used POST — and nothing called it yet, so it is standardised
+    # here rather than left for the shared frontend button to special-case.
+    @action(detail=False, methods=["delete"], url_path="clear_all",
+            permission_classes=[IsHPAccount])
     def clear_all(self, request):
-        """HP-only: wipe all tickets and reset sequences."""
-        from accounts.models import ActionLog
-        if request.user.username != "HP":
-            return Response(
-                {"detail": "This action is restricted to the HP account."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        """
+        DELETE /api/tickets/clear_all/ — HP only, see accounts.permissions.IsHPAccount.
+
+        Sequences go with the tickets: TicketSequence is what assign_next_ticket_number
+        counts from, so leaving it behind would have the first ticket after a wipe
+        numbered as though 35,000 still existed.
+        """
         with transaction.atomic():
-            count = Ticket.objects.count()
+            deleted = {
+                "tickets": Ticket.objects.count(),
+                "sequences": TicketSequence.objects.count(),
+            }
             Ticket.objects.all().delete()
             TicketSequence.objects.all().delete()
-            ActionLog.objects.create(
-                user    = request.user,
-                action  = "CLEARED ALL TICKET CENTRAL DATA",
-                details = f"Deleted {count} tickets + all sequences.",
-            )
-        return Response({"deleted": count, "sequences_reset": True})
+            log_module_wipe(request.user, "TICKET CENTRAL", deleted)
+        return Response({
+            "detail": "Successfully removed all ticket central data.",
+            "deleted": deleted,
+            "sequences_reset": True,
+        })

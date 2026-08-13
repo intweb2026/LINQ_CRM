@@ -6,7 +6,7 @@ from django.urls import path, include, re_path
 from django.views.generic import TemplateView
 from rest_framework.routers import DefaultRouter
 
-from accounts.views import UserViewSet, CustomAuthToken, TeamViewSet, RequestOTPView, VerifyOTPView, CustomRoleViewSet
+from accounts.views import UserViewSet, CustomAuthToken, RequestOTPView, VerifyOTPView, CustomRoleViewSet
 from companies.views import CompanyViewSet
 from events.views import EventViewSet
 from book_event.views import BookEventViewSet
@@ -20,7 +20,6 @@ from config.views import GlobalSearchView, DashboardStatsView, DashboardAggregat
 router = DefaultRouter()
 router.register(r"users",     UserViewSet,         basename="users")
 router.register(r"roles",     CustomRoleViewSet,   basename="roles")
-router.register(r"team",      TeamViewSet,         basename="team")
 router.register(r"teams",     TeamManagementViewSet, basename="teams")
 router.register(r"companies", CompanyViewSet,      basename="companies")
 router.register(r"events",    EventViewSet,        basename="events")

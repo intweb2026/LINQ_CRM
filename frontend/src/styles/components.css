@@ -261,11 +261,38 @@ table.dt tbody tr:last-child td{border-bottom:none}
 table.dt td.st{font-weight:650;color:var(--text)}
 table.dt td.ck,table.dt th.ck{width:40px;text-align:center;padding:0 0 0 13px}
 table.dt th.ck{padding:9px 0 9px 13px}
+/* Pinned leading cells — the delegate rows in the Bookings modals.
+   That row is ~25 columns wide inside a container that scrolls horizontally, so
+   the remove button and row number LEAD the row (DelegateTable.jsx) and are
+   pinned here: sticky top alone kept the header in view but let the trash scroll
+   away, which is the same problem as having it in the last column.
+   Widths live here, not in inline hints, because pin2's `left` has to match
+   pin1's real width exactly — a hint the browser is free to grow would open a
+   gap with scrolled content showing through it.
+   box-sizing is border-box globally (base.css), so pin1 is sized to clear the
+   29px .btn-ic.btn-sm inside it with its padding, not merely to match it. */
+table.dt th.pin1,table.dt td.pin1{position:sticky;left:0;width:44px;min-width:44px;padding:0 0 0 9px}
+table.dt th.pin2,table.dt td.pin2{position:sticky;left:44px;width:32px;min-width:32px;padding:0 6px;box-shadow:inset -1px 0 var(--n-50)}
+/* Above their neighbours; the header pair above the sticky header row (z-index 3). */
+table.dt td.pin1,table.dt td.pin2{background:var(--surface);z-index:2}
+table.dt th.pin1,table.dt th.pin2{z-index:4}
+/* An opaque cell cannot inherit the row's hover tint, so it is repainted. */
+table.dt tbody tr:hover td.pin1,table.dt tbody tr:hover td.pin2{background:var(--t-50)}
 .ec{position:relative;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:-2px -6px;border-radius:var(--r-sm);cursor:pointer;transition:background .12s;max-width:100%}
 .ec:hover{background:var(--n-75);box-shadow:inset 0 0 0 1px var(--border-s)}
 .ec::after{content:'';width:0;height:0;border:3px solid transparent;border-top-color:var(--text-4);margin-top:2px;opacity:0;transition:opacity .12s;flex-shrink:0}
 .ec:hover::after{opacity:1}
-.ec-v{overflow:hidden;text-overflow:ellipsis}
+/* Deliberately NOT overflow:hidden. Two things went wrong when it was:
+   1. text-overflow:ellipsis only truncates inline TEXT. A status pill (.bg) is a
+      nested inline-flex box, so it was never ellipsised — it was hard-sliced
+      mid-word, leaving a pill with a cut-off rounded edge ("Pendin", "Fre").
+   2. As a flex item, a box with overflow other than visible gets an automatic
+      minimum size of ZERO (CSS Flexbox 4.5). That erased this cell's
+      min-content contribution, so the table was free to squeeze the column
+      narrower than the pill it contains — which is what triggered (1).
+   The td still clips overlong plain values: see the max-width/overflow/
+   text-overflow on `table.dt tbody td` above. */
+.ec-v{overflow:visible}
 .tf{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-4);flex-wrap:wrap;gap:8px;background:var(--surface-2)}
 .tf b{color:var(--text);font-weight:700}
 .pgr{display:flex;gap:3px;align-items:center}

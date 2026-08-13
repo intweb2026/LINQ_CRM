@@ -327,6 +327,12 @@ export default function DataTable({
   rows, cols, noun = 'records', groups, hiddenDefault = [], select = false, infinite = false,
   pageSize = PAGE_SIZE_DEFAULT, defaultSort = null, scope = null, searchPlaceholder = 'Search…',
   card, onRow, bulkActions, extraToolbar, tableId, server = null,
+  // Whether this table may edit a cell in place. Defaults to FALSE, so a column
+  // carrying editOpts is inert until its page explicitly opts in with the
+  // caller's own permission check — previously EditableCell rendered off the
+  // mere presence of editOpts, which handed a read-only role a working status
+  // editor whose PATCH the server then rejected with a 403 nobody surfaced.
+  canEdit = false,
   // Receives the table's `refetch` so a parent can reload after a write. Only
   // the function is handed out, never the whole fetch state: that object has a
   // new identity every render, so a parent storing it in state would re-render
@@ -772,7 +778,7 @@ export default function DataTable({
                       const v = r[c.key];
                       return (
                         <td key={c.key} className={(c.num ? 'num ' : '') + (c.cls || '')}>
-                          {c.editOpts ? <EditableCell row={r} col={c} value={v} /> : c.cell ? c.cell(v, r) : v == null || v === '' ? <span className="dim">—</span> : v}
+                          {c.editOpts && canEdit ? <EditableCell row={r} col={c} value={v} /> : c.cell ? c.cell(v, r) : v == null || v === '' ? <span className="dim">—</span> : v}
                         </td>
                       );
                     })}

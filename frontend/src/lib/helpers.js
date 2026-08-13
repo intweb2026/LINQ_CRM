@@ -60,3 +60,31 @@ export function ini(n) {
 export function uniq(a) {
   return Array.from(new Set(a)).filter((v) => v != null && v !== '').sort();
 }
+
+/**
+ * A stored link turned into something a browser can actually navigate to, or
+ * null when the text isn't a link at all.
+ *
+ * Rendering the raw value in an href is not safe on two counts, both of which
+ * this data hits. A value with no scheme ("google.com" — one such row in
+ * tickets.link_url today) is a RELATIVE path, so the browser resolves it against
+ * the CRM's own origin: clicking it, or "open link in new tab", reloads the CRM
+ * instead of going anywhere. And these values arrive from imported spreadsheets,
+ * so a `javascript:` payload in a cell would otherwise be one click from running
+ * in the app's origin. Scheme-less text gets https:// only when it plausibly
+ * names a host; everything else comes back null and is rendered as plain text.
+ */
+export function extUrl(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s || s === '—') return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+    // Absolute already — allow only the schemes a CRM link should ever use.
+    return /^(https?:|mailto:|tel:)/i.test(s) ? s : null;
+  }
+  if (s.startsWith('//')) return 'https:' + s;
+  const host = s.split(/[/?#]/)[0];
+  // "www.x.com/path" and "x.co.uk" pass; "delete", "N/A" and free-text notes
+  // are not links and must not become https://<prose>.
+  return /^[\w-]+(\.[\w-]+)+$/.test(host) ? 'https://' + s : null;
+}

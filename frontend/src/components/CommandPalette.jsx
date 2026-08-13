@@ -51,8 +51,8 @@ export default function CommandPalette({ open, onClose }) {
       if (i.mod && !canView(i.mod)) return;
       if (!v || i.l.toLowerCase().includes(v)) res.push({ t: 'Navigate', l: i.l, s: '', ic: i.ic, go: () => nav(i.path) });
     });
-    // Buckets are omitted by the backend when the caller cannot see that type
-    // (companies are admin-only), so every read here is guarded.
+    // Buckets are omitted by the backend when the caller cannot see that type, so
+    // every read here is guarded.
     const b = hits || {};
     const join = (parts) => parts.filter(Boolean).join(' \u00b7 ');
     (b.delegates?.items || []).slice(0, 5).forEach((d) => res.push({
@@ -66,9 +66,9 @@ export default function CommandPalette({ open, onClose }) {
     (b.events?.items || []).slice(0, 5).forEach((e) => res.push({
       t: 'Events', l: e.name, s: join([e.event_code, e.location]), ic: 'calendar', go: () => nav('/events'),
     }));
-    (b.companies?.items || []).slice(0, 4).forEach((c) => res.push({
-      t: 'Companies', l: c.name, s: join([c.city, c.country]), ic: 'building', go: () => nav('/companies'),
-    }));
+    // No `companies` bucket is rendered: the Companies page is gone, so those hits
+    // had nowhere to navigate to. The backend still returns the bucket for admins
+    // (config/views.py GlobalSearchView) — it is simply not read here.
     return res.slice(0, 16);
   }, [q, canView, nav, hits]);
 

@@ -19,6 +19,30 @@ _COMPANY_WRITE_FIELDS = (
     "company_country", "company_postal_code", "company_website",
 )
 
+# What the nested `delegates` payload is allowed to write.
+#
+# DECLARED ONCE. create() and update() each held their own copy, and a key
+# missing from one of them is invisible from the outside: the request still
+# answers 200/201, the response still echoes a delegate, and only the value the
+# user typed is gone. booking_code and delegate_number were already lost that
+# way once — see the suite in tests_booking_modal_writes.py.
+#
+# company_name_raw is here because Delegate Company is a REQUIRED column in the
+# Bookings modals. It was in neither copy, so the value was filtered out here
+# after surviving the trip: every hand-entered booking stored a blank company,
+# which is the field the Bookings tab displays (BookDelegate.company_display)
+# and searches on (book_delegate/views.py search_fields).
+_ALLOWED_DELEGATE = frozenset({
+    "first_name", "last_name", "email", "phone_number",
+    "company_name_raw",
+    "position", "ticket_package", "sponsorship_level",
+    "attendance", "notes", "dietary_requirements",
+    "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
+    "delegate_paid_or_free", "delegate_ticket_tier",
+    "booking_code", "delegate_number",
+    "delegate_count", "discount", "add_ons", "reference",
+})
+
 
 class BookEventListSerializer(serializers.ModelSerializer):
     sales_executive_name  = serializers.SerializerMethodField()
@@ -154,21 +178,38 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
             validated_data.pop(k, None)
         return None
 
+    def _apply_event_sales_executive(self, validated_data, instance=None):
+        """
+        Own the booking with whoever the EVENTS TAB has on its event code.
+
+        The Bookings table's Sales Executive column reads invoice.sales_executive,
+        and nothing was setting it outside the website-intake path — so a booking
+        entered by hand, or moved to another event, showed no owner at all (or the
+        previous event's owner, which is worse than blank).
+
+        Two guards:
+          - `sales_executive` explicitly present in the payload wins. Imports and
+            the admin can still pin an owner; only an unstated one is derived.
+          - On update, nothing happens unless event_code is actually CHANGING. A
+            save that leaves the event alone must not silently re-home the booking
+            away from a deliberate per-invoice assignment.
+        """
+        if "sales_executive" in validated_data:
+            return
+        event_code = validated_data.get("event_code")
+        if not event_code:
+            return
+        if instance is not None and event_code == instance.event_code:
+            return
+        validated_data["sales_executive"] = BookEvent.auto_assign_sales(event_code)
+
     def create(self, validated_data):
         from django.db import transaction
         from book_delegate.models import BookDelegate
 
         delegates_data = validated_data.pop("delegates", [])
         self._upsert_company(validated_data)
-
-        _ALLOWED_DELEGATE = {
-            "first_name", "last_name", "email", "phone_number",
-            "position", "ticket_package", "sponsorship_level",
-            "attendance", "notes", "dietary_requirements",
-            "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
-            "delegate_paid_or_free", "delegate_ticket_tier",
-            "delegate_count", "discount", "add_ons", "reference",
-        }
+        self._apply_event_sales_executive(validated_data)
 
         with transaction.atomic():
             instance = super().create(validated_data)
@@ -219,18 +260,13 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
 
         delegates_data = validated_data.pop("delegates", None)
         self._upsert_company(validated_data)
+        # Before super().update() — a transfer to another event has to re-derive the
+        # owner in the same write, or the booking sits under the old event's sales
+        # executive until someone notices.
+        self._apply_event_sales_executive(validated_data, instance=instance)
 
         old_invoice_number = instance.invoice_number
         new_invoice_number = validated_data.get("invoice_number", old_invoice_number)
-
-        _ALLOWED_DELEGATE = {
-            "first_name", "last_name", "email", "phone_number",
-            "position", "ticket_package", "sponsorship_level",
-            "attendance", "notes", "dietary_requirements",
-            "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
-            "delegate_paid_or_free", "delegate_ticket_tier",
-            "delegate_count", "discount", "add_ons", "reference",
-        }
 
         with transaction.atomic():
             # Cascade invoice_number to delegates BEFORE updating BookEvent so that

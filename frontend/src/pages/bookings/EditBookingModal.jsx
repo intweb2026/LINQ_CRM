@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Modal from '../../components/Modal';
+import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
 import { Av, StatusBadge } from '../../components/Badge';
 import * as eventsApi from '../../api/events';
-import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
-import DelegateTable, { blankDelegate } from './DelegateTable';
+import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
+import { apiErrorMessage } from '../../api/client';
 
 function ownerChip(roleLabel, personName) {
   const map = { 'Sales Exec': ['--green-bg', '--green-tx'], 'Speaker Sales': ['--blue-bg', '--blue-tx'], SpEx: ['--violet-bg', '--violet-tx'], 'Market Research': ['--amber-bg', '--amber-tx'] };
@@ -25,22 +26,61 @@ function ownerChip(roleLabel, personName) {
   );
 }
 
+/**
+ * Everything the modal holds, as one comparable string.
+ *
+ * Feeds the `dirty` flag handed to the transfer modal. `key` is dropped because it
+ * is a render identity this component adds, not booking data, and the two sides
+ * would otherwise never match for a row that has not been touched.
+ */
+const snapshot = (invoiceNumber, eventCode, rows) =>
+  JSON.stringify([invoiceNumber, eventCode, rows.map(({ key, ...d }) => d)]);
+
 // `delegateRows` = every BOOKINGS row sharing the invoice_number of the row that was opened.
-export default function EditBookingModal({ delegateRows, onClose, onSaved }) {
+export default function EditBookingModal({ delegateRows, onClose, onSaved, onTransfer }) {
   const toast = useToast();
   const confirm = useConfirm();
   const first = delegateRows[0];
   const today = new Date().toISOString().slice(0, 10);
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
-  const owners = (users || []).filter((u) => u.role === 'sales' && u.status === 'active');
-  const ev = (events || []).find((e) => e.event_code === first.event_code) || {};
 
   const [invoiceNumber, setInvoiceNumber] = useState(first.invoice_number);
+  // Editable: a delegate who transfers to another event has to be re-homed, and
+  // that is a change to the booking's event code, not a note in a free-text field.
+  const [eventCode, setEventCode] = useState(first.event_code);
   const [delegates, setDelegates] = useState(delegateRows.map((d) => ({ key: 'row-' + d.id, ...d })));
 
+  const EVENTS = events || [];
+  const ev = EVENTS.find((e) => e.event_code === eventCode) || {};
+  // Every event, not just the open ones: this booking's own code must be
+  // selectable even when its event has been completed, or opening an old booking
+  // would show an empty dropdown and the first save would move it elsewhere.
+  // `first.event_code` is appended for a code with no master event behind it.
+  const eventCodes = (() => {
+    const codes = EVENTS.map((e) => e.event_code).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    return codes.includes(first.event_code) || !first.event_code ? codes : [first.event_code, ...codes];
+  })();
+  // Owned by the Events tab. It follows the event code — including a transfer made
+  // in this modal — and the server derives the stored value the same way, from the
+  // event, so this is a display of that rule rather than an editable field.
+  const salesExec = ev.sales_exec || '';
+  // The booking's stored name while the event is unchanged, the master catalogue's
+  // when it has been transferred. The stored one carries the edition year
+  // ("… 2026") and the catalogue's does not, so preferring the catalogue
+  // unconditionally would drop the year from the field the moment the events list
+  // arrived, with nobody having touched anything. On a transfer the backend
+  // re-derives the name with the edition appended anyway (BookEvent.save()).
+  const eventName = eventCode === first.event_code
+    ? (first.event_name || ev.name || '')
+    : (ev.name || '');
+
+  // The transfer runs server-side against SAVED data, so the modal has to say
+  // whether what it is showing has diverged from that.
+  const initialSnapshot = useRef(snapshot(first.invoice_number, first.event_code, delegateRows));
+  const dirty = snapshot(invoiceNumber, eventCode, delegates) !== initialSnapshot.current;
+
   function addDelegate() {
-    setDelegates((d) => [...d, blankDelegate(today, owners[0]?.name || '')]);
+    setDelegates((d) => [...d, blankDelegate(today, salesExec)]);
   }
   function removeDelegate(i) {
     setDelegates((d) => d.filter((_, idx) => idx !== i));
@@ -48,17 +88,18 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved }) {
 
   async function save() {
     if (!invoiceNumber.trim()) { toast('Invoice number is required', 'er'); return; }
-    const missing = delegates.find((d) => !d.name.trim() || !d.company_name.trim() || !d.email.trim());
-    if (missing) { toast('Each delegate needs a name, company and email', 'er'); return; }
+    if (!eventCode) { toast('Event code is required', 'er'); return; }
+    const problem = delegateProblem(delegates);
+    if (problem) { toast(problem, 'er'); return; }
     try {
       await bookingsApi.saveInvoiceDelegates(
         first.invoice_number,
-        { invoice_number: invoiceNumber.trim(), event_code: first.event_code, event_name: first.event_name },
+        { invoice_number: invoiceNumber.trim(), event_code: eventCode, event_name: eventName },
         delegates.map(({ key, ...d }) => d),
         first.book_event_id
       );
     } catch (err) {
-      toast('Could not save booking — check the form and try again', 'er');
+      toast(apiErrorMessage(err, 'Could not save booking — check the form and try again'), 'er');
       return;
     }
     onClose();
@@ -89,7 +130,11 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved }) {
             </div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ownerChip('Sales Exec', ev.sales_lead)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
+              {/* The event's sales executive — the same value the Sales Executive
+                  column shows. It used to read ev.sales_lead, which is the event's
+                  team LEADER, so the chip labelled "Sales Exec" and the column
+                  named Sales Executive could disagree about the same booking. */}
+              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
             </div>
           </div>
           <button className="dr-x" aria-label="Close" style={{ marginLeft: 8 }} onClick={onClose}><Icon name="x" size={15} /></button>
@@ -110,8 +155,13 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
         <div className="fg c3">
-          <div className="fd"><label className="fd-l">Event code</label><input className="in mono" value={first.event_code} readOnly /></div>
-          <div className="fd"><label className="fd-l">Event name</label><input className="in" value={first.event_name} readOnly /></div>
+          <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
+            <Select className="in mono" value={eventCode} options={eventCodes} onChange={setEventCode} />
+            {eventCode !== first.event_code ? (
+              <span className="bu-hint" style={{ marginBottom: 0 }}>Transferring from <b>{first.event_code}</b> — every delegate on this invoice moves with it.</span>
+            ) : null}
+          </div>
+          <div className="fd"><label className="fd-l">Event name</label><input className="in" value={eventName} readOnly /></div>
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
         </div>
       </div>
@@ -120,7 +170,8 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved }) {
           <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><Icon name="users" size={13} />Delegate details</span>
           <button className="btn btn-s btn-sm" onClick={addDelegate}><Icon name="plus" size={13} />Add delegate</button>
         </div>
-        <DelegateTable rows={delegates} onChange={setDelegates} onRemove={removeDelegate} eventCode={first.event_code} eventName={first.event_name} invoiceNumber={invoiceNumber} ownerNames={owners.map((u) => u.name)} />
+        <DelegateTable rows={delegates} onChange={setDelegates} onRemove={removeDelegate} eventCode={eventCode} eventName={eventName} invoiceNumber={invoiceNumber} salesExec={salesExec}
+          onTransfer={onTransfer ? (row) => onTransfer(row, dirty) : undefined} />
       </div>
     </Modal>
   );
