@@ -66,14 +66,44 @@ coverage.xml
 htmlcov/
 .tox/
 nosetests.xml
+.hypothesis/
+
+# Linter and type-checker caches, none of which existed when this file was
+# written; they appear the first time anyone runs the tool, not from a config.
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
 *.egg-info/
 dist/
 *.egg
 MANIFEST
 
-# Generated reports (not source data)
-backend/*.csv
-backend/*.xlsx
+# ── Spreadsheets & database dumps ───────────────────────────────────────────
+# Repo-wide, not `backend/*.csv` as before: that rule only ever matched the
+# backend root, so an export saved one level down (backend/accounts/, or the
+# repo root, or frontend/) was staged as normal. Every one of these files is
+# real delegate, booking, paper and proposal data — the importers read .csv,
+# .xlsx and .xlsm (accounts/import_common.py), and the export endpoints emit
+# .csv — so this is the largest body of personal data that can reach a commit.
+# Nothing tracked matches these patterns; the importers read from outside the
+# repo and the tests build their fixtures in memory. A sample file that truly
+# belongs in git needs `git add -f`.
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+# pg_dump output from the local Postgres snapshot (see backend/pg.ps1), which is
+# the whole CRM in one file. Archives are covered for the same reason — an
+# exported dataset usually arrives zipped.
+*.sql
+*.dump
+*.backup
+*.pgdump
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
 
 # ── Node / React ─────────────────────────────────────────────────────────────
 node_modules/
@@ -113,6 +143,10 @@ playwright/.cache/
 .classpath
 .settings/
 .claude/
+*.code-workspace
+# VS Code's Local History extension, which mirrors every save of every edited
+# file — including one taken before a secret was moved out into .env.
+.history/
 
 # Scratch, backup and merge leftovers
 *.bak
