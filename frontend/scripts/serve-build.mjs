@@ -20,6 +20,7 @@
  *   PORT=4000 API_TARGET=http://127.0.0.1:8001 node scripts/serve-build.mjs
  */
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,11 +65,17 @@ function shouldProxy(pathname) {
 }
 
 function proxy(req, res, pathname, search) {
-  const upstream = http.request(
+  // node:http rejects a "protocol" option that does not match its own agent,
+  // https:, always; passing an https API_TARGET into http.request() throws
+  // ERR_INVALID_PROTOCOL synchronously, before any request leaves the box, so
+  // the transport module must match the target's own scheme instead of always
+  // assuming plain http.
+  const isHttps = API_TARGET.protocol === 'https:';
+  const transport = isHttps ? https : http;
+  const upstream = transport.request(
     {
-      protocol: API_TARGET.protocol,
       hostname: API_TARGET.hostname,
-      port: API_TARGET.port || 80,
+      port: API_TARGET.port || (isHttps ? 443 : 80),
       method: req.method,
       path: pathname + search,
       // Django's ALLOWED_HOSTS is localhost,127.0.0.1 — forwarding the upstream
