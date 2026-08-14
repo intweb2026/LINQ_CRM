@@ -3,7 +3,11 @@ from .models import Team, TeamActivityLog
 
 
 class TeamSerializer(serializers.ModelSerializer):
-    member_count   = serializers.IntegerField(read_only=True, source="members.count")
+    # Counted from the prefetched members, not `source="members.count"`. A
+    # prefetch serves `.all()` only; `.count()` went back to the database for
+    # every team on every list. Same reason get_team_leads below filters in Python
+    # instead of asking the database per team — one prefetch answers both.
+    member_count   = serializers.SerializerMethodField()
     team_lead_id   = serializers.SerializerMethodField()
     team_lead_name = serializers.SerializerMethodField()
     team_leads     = serializers.SerializerMethodField()
@@ -29,6 +33,9 @@ class TeamSerializer(serializers.ModelSerializer):
         from accounts.serializers import team_permission_matrix
         return team_permission_matrix(obj)
 
+    def get_member_count(self, obj):
+        return len(obj.members.all())
+
     def get_team_lead_id(self, obj):
         return obj.team_lead_id
 
@@ -38,8 +45,14 @@ class TeamSerializer(serializers.ModelSerializer):
         return obj.team_lead.get_full_name() or obj.team_lead.username
 
     def get_team_leads(self, obj):
-        leads = obj.members.filter(is_team_lead=True)
-        return [{"id": u.id, "name": u.get_full_name() or u.username} for u in leads]
+        # Filtered in Python over the prefetched members rather than
+        # `obj.members.filter(...)`, which is a fresh query per team — and a second
+        # one on top of the COUNT that member_count used to run. The prefetch is
+        # needed for the count anyway, so the leads come out of it for free.
+        return [
+            {"id": u.id, "name": u.get_full_name() or u.username}
+            for u in obj.members.all() if u.is_team_lead
+        ]
 
 
 class TeamActivityLogSerializer(serializers.ModelSerializer):

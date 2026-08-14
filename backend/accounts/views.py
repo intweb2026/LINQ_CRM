@@ -203,7 +203,30 @@ class CustomAuthToken(ObtainAuthToken):
 class UserViewSet(viewsets.ModelViewSet):
     """CRUD + event assignment. Write actions require users-module permission."""
     permission_classes = [crm_permission("users")]
-    queryset = User.objects.prefetch_related("assigned_events").order_by("-date_joined")
+    # Everything UserListSerializer touches, fetched up front.
+    #
+    # MEASURED: 45 users cost 219 queries. Five separate per-row traversals, none
+    # of them visible from the serializer's field list:
+    #
+    #   team.name / team.id      an unfetched FK        -> select_related
+    #   mapped_lead              an unfetched FK        -> select_related
+    #   permission_overrides     an unfetched reverse   -> prefetch_related
+    #   team.permissions         read TWICE per row, by team_permission_matrix and
+    #                            again inside effective_permissions()
+    #                                                  -> prefetch_related
+    #   assigned_events.count    a COUNT per row. `assigned_events` was already
+    #                            prefetched, but a prefetch only serves .all();
+    #                            .count() ignores it and goes back to the database.
+    #                            The serializer now counts the prefetched list.
+    #
+    # This is the list behind the Users page, the Teams board, the role cards and
+    # every user dropdown in the app, so it is on the critical path of most pages.
+    queryset = (
+        User.objects
+        .select_related("team", "mapped_lead")
+        .prefetch_related("assigned_events", "permission_overrides", "team__permissions")
+        .order_by("-date_joined")
+    )
     filterset_fields = ["role", "status", "team"]
     search_fields = ["username", "first_name", "last_name", "email"]
 

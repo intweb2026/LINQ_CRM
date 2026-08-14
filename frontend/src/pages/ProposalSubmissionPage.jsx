@@ -20,6 +20,50 @@ import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 import DateRangeFilter from '../components/DateRangeFilter';
 
+/**
+ * Module scope, evaluated once — the stability DataTable's memoised Row needs to
+ * skip re-rendering rows that have not changed. Rebuilt per render, as this was,
+ * the array is a changed prop on every loaded row each time a page arrives, so the
+ * whole table re-renders and the memo buys nothing. Nothing here reads component
+ * state; anything added that does has to move back inside, under useMemo. Same
+ * reasoning as REVIEW_COLS in PaperReviewPage.
+ */
+const PROPOSAL_COLS = [
+  /* event_code and company_name carry NO `opts`. Those dropdowns were
+     built by scanning the loaded rows, which under server paging means
+     the fifty on screen. Both are registered filter_spec fields, so a
+     text condition on either is still evaluated by the database over
+     every row. The status columns keep theirs; those lists are constants
+     rather than a scan of the data. */
+  { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
+  { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
+  { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
+  { key: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
+  { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
+  { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+  { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+  { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+  { key: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
+  { key: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+  { key: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
+  { key: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
+  { key: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
+  { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+  { key: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
+  { key: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
+  { key: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
+  { key: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
+  { key: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
+  { key: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
+];
+
+const PROPOSAL_GROUPS = [
+  { key: 'id', label: 'Identification' }, { key: 'sp', label: 'Speaker & company' }, { key: 'qc', label: 'Quality & content' },
+  { key: 'st', label: 'Status & revenue' }, { key: 'mr', label: 'Internal notes' },
+];
+const PROPOSAL_HIDDEN = ['internal_footnotes_mr', 'slot_recommendation_mr'];
+
 export default function ProposalSubmissionPage() {
   const { canView, can } = useSession();
   // Date range, applied by the SERVER over submission_date falling back to
@@ -101,42 +145,14 @@ export default function ProposalSubmissionPage() {
         server={{ resource: 'proposal-submissions', live: ['paper-reviews'] }}
         serverParams={{ period }}
         onServerReady={keepRefetch}
-        noun="proposals" pageSize={50} infinite defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        // 100 rather than 50, for the reason given on the same prop in
+        // PaperReviewPage: half as many scroll stops, each one a round trip plus a
+        // re-layout of everything already rendered.
+        noun="proposals" pageSize={100} infinite defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
         select={can('update', 'proposal_submission')}
-        groups={[
-          { key: 'id', label: 'Identification' }, { key: 'sp', label: 'Speaker & company' }, { key: 'qc', label: 'Quality & content' },
-          { key: 'st', label: 'Status & revenue' }, { key: 'mr', label: 'Internal notes' },
-        ]}
-        hiddenDefault={['internal_footnotes_mr', 'slot_recommendation_mr']}
-        cols={[
-          /* event_code and company_name carry NO `opts`. Those dropdowns were
-             built by scanning the loaded rows, which under server paging means
-             the fifty on screen. Both are registered filter_spec fields, so a
-             text condition on either is still evaluated by the database over
-             every row. The status columns keep theirs; those lists are constants
-             rather than a scan of the data. */
-          { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-          { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
-          { key: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
-          { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
-          { key: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
-          { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
-          { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-          { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-          { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-          { key: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
-          { key: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-          { key: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
-          { key: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
-          { key: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
-          { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
-          { key: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
-          { key: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
-          { key: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
-          { key: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
-          { key: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
-          { key: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
-        ]}
+        groups={PROPOSAL_GROUPS}
+        hiddenDefault={PROPOSAL_HIDDEN}
+        cols={PROPOSAL_COLS}
         card={(r) => (
           <div className="rc">
             <div className="rc-t"><Who name={r.speaker_name} /><span style={{ flex: 1 }} /><span className="mono" style={{ color: 'var(--t-600)' }}>{r.event_code}</span></div>

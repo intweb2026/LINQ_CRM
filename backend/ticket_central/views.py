@@ -10,7 +10,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.audit import log_module_wipe
+from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.period_filter import PeriodFilterMixin
@@ -631,6 +631,11 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             Ticket.objects.all().delete()
             TicketSequence.objects.all().delete()
             log_module_wipe(request.user, "TICKET CENTRAL", deleted)
+        # Outside the atomic block: VACUUM cannot run in a transaction. Tickets is the
+        # largest table in the CRM at 42,912 rows, so a wipe that left its pages
+        # behind would keep every later query paying for them — see
+        # accounts/audit.py reclaim_after_wipe.
+        reclaim_after_wipe(Ticket._meta.db_table, TicketSequence._meta.db_table)
         return Response({
             "detail": "Successfully removed all ticket central data.",
             "deleted": deleted,

@@ -5,9 +5,29 @@ import { Icon } from '../../lib/icons';
 import { nf, rel } from '../../lib/helpers';
 import * as webhooksApi from '../../api/webhooks';
 import * as eventsApi from '../../api/events';
+import { http } from '../../api/client';
 import { useFetch } from '../../hooks/useFetch';
 import { useLiveData } from '../../hooks/useLiveData';
 import { useToast } from '../../context/ToastContext';
+
+/**
+ * The full ingest URL for a key, everything an external team needs in one
+ * string, with no header setup.
+ *
+ * The origin comes from the axios baseURL rather than a literal, because this
+ * app is served from more than one host (dev proxy, staging, production) and a
+ * hardcoded hostname would hand the tester a URL pointing at somebody else's
+ * CRM. baseURL is `/api/` by default, which is relative and carries no origin;
+ * only an absolute REACT_APP_API_BASE_URL does, and that one already ends in
+ * /api, which has to come off before the path below is appended.
+ */
+function ingestUrl(key) {
+  const base = http.defaults.baseURL || '';
+  const origin = /^https?:\/\//i.test(base)
+    ? base.replace(/\/+$/, '').replace(/\/api$/i, '')
+    : window.location.origin;
+  return origin + '/api/webhooks/ingest/?X-CRM-API-KEY=' + encodeURIComponent(key);
+}
 
 export default function WebhookKeys() {
   const toast = useToast();
@@ -59,6 +79,7 @@ export default function WebhookKeys() {
                     <td>
                       <div style={{ display: 'flex', gap: 2 }}>
                         <button className="btn btn-g btn-sm btn-ic" title="Copy" onClick={() => { if (!k.key) { toast('No key available yet', 'wn'); return; } navigator.clipboard?.writeText(k.key); toast('Key copied to clipboard', 'ok'); }}><Icon name="copy" size={13} /></button>
+                        <button className="btn btn-g btn-sm btn-ic" title="Copy test URL" onClick={() => { if (!k.key) { toast('No key available yet', 'wn'); return; } navigator.clipboard?.writeText(ingestUrl(k.key)); toast('Ingest URL copied, it contains the key', 'wn'); }}><Icon name="link" size={13} /></button>
                         <button className="btn btn-g btn-sm btn-ic" title="Regenerate" onClick={() => regenerate(k.id, k.name)}><Icon name="refresh" size={13} /></button>
                         <button className="btn btn-g btn-sm btn-ic" title="Toggle" onClick={() => toggle(k.id, k.name, k.active)}><Icon name={k.active ? 'pause' : 'play'} size={13} /></button>
                       </div>
@@ -67,6 +88,11 @@ export default function WebhookKeys() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.5 }}>
+            The test URL carries the key in plain text. It is recorded in server access logs and in the
+            browser history of anyone who opens it, so share it privately, and regenerate the key once
+            the test is finished.
           </div>
         </div>
       ) : (

@@ -19,11 +19,6 @@ PENDING_STATUSES = ["Pending"]
 FREE_STATUSES    = ["Free"]
 CANCELLED_STATUSES = ["Cancelled", "Refunded"]
 
-def _date_range(days_back: int) -> tuple[date, date]:
-    today = date.today()
-    return today - timedelta(days=days_back), today
-
-
 def bulk_event_metrics(event_codes: list[str]) -> dict:
     """
     Returns a dict keyed by event_code.

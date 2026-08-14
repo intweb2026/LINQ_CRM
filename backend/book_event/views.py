@@ -12,7 +12,7 @@ from rest_framework.authentication import TokenAuthentication, SessionAuthentica
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.audit import log_module_wipe
+from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.permissions import RBACMixin, IsSalesOrAdmin, IsAdminRole, IsHPAccount
 from accounts.crm_permissions import crm_permission
 from .authentication import ApiKeyAuthentication, HasApiKey
@@ -198,6 +198,14 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                 HistoricalEventReference.objects.all().delete()
                 EventEditionMetrics.objects.all().delete()
                 log_module_wipe(request.user, "BOOKINGS", deleted)
+            # Outside the atomic block, deliberately: VACUUM cannot run inside a
+            # transaction. This is the wipe that produced the 550 MB book_delegates
+            # table holding 1,250 rows, and with it the 507 ms dashboard — see
+            # accounts/audit.py reclaim_after_wipe.
+            reclaim_after_wipe(
+                "book_delegates", "book_events", "webhook_events",
+                HistoricalEventReference._meta.db_table, EventEditionMetrics._meta.db_table,
+            )
             return Response({
                 "detail": "Successfully removed all booking module data.",
                 "deleted": deleted,

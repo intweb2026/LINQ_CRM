@@ -67,7 +67,11 @@ class UserListSerializer(serializers.ModelSerializer):
     # the shape is the same for every row.
     team_name       = serializers.ReadOnlyField(source='team.name', allow_null=True)
     team_id         = serializers.ReadOnlyField(source='team.id', allow_null=True)
-    assigned_events_count = serializers.IntegerField(source='assigned_events.count', read_only=True)
+    # Counted from the prefetched list, NOT `source='assigned_events.count'`.
+    # A prefetch only serves `.all()`; `.count()` bypasses it and issues its own
+    # COUNT, which was one extra query per user on every list — see the note on
+    # UserViewSet.queryset.
+    assigned_events_count = serializers.SerializerMethodField()
     mapped_lead_id  = serializers.ReadOnlyField(source='mapped_lead.id', allow_null=True)
     mapped_lead_name = serializers.SerializerMethodField()
     # The team's grid, this person's deltas, and what the two add up to. All
@@ -94,11 +98,28 @@ class UserListSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return obj.get_full_name() or obj.username
 
+    def get_assigned_events_count(self, obj):
+        return len(obj.assigned_events.all())
+
     def get_mapped_lead_name(self, obj):
         return obj.mapped_lead.get_full_name() or obj.mapped_lead.username if obj.mapped_lead else None
 
     def get_team_permissions(self, obj):
-        return team_permission_matrix(obj.team if obj.team_id else None)
+        """
+        The team's grid, built once per TEAM rather than once per user.
+
+        With many=True, DRF wraps a single child serializer, so this cache spans the
+        whole list and forty-five users across seven teams build seven matrices
+        instead of forty-five. Keyed on team_id, which is what the matrix depends
+        on; None is a real key here, holding the all-denied grid for someone with
+        no team.
+        """
+        if not hasattr(self, "_team_matrix_cache"):
+            self._team_matrix_cache = {}
+        key = obj.team_id
+        if key not in self._team_matrix_cache:
+            self._team_matrix_cache[key] = team_permission_matrix(obj.team if obj.team_id else None)
+        return self._team_matrix_cache[key]
 
     def get_effective_permissions(self, obj):
         return obj.effective_permissions()

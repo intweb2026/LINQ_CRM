@@ -95,9 +95,9 @@ export default function CommandPalette({ open, onClose }) {
         <div className="pl-ls">
           {!results.length ? (
             <div style={{ padding: '26px 16px', textAlign: 'center', color: 'var(--text-4)', fontSize: 12.5 }}>
-              {searching ? 'Searching' + '\u2026'
-                : q.trim().length < searchApi.MIN_QUERY ? 'Type at least ' + searchApi.MIN_QUERY + ' characters to search'
-                : 'No matches for "' + q + '"'}
+              {searching ? 'Searching\u2026'
+                : q.trim().length < searchApi.MIN_QUERY ? `Type at least ${searchApi.MIN_QUERY} characters to search`
+                : `No matches for "${q}"`}
             </div>
           ) : results.map((r, i) => {
             let groupLabel = null;

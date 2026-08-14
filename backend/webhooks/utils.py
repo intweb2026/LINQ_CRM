@@ -3,9 +3,129 @@ webhooks/utils.py
 ──────────────────
 Shared helpers: IP extraction, header sanitisation, key validation.
 """
-from urllib.parse import urlparse
+import json
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from django.conf import settings
+
+# Query-string parameter names that carry the API key, in normalised form,
+# meaning lowercased with hyphens folded to underscores.
+#
+# Deliberately narrow, and CRM-prefixed throughout. Senders paste a URL that was
+# generated for them rather than typing a parameter name from memory, so the
+# generic spellings bought nothing; and "key" in particular collides with a
+# parameter a sender may already be carrying for a reason of its own. A
+# collision is not a harmless miss, it is a 401 on a request that would
+# otherwise have fallen through to the legacy secret and succeeded, because a
+# non-empty value found here stops the search and becomes the credential.
+QUERY_KEY_ALIASES = frozenset({
+    "x_crm_api_key",
+    "crm_api_key",
+    "crm_key",
+    "crmkey",
+})
+
+# What a redacted key value is replaced with. Deliberately URL-safe so a scrubbed
+# Referer is still a readable URL.
+REDACTED = "REDACTED"
+
+
+def _normalise_param(name) -> str:
+    """Fold a parameter name to the form used in QUERY_KEY_ALIASES."""
+    return str(name or "").strip().lower().replace("-", "_")
+
+
+def _query_items(request) -> list:
+    """
+    (name, value) pairs from the query string.
+
+    Works with a DRF Request (`query_params`) and a plain Django HttpRequest
+    (`GET`) alike, and returns an empty list when the object has neither, since
+    this is called from validation helpers that are also handed bare objects in
+    tests.
+    """
+    params = getattr(request, "query_params", None)
+    if params is None:
+        params = getattr(request, "GET", None)
+    if params is None:
+        return []
+    try:
+        return list(params.items())
+    except Exception:
+        return []
+
+
+def extract_api_key(request):
+    """
+    Find the API key on the request.
+
+    Returns (key_value, transport) where transport is "header", "query", or ""
+    when no key was sent at all.
+
+    The header is read first and returned immediately when non-empty, so a
+    request carrying both carriers is decided by the header and the query string
+    is never consulted. That ordering is the whole compatibility guarantee; no
+    existing integration can change behaviour because of this function, and a
+    wrong key in a header cannot be quietly rescued by a right key in a URL.
+    """
+    header_value = (request.META.get("HTTP_X_CRM_API_KEY") or "").strip()
+    if header_value:
+        return header_value, "header"
+
+    for name, value in _query_items(request):
+        if _normalise_param(name) in QUERY_KEY_ALIASES:
+            query_value = (value or "").strip()
+            if query_value:
+                return query_value, "query"
+
+    return "", ""
+
+
+def key_transport(request) -> str:
+    """
+    Which carrier the key arrived on, one of "header", "query", or "".
+
+    Exists so a view can stamp the audit trail without authenticate_request
+    having to grow a third return value and break every call site for it.
+    """
+    return extract_api_key(request)[1]
+
+
+def scrub_key_from_url(value):
+    """
+    Replace the value of every key-carrying parameter in a URL or query string.
+
+    Every other parameter is left in place with its own value. The input is
+    returned unchanged when it carries nothing to redact, so this is safe to run
+    over arbitrary header values.
+
+    Non-alias values make a percent-encoding round trip through parse_qsl and
+    urlencode, so a scrubbed URL is equivalent to the original rather than
+    byte-identical to it. That is acceptable for an audit record, and it is the
+    price of parsing the thing properly instead of by string surgery.
+    """
+    if not value:
+        return value
+
+    text = str(value)
+    head, sep, query = text.partition("?")
+    target = query if sep else text
+    if not target:
+        return value
+
+    try:
+        items = parse_qsl(target, keep_blank_values=True)
+    except (ValueError, UnicodeDecodeError):
+        return value
+
+    if not any(_normalise_param(name) in QUERY_KEY_ALIASES for name, _ in items):
+        return value
+
+    scrubbed = urlencode([
+        (name, REDACTED if _normalise_param(name) in QUERY_KEY_ALIASES else item_value)
+        for name, item_value in items
+    ])
+    return f"{head}?{scrubbed}" if sep else scrubbed
 
 
 def extract_ip(request) -> str:
@@ -17,21 +137,84 @@ def extract_ip(request) -> str:
 def safe_headers(meta: dict) -> dict:
     """HTTP_* headers from request.META, stripping all secret/key values."""
     skip = {"HTTP_X_WEBHOOK_SECRET", "HTTP_X_API_KEY", "HTTP_X_CRM_API_KEY"}
-    return {
+    headers = {
         k: v for k, v in meta.items()
         if k.startswith("HTTP_") and k not in skip
     }
 
+    # A browser that follows a link to the ingest URL sends that whole URL back
+    # as Referer, key and all, which would otherwise be written verbatim into
+    # WebhookLog.headers and read by anyone with logs access.
+    if "HTTP_REFERER" in headers:
+        headers["HTTP_REFERER"] = scrub_key_from_url(headers["HTTP_REFERER"])
 
-def validate_api_key(request):
+    # QUERY_STRING is deliberately NOT an HTTP_ key in the WSGI environ, so the
+    # HTTP_-prefix filter above already excludes it, and a key sent in the URL
+    # never reaches WebhookLog.headers today. That is a consequence of the
+    # prefix rather than a rule written anywhere; widening this filter to keep
+    # non-HTTP_ environ keys would silently start storing raw keys. Any such
+    # change must add QUERY_STRING to `skip` in the same edit.
+    return headers
+
+
+def coerce_form_wrapped_json(data):
     """
-    Validates X-CRM-API-KEY against the WebhookApiKey database table.
+    Undo the shape a JSON body takes when it is declared as a form.
+
+    A sender that posts `{"InvoiceNumber": "INV-1", ...}` but declares
+    Content-Type application/x-www-form-urlencoded gets read by FormParser as a
+    urlencoded pair list, and a body with no "=" in it becomes a single field
+    NAME with an empty value, so `request.data` arrives as
+    `{'{"InvoiceNumber": "INV-1", ...}': ''}`, the entire payload sitting in a
+    dict key.
+
+    When that exact shape is seen, meaning one item, an empty value, and a key
+    that strips to something starting with "{" and ending with "}", the key is
+    parsed as JSON and the resulting dict returned. Every other input is
+    returned unchanged, including a genuine one-field form and a key that fails
+    to parse.
+    """
+    if not isinstance(data, dict) or len(data) != 1:
+        return data
+
+    try:
+        key, value = next(iter(data.items()))
+    except (StopIteration, ValueError, TypeError):
+        return data
+
+    if value not in ("", [], [""], None):
+        return data
+
+    if not isinstance(key, str):
+        return data
+
+    candidate = key.strip()
+    if not (candidate.startswith("{") and candidate.endswith("}")):
+        return data
+
+    try:
+        parsed = json.loads(candidate)
+    except ValueError:
+        return data
+
+    return parsed if isinstance(parsed, dict) else data
+
+
+def validate_api_key(request, *, record_usage=True):
+    """
+    Validates the X-CRM-API-KEY value against the WebhookApiKey database table.
+    The key is taken from extract_api_key(), so it may have arrived in the
+    header or in the query string; the header wins when both are present.
     Returns (api_key_obj, None) on success or (None, error_str) on failure.
     Does NOT fall back to static key — caller handles that separately.
+
+    record_usage=False validates without touching last_used_at or usage_count.
+    A liveness GET is not a delivery, and counting it would make the usage
+    figures on the keys page a mixture of two different things.
     """
     from .models import WebhookApiKey
 
-    key_value = request.META.get("HTTP_X_CRM_API_KEY", "").strip()
+    key_value, _transport = extract_api_key(request)
     if not key_value:
         return None, "missing"
 
@@ -59,7 +242,8 @@ def validate_api_key(request):
             if domain and domain not in api_key.allowed_domains:
                 return None, f"Domain '{domain}' is not authorised for this API key."
 
-    api_key.record_usage()
+    if record_usage:
+        api_key.record_usage()
     return api_key, None
 
 
@@ -82,10 +266,29 @@ def validate_webhook_secret(request):
     return True, ""
 
 
-def authenticate_request(request):
+def authenticate_request(request, *, record_usage=True):
     """
     Try X-CRM-API-KEY (DB) first, then X-WEBHOOK-SECRET (legacy static).
     Returns (api_key_obj_or_None, error_str_or_None).
+
+    The key is accepted in the X-CRM-API-KEY header or, failing that, in the
+    query string. The query string exists so that ONE URL is a complete,
+    testable integration. A URL can be pasted into a browser, a monitoring
+    check or a curl line and handed to an external team with no header setup at
+    all, which is the difference between a same-day test and a scheduling
+    exercise.
+
+    The cost is real and worth stating plainly. A key in a URL is written to
+    reverse-proxy and gunicorn access logs, kept in browser history, and sent on
+    in the Referer of anything the page links to. A key in a header is written
+    to none of those. Treat a URL-carried key as disclosed to everyone who can
+    read a log, and regenerate it when the test is finished.
+
+    The header keeps absolute priority, so no integration that sends the header
+    today can change behaviour because of the fallback.
+
+    record_usage=False validates without bumping usage_count/last_used_at; see
+    validate_api_key.
 
     There is deliberately NO Origin/Referer fallback. `Origin` and `Referer` are
     ordinary request headers: only a browser is bound to set them truthfully, and
@@ -100,11 +303,12 @@ def authenticate_request(request):
     senders was the same list that granted them access. CORS is a browser policy
     and cannot carry server-to-server authentication; the key does that.
     """
-    api_key_obj, api_key_err = validate_api_key(request)
+    api_key_obj, api_key_err = validate_api_key(request, record_usage=record_usage)
     if api_key_obj is not None:
         return api_key_obj, None
 
-    # api_key_err == "missing" means the header wasn't present; try the legacy secret
+    # api_key_err == "missing" means no key was present on either carrier; try
+    # the legacy secret
     if api_key_err == "missing":
         ok, secret_err = validate_webhook_secret(request)
         if ok:
@@ -113,7 +317,10 @@ def authenticate_request(request):
         # generic "authentication required" — those are different operator problems.
         if secret_err != "missing":
             return None, secret_err
-        return None, "Authentication required: send your key in the X-CRM-API-KEY header."
+        return None, (
+            "Authentication required: send your key in the X-CRM-API-KEY header, "
+            "or as an X-CRM-API-KEY query parameter on the URL."
+        )
 
     return None, api_key_err
 

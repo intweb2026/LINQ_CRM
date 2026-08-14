@@ -11,7 +11,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.audit import log_module_wipe
+from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.permissions import RBACMixin, IsAdminRole, IsSalesOrAdmin, IsHPAccount
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.crm_permissions import crm_permission
@@ -715,6 +715,10 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                 deleted = {"events": Event.objects.count()}
                 Event.objects.all().delete()
                 log_module_wipe(request.user, "EVENTS", deleted)
+            # Outside the atomic block: VACUUM cannot run in a transaction. See
+            # accounts/audit.py reclaim_after_wipe for why a DELETE alone leaves the
+            # table as slow to scan as it was when full.
+            reclaim_after_wipe(Event._meta.db_table)
             return Response({
                 "detail": "Successfully removed all event data.",
                 "deleted": deleted,

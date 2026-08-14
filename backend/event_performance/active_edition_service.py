@@ -44,11 +44,6 @@ def extract_year_from_code(event_code: str) -> Optional[int]:
     return int("20" + m.group(1)) if m else None
 
 
-def event_key(event_code: str) -> tuple:
-    """Returns (master_code, year_or_none) for grouping and matching."""
-    return (normalize_master_code(event_code), extract_year_from_code(event_code))
-
-
 class CurrentActiveEditionResolver:
     """
     Groups all Event records by master code and identifies the current active

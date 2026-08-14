@@ -2,6 +2,9 @@
 webhooks/views.py
 ──────────────────
 POST /api/webhooks/ingest/          — live booking ingestion  (X-CRM-API-KEY or X-WEBHOOK-SECRET)
+GET  /api/webhooks/ingest/          — liveness check, same credentials, writes no log
+                                      The key is accepted in the X-CRM-API-KEY header or as an
+                                      X-CRM-API-KEY query parameter; the header takes priority.
 GET  /api/webhooks/logs/            — paginated log list       (admin only)
 GET  /api/webhooks/logs/{id}/       — full log detail          (admin only)
 POST /api/webhooks/logs/{id}/retry/ — re-process a failed log  (admin only)
@@ -16,6 +19,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -23,12 +27,16 @@ from rest_framework.views import APIView
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.permissions import IsAdminRole
 from .models import WebhookApiKey, WebhookLog
+from .parsers import AnyTypeJSONParser
 from .serializers import (
     WebhookApiKeySerializer, WebhookApiKeyCreateSerializer,
     WebhookLogSerializer, WebhookLogListSerializer,
 )
 from .services import WebhookProcessor
-from .utils import authenticate_request, extract_ip, safe_headers, unwrap_payload
+from .utils import (
+    authenticate_request, coerce_form_wrapped_json, extract_api_key,
+    extract_ip, key_transport, safe_headers, unwrap_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +45,105 @@ logger = logging.getLogger(__name__)
 
 class WebhookIngestionView(APIView):
     """
-    POST /api/webhooks/ingest/
-    Accepts X-CRM-API-KEY (DB-backed) or X-WEBHOOK-SECRET (legacy static).
+    POST /api/webhooks/ingest/  is a delivery.
+    GET  /api/webhooks/ingest/  is a liveness check.
 
-    Every outcome leaves exactly one WebhookLog row — success, auth failure,
-    unparseable body, and unexpected crash alike. A delivery that produced no
-    row is indistinguishable in the UI from a delivery that never arrived, so
-    the failures most worth investigating were the ones with nothing to show.
+    Accepts X-CRM-API-KEY (DB-backed) or X-WEBHOOK-SECRET (legacy static). The
+    API key may arrive in the header or in the query string; the header wins.
+
+    Every POST outcome leaves exactly one WebhookLog row — success, auth
+    failure, unparseable body, and unexpected crash alike. A delivery that
+    produced no row is indistinguishable in the UI from a delivery that never
+    arrived, so the failures most worth investigating were the ones with
+    nothing to show.
     """
     authentication_classes = []
     permission_classes     = [AllowAny]
+
+    # Order is load-bearing. DRF selects the FIRST parser whose media_type
+    # matches, and AnyTypeJSONParser declares "*/*", which matches everything,
+    # so it must sit last and be reached only once the specific parsers have
+    # each declined the media type they own. Put it anywhere earlier and every
+    # form and multipart upload would be read as JSON and fail.
+    parser_classes = [JSONParser, FormParser, MultiPartParser, AnyTypeJSONParser]
 
     # How much of an unparseable body to keep. Enough to see what the sender
     # actually sent, short enough not to bloat the row.
     RAW_BODY_LOG_LIMIT = 10_000
 
+    # Appended to WebhookLog.source when the key arrived in the URL, so a
+    # URL-key delivery is identifiable in the logs UI without opening the row.
+    URL_AUTH_SUFFIX = " [url-auth]"
+
+    # Read off the column rather than hardcoded: WebhookApiKey.name and
+    # WebhookLog.source are both max_length 100, so a 100-character key name
+    # plus the suffix overflows by exactly the length of the suffix.
+    SOURCE_MAX = WebhookLog._meta.get_field("source").max_length
+
+    @classmethod
+    def _stamp_source(cls, base, transport):
+        """Fit `base` into WebhookLog.source, marking a URL-carried key."""
+        base = (base or "").strip()
+        if transport == "query":
+            # With no base to append to, the separating space has nothing to
+            # separate. A cell holding whitespace then a tag reads in the logs
+            # table as a rendering fault rather than as the value it is.
+            if not base:
+                return cls.URL_AUTH_SUFFIX.strip()
+            room = cls.SOURCE_MAX - len(cls.URL_AUTH_SUFFIX)
+            return base[:room] + cls.URL_AUTH_SUFFIX
+        return base[:cls.SOURCE_MAX]
+
+    def get(self, request):
+        """
+        Liveness check: same credentials, no side effects.
+
+        Deliberately creates no WebhookLog row and does not bump usage_count or
+        last_used_at. A GET is not a delivery, and the log is a record of
+        deliveries, so a browser prefetch, a link preview or a monitoring ping
+        would otherwise appear in Delivery logs as traffic that never happened,
+        and would inflate the usage figure the keys page reports.
+
+        A failed credential check must not be completely silent either, though,
+        because it leaves no row for anyone to find. So the 401 branch writes a
+        warning to the application log, carrying the transport, the client IP,
+        and a 12-character prefix of the attempted key. The prefix is enough to
+        tell a mistyped key from a stale one when the tester reads the value
+        back; the whole value is never logged, since an application log is one
+        of the places a URL-carried key is already too easy to find.
+        """
+        api_key_obj, auth_err = authenticate_request(request, record_usage=False)
+        if auth_err:
+            attempted, transport = extract_api_key(request)
+            # 12 characters is a prefix, not a key. Every key issued here starts
+            # with the 9-character "crm_live_", so this shows 3 characters of
+            # the secret, enough to match against what the tester has in front
+            # of them and useless to anyone else.
+            key_hint = f"{attempted[:12]}..." if attempted else "none"
+            logger.warning(
+                "Webhook liveness check rejected, transport=%s ip=%s key=%s reason=%s",
+                transport or "none", extract_ip(request) or "unknown",
+                key_hint, auth_err,
+            )
+            return Response({"success": False, "error": auth_err},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        return Response({
+            "success":   True,
+            "message":   "Webhook endpoint is live. POST your JSON booking payload to this same URL.",
+            "key_name":  api_key_obj.name if api_key_obj else "legacy-secret",
+            "transport": key_transport(request),
+        }, status=status.HTTP_200_OK)
+
     def post(self, request):
+        # Bound FIRST, before anything that can raise. The crash handler at the
+        # bottom reads `transport`, and it is the handler of last resort; if a
+        # crash landed before the real assignment further down, that read would
+        # raise UnboundLocalError inside the handler itself and the 500 would go
+        # unrecorded, which is precisely the outcome the handler exists to
+        # prevent. The real value is still computed once, in its own place below.
+        transport = ""
+
         recv_at = timezone.now()
         ip      = extract_ip(request)
         hdrs    = safe_headers(request.META)
@@ -73,10 +164,19 @@ class WebhookIngestionView(APIView):
         try:
             parsed      = request.data
             data        = parsed if isinstance(parsed, dict) else {}
+            # Normalise BEFORE anything reads it. What is stored as
+            # WebhookLog.payload is what a later retry re-processes, so an
+            # un-normalised row would fail again on retry for a reason that no
+            # longer exists.
+            data        = coerce_form_wrapped_json(data)
             parse_error = None
         except Exception as exc:
             data        = {}
             parse_error = f"Could not parse request body: {exc}"
+
+        # Which carrier the key arrived on. Computed once, before authentication,
+        # because the auth-failure branch needs it too.
+        transport = key_transport(request)
 
         try:
             # Authenticate first even when the body is broken: an unauthenticated
@@ -85,6 +185,7 @@ class WebhookIngestionView(APIView):
 
             if auth_err:
                 WebhookLog.objects.create(
+                    source=self._stamp_source("", transport),
                     ip_address=ip, payload=data, headers=hdrs,
                     response={"error": auth_err},
                     status=WebhookLog.Status.FAILED,
@@ -98,7 +199,16 @@ class WebhookIngestionView(APIView):
             if parse_error:
                 WebhookLog.objects.create(
                     api_key=api_key_obj,
-                    source=(api_key_obj.name if api_key_obj else "legacy-secret"),
+                    # Stamped for the same reason as the other two, but this row
+                    # earns it most. A URL sender authenticates on the first try
+                    # and then gets the Content-Type or the body shape wrong, so
+                    # this is the row an operator is most often staring at while
+                    # diagnosing a failed URL test, and the stamp is what tells
+                    # them the URL itself worked.
+                    source=self._stamp_source(
+                        api_key_obj.name if api_key_obj else "legacy-secret",
+                        transport,
+                    ),
                     ip_address=ip,
                     payload={"_unparsed_body": raw_body[:self.RAW_BODY_LOG_LIMIT]},
                     headers=hdrs,
@@ -117,9 +227,10 @@ class WebhookIngestionView(APIView):
             invoice_number = payload.get("InvoiceNumber", "")
             event_code     = payload.get("Eventcode", "")
             event_name     = payload.get("Eventname", "")
-            source         = (
+            source         = self._stamp_source(
                 request.META.get("HTTP_X_WEBHOOK_SOURCE", "")
-                or (api_key_obj.name if api_key_obj else "legacy-secret")
+                or (api_key_obj.name if api_key_obj else "legacy-secret"),
+                transport,
             )
 
             log = WebhookLog.objects.create(
@@ -185,6 +296,12 @@ class WebhookIngestionView(APIView):
                     resp_body["log_id"] = log.id
                 else:
                     crash_log = WebhookLog.objects.create(
+                        # This row exists because the request crashed before the
+                        # main row did, so it carries no key name and no resolved
+                        # booking. The transport is the only thing on it that
+                        # says how the sender was authenticating, which makes it
+                        # the only clue tying the crash to a URL-based test.
+                        source=self._stamp_source("", transport),
                         ip_address=ip,
                         payload=data,
                         headers=hdrs,

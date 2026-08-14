@@ -66,26 +66,12 @@ def import_fields():
     return fields
 
 
-def generate_ticket_number():
-    """
-    Generates: TC-YYYYMMDD-XXXX
-    where XXXX is a zero-padded daily sequence.
-    """
-    today = timezone.now().strftime("%Y%m%d")
-    prefix = f"TC-{today}-"
-    last = (
-        Ticket.objects
-        .filter(ticket_number__startswith=prefix)
-        .order_by("-ticket_number")
-        .values_list("ticket_number", flat=True)
-        .first()
-    )
-    if last:
-        seq = int(last.split("-")[-1]) + 1
-    else:
-        seq = 1
-    return f"{prefix}{seq:04d}"
-
+# The TC-YYYYMMDD-XXXX generator that used to sit here was removed. It was
+# reachable from nothing: ticket numbers come from assign_next_ticket_number()
+# below, which builds them from the purpose and type codes and reuses gaps
+# through TicketSequence. Keeping a second generator that mints numbers in a
+# format the sequence table does not track is a live hazard, not dead weight —
+# one call from a future importer and the two schemes are interleaved.
 
 # ── Smart Import: row coercion ──────────────────────────────────────────────
 

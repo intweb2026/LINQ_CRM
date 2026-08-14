@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { EmptyState, PageHead, Tabs } from '../components/UI';
 import Modal from '../components/Modal';
 import AddSheetSourceModal from '../components/AddSheetSourceModal';
@@ -60,7 +60,7 @@ function DetailModal({ log: l, onClose, onRetry }) {
 }
 
 export default function GoogleSyncPage() {
-  const { canView, user } = useSession();
+  const { canView } = useSession();
   const toast = useToast();
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');

@@ -18,7 +18,18 @@ class TeamViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # prefetch: the serializer renders every team's grid, so without this a
         # board of 7 teams costs 7 extra queries on every list.
-        qs = Team.objects.prefetch_related("permissions").order_by("name")
+        #
+        # `members` and `team_lead` joined the list after measuring: 7 teams cost 22
+        # queries, three per team, for the grid plus a COUNT for member_count, a
+        # filtered query for team_leads and an FK fetch for the lead's name. The
+        # serializer now reads all three off these, which is 4 queries for the whole
+        # board however many teams it holds.
+        qs = (
+            Team.objects
+            .select_related("team_lead")
+            .prefetch_related("permissions", "members")
+            .order_by("name")
+        )
         show_archived = self.request.query_params.get("archived") == "1"
         if not show_archived:
             qs = qs.filter(is_archived=False)

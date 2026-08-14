@@ -32,7 +32,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
-from accounts.audit import log_module_wipe
+from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.import_common import catalogue_notice
 from accounts.crm_permissions import crm_permission
@@ -864,6 +864,9 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
             deleted = {"proposal_submissions": ProposalSubmission.objects.count()}
             ProposalSubmission.objects.all().delete()
             log_module_wipe(request.user, "PROPOSAL SUBMISSION", deleted)
+        # Outside the atomic block: VACUUM cannot run in a transaction. See
+        # accounts/audit.py reclaim_after_wipe.
+        reclaim_after_wipe(ProposalSubmission._meta.db_table)
         return Response({
             "detail": "Successfully removed all proposal submission data.",
             "deleted": deleted,

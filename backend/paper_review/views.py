@@ -43,7 +43,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
-from accounts.audit import log_module_wipe
+from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
@@ -930,6 +930,10 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             NotificationLog.objects.all().delete()
             PaperReview.objects.all().delete()
             log_module_wipe(request.user, "PAPER REVIEW", deleted)
+        # Outside the atomic block: VACUUM cannot run in a transaction. Reviews carry
+        # the long prose columns, so this table reclaims more per row than most —
+        # see accounts/audit.py reclaim_after_wipe.
+        reclaim_after_wipe(PaperReview._meta.db_table, NotificationLog._meta.db_table)
         return Response({
             "detail": "Successfully removed all paper review data.",
             "deleted": deleted,

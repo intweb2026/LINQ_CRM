@@ -1,97 +1,59 @@
-# ── Credentials & Secrets ──────────────────────────────────────────────────
-/config/credentials/
-backend/credentials/
-backend/CREDENTIALS.md
-CREDENTIALS.md
+# Scope: this file covers the two things a commit here can leak — credentials and
+# real customer data — plus the generated output of the toolchain this project
+# actually uses (Django + manage.py test, Create React App, npm, Postgres with a
+# SQLite fallback, VS Code on Windows).
+#
+# Rules for tooling the project does not have were removed rather than kept "just
+# in case": tox, nose, hypothesis, pytest, coverage, mypy, ruff, Yarn PnP, lerna,
+# Eclipse, Visual Studio solutions and Python packaging never run here, so their
+# rules could not match anything, and a rule that cannot match is noise that makes
+# the ones that can harder to audit. Add them back alongside the tool, not before.
+
+# ── Credentials & secrets ───────────────────────────────────────────────────
+# A bare name with no slash matches at every depth, so one line covers
+# backend/credentials.json as well as the repo root.
+credentials/
 credentials.json
-**/credentials.json
 # GOOGLE_CREDS_PATH defaults to credentials.json (book_event/management/commands/
 # sync_bookings_from_sheets.py); token.* is what an OAuth flow writes back beside
 # it, and a refresh token is as sensitive as the client secret.
 token.json
 token.pickle
-# Every .md file, repo-wide, and deliberately so — this repo tracks no markdown
-# at all, which is what keeps a CREDENTIALS.md or a pasted-in dump of connection
-# strings from being committed by reflex. A doc that genuinely belongs in git
-# needs `git add -f`.
-*.md
+service-account*.json
 *.pem
 *.key
 *.p12
-service-account*.json
 
-# ── Environment Variables ───────────────────────────────────────────────────
+# Every .md file, repo-wide, and deliberately so — this repo tracks no markdown
+# at all, which is what keeps a CREDENTIALS.md or a pasted-in dump of connection
+# strings from being committed by reflex. A doc that genuinely belongs in git
+# needs `git add -f`. This is also why there is no separate CREDENTIALS.md rule:
+# it was a subset of this one.
+*.md
+
+# ── Environment variables ───────────────────────────────────────────────────
 # .env* rather than a list of suffixes: settings.py reads config via
-# python-decouple/dotenv, and the previous rules covered .env and .env*.local
-# but NOT .env.production or .env.staging — the two most costly to leak.
+# python-decouple/dotenv, and a list covering .env and .env*.local would miss
+# .env.production and .env.staging — the two most costly to leak. backend/.env
+# is the live one; .env.example is the tracked template and is re-included.
 .env
 .env.*
 !.env.example
-!.env.sample
 
-# ── Dependency Checks ───────────────────────────────────────────────────────
-backend/.deps_check/
-
-# ── Python ──────────────────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.venv/
-venv/
-env/
-.Python
-
-# Django
-# Machine-local settings overrides, which is where a local DB password ends up.
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-db.sqlite3-shm
-db.sqlite3-wal
-*.sqlite3
-# Collected static and uploaded media are both generated. NOTE: the rule is
-# `staticfiles/`, never `static/` — frontend/public/static holds real committed
-# logo assets, and react-scripts' own output lands in frontend/build/static,
-# which `build/` below already covers.
-staticfiles/
-media/
-*.log
-
-# Testing
-.pytest_cache/
-.coverage
-.coverage.*
-coverage.xml
-htmlcov/
-.tox/
-nosetests.xml
-.hypothesis/
-
-# Linter and type-checker caches, none of which existed when this file was
-# written; they appear the first time anyone runs the tool, not from a config.
-.mypy_cache/
-.dmypy.json
-.ruff_cache/
-*.egg-info/
-dist/
-*.egg
-MANIFEST
-
-# ── Spreadsheets & database dumps ───────────────────────────────────────────
-# Repo-wide, not `backend/*.csv` as before: that rule only ever matched the
-# backend root, so an export saved one level down (backend/accounts/, or the
-# repo root, or frontend/) was staged as normal. Every one of these files is
-# real delegate, booking, paper and proposal data — the importers read .csv,
-# .xlsx and .xlsm (accounts/import_common.py), and the export endpoints emit
-# .csv — so this is the largest body of personal data that can reach a commit.
-# Nothing tracked matches these patterns; the importers read from outside the
-# repo and the tests build their fixtures in memory. A sample file that truly
-# belongs in git needs `git add -f`.
+# ── Spreadsheets, documents & database dumps ────────────────────────────────
+# Repo-wide, not backend/*.csv: that only ever matched the backend root, so an
+# export saved one level down was staged as normal. Every one of these is real
+# delegate, booking, paper and proposal data — the importers read .csv, .xlsx and
+# .xlsm (accounts/import_common.py), historical_event_registry reads .pdf
+# (import_2023_pdf and its siblings), and the export endpoints emit .csv. This is
+# the largest body of personal data that can reach a commit. Nothing tracked
+# matches; the importers read from outside the repo and the tests build their
+# fixtures in memory. A sample file that truly belongs in git needs `git add -f`.
 *.csv
 *.xlsx
 *.xls
 *.xlsm
+*.pdf
 # pg_dump output from the local Postgres snapshot (see backend/pg.ps1), which is
 # the whole CRM in one file. Archives are covered for the same reason — an
 # exported dataset usually arrives zipped.
@@ -105,66 +67,58 @@ MANIFEST
 *.tar
 *.tar.gz
 
-# ── Node / React ─────────────────────────────────────────────────────────────
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── Django ──────────────────────────────────────────────────────────────────
+# Machine-local settings overrides, which is where a local DB password ends up.
+local_settings.py
+# Postgres is the configured database, but settings.py keeps a SQLite fallback
+# under DEBUG that writes backend/db.sqlite3 (settings.py:148). The second rule
+# is its -journal / -shm / -wal sidecars, which the first does not match.
+*.sqlite3
+*.sqlite3-*
+# Collected static and uploaded media are both generated. NOTE: the rule is
+# `staticfiles/`, never `static/` — frontend/public/static holds real committed
+# logo assets, and react-scripts' own output lands in frontend/build/static,
+# which `build/` below already covers.
+staticfiles/
+media/
+# Covers npm-debug.log and friends too, which is why there is no separate npm
+# logs block.
+*.log
+
+# ── Node / React ────────────────────────────────────────────────────────────
 node_modules/
 build/
-.pnp
-.pnp.js
 .eslintcache
-coverage/
-*.tgz
 
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# ── Browser tests ────────────────────────────────────────────────────────────
-# frontend/tests/*.mjs and the @playwright/test dependency were removed — they
-# were one-off debugging harnesses for already-fixed bugs, run by nothing. These
-# rules stay so an ad-hoc Playwright run's large, regenerated artefacts (which
-# land in the repo root or frontend/ by default) still cannot be committed.
-test-results/
-playwright-report/
-blob-report/
-playwright/.cache/
-
-# ── IDE & Editor ─────────────────────────────────────────────────────────────
+# ── IDE & editor ────────────────────────────────────────────────────────────
 .vscode/
 .idea/
-*.swp
-*.swo
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-.project
-.classpath
-.settings/
 .claude/
 *.code-workspace
+*.swp
+*.swo
 # VS Code's Local History extension, which mirrors every save of every edited
 # file — including one taken before a secret was moved out into .env.
 .history/
 
-# Scratch, backup and merge leftovers
+# ── Scratch, backup and merge leftovers ─────────────────────────────────────
 *.bak
 *.orig
 *.rej
 *.tmp
 *~
 
-# ── OS ───────────────────────────────────────────────────────────────────────
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
+# ── OS ──────────────────────────────────────────────────────────────────────
 Thumbs.db
-ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
+.DS_Store
 # A file literally named `nul`, which Windows creates when a command redirects
 # to NUL from a POSIX shell (`… > /dev/null` is the portable form here).
 nul

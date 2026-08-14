@@ -85,10 +85,28 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
    */
   const quietRef = useRef(false);
 
+  /**
+   * The debounce applies to TYPING, and only to typing.
+   *
+   * DEBOUNCE_MS exists because a filter value updates the spec on every keystroke,
+   * so without a delay that is one request per character. Advancing a page is not
+   * typing, and it was paying the same 350ms: with infinite scroll that is a third
+   * of a second of nothing happening at every scroll stop, on top of the round
+   * trip, repeated once per fifty rows. Over a table of 7,080 that is 141 stalls,
+   * and it reads as the table sticking rather than loading.
+   *
+   * So the delay is charged only when the typed criteria actually changed. On
+   * mount they have not, so the first page now goes out immediately too.
+   */
+  const typedKey = `${effectiveSpec || ''}|${search || ''}`;
+  const prevTypedRef = useRef(typedKey);
+
   useEffect(() => {
     if (!enabled || !resource || !gateOpen) return undefined;
     const quiet = quietRef.current;
     quietRef.current = false;
+    const typedChanged = prevTypedRef.current !== typedKey;
+    prevTypedRef.current = typedKey;
     let cancelled = false;
     if (!quiet) setLoading(true);
     const timer = setTimeout(() => {
@@ -111,7 +129,7 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
           setError(err?.response?.data?.detail || err?.message || 'Could not load records.');
         })
         .finally(() => { if (!cancelled && !quiet) setLoading(false); });
-    }, DEBOUNCE_MS);
+    }, typedChanged ? DEBOUNCE_MS : 0);
     return () => { cancelled = true; clearTimeout(timer); };
     // reqKey is derived from the params already listed here; including it would
     // only re-trigger the fetch on the same changes.

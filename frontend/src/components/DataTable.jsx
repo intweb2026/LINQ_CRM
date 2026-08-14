@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
 import Popover from './Popover';
 import { EmptyState, Seg } from './UI';
 import {
-  MAX_SPEC_BYTES, condIsActive, orderingParam, partitionConds, specByteLength, specToJson,
+  MAX_SPEC_BYTES, orderingParam, partitionConds, specByteLength, specToJson,
 } from '../lib/filterSpec';
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
@@ -40,7 +40,9 @@ function opLabel(op) {
 function fmtValues(values) {
   if (!values.length) return '""';
   if (values.length === 1) return `"${values[0]}"`;
-  return values.slice(0, -1).map((v) => `"${v}"`).join(',') + 'or' + `"${values[values.length - 1]}"`;
+  // The separators carry their own spaces. Without them this rendered
+  // `"Paid","Cancelled"or"Pending"` in the filter summary chip.
+  return `${values.slice(0, -1).map((v) => `"${v}"`).join(', ')} or "${values[values.length - 1]}"`;
 }
 
 function likeTest(val, pattern) {
@@ -321,6 +323,56 @@ function EditableCell({ row, col, value }) {
 }
 
 /**
+ * One row, memoised — the reason scrolling a long table stays responsive.
+ *
+ * THE PROBLEM
+ * The rows were built inline in the tbody map, so every render re-created every
+ * one of them. On Paper Review that meant a table of 7,080 reviews across 24
+ * visible columns re-rendering ~170,000 cells each time 50 more arrived, and
+ * again on every unrelated state change: a background refresh, a filter chip, a
+ * checkbox. It gets worse the further you scroll, which is exactly what "it gets
+ * stuck once I've seen all the entries" is.
+ *
+ * WHAT MAKES IT SAFE
+ * React.memo's DEFAULT shallow comparison, deliberately, with no custom
+ * comparator. A comparator that ignored `cols` would be faster still and would be
+ * wrong: a cell renderer is free to close over page state, and UsersPage has one
+ * that does — its Team column resolves a team id through the loaded teams list, so
+ * a row frozen against the previous `cols` would keep rendering "Unassigned" after
+ * the teams arrived. Comparing cols by identity cannot go stale.
+ *
+ * The consequence is that this only pays off for a caller whose `cols` array is
+ * stable, which means useMemo at the call site. Callers that rebuild cols every
+ * render simply miss the memo and behave exactly as before, so nothing regresses;
+ * the two pages that hold thousands of rows do memoise theirs.
+ *
+ * Every other prop is a primitive or a stable callback, see rowClick/toggleRow.
+ */
+const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle }) {
+  return (
+    <tr
+      className={selected ? 'sel' : ''}
+      onClick={onClick ? () => onClick(row) : undefined}
+      style={onClick ? { cursor: 'pointer' } : undefined}
+    >
+      {select ? (
+        <td className="ck" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" className="ck" checked={selected} onChange={() => onToggle(row.id)} aria-label="Select row" />
+        </td>
+      ) : null}
+      {cols.map((c) => {
+        const v = row[c.key];
+        return (
+          <td key={c.key} className={(c.num ? 'num ' : '') + (c.cls || '')}>
+            {c.editOpts && canEdit ? <EditableCell row={row} col={c} value={v} /> : c.cell ? c.cell(v, row) : v == null || v === '' ? <span className="dim">—</span> : v}
+          </td>
+        );
+      })}
+    </tr>
+  );
+});
+
+/**
  * DataTable operates in one of two modes.
  *
  * IN-MEMORY (default): the caller passes a fully-loaded `rows` array and every
@@ -418,7 +470,10 @@ export default function DataTable({
     writeStored(storeId, { conds, sort, hidden });
   }, [storeId, conds, sort, hidden]);
 
-  const activeCols = cols.filter((c) => !hidden.has(c.key));
+  // Memoised because it is a prop on every rendered row: a fresh array here would
+  // give each row a changed prop on every render and defeat the memo on Row. This
+  // only holds as far as the caller's `cols` is itself stable — see Row.
+  const activeCols = useMemo(() => cols.filter((c) => !hidden.has(c.key)), [cols, hidden]);
   const serverMode = !!(server && server.resource);
 
   // ── Server-side spec + ordering ───────────────────────────────────────────
@@ -813,12 +868,31 @@ export default function DataTable({
   }, [sentinelEl, canLoadMore, loadMore, loadedCount]);
 
   function resetPaging() { setPage(1); setShown(pageSize); }
-  function toggleRow(id) {
+  /**
+   * Stable across renders, both of them, because every rendered row holds them as
+   * props and a new identity on either would defeat the memo on Row and re-render
+   * the whole table.
+   *
+   * toggleRow reads `selAll` through a ref for the same reason. As a dependency it
+   * would change identity the moment "select all" was used, which is precisely
+   * when the table is at its largest.
+   */
+  const selAllRef = useRef(selAll);
+  useEffect(() => { selAllRef.current = selAll; }, [selAll]);
+  const toggleRow = useCallback((id) => {
     // Un-ticking one row out of "all 35,690" leaves a selection that is no longer
     // the whole match, so the flag goes with it and the caption stops claiming it.
-    if (selAll) setSelAll(false);
+    if (selAllRef.current) setSelAll(false);
     setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
+  }, []);
+
+  // The caller's onRow reached through a ref, so a page passing an inline arrow —
+  // which is all of them — does not hand every row a new prop on every render.
+  // Called through the ref rather than captured, so it is always the current
+  // handler and cannot go stale.
+  const onRowRef = useRef(onRow);
+  useEffect(() => { onRowRef.current = onRow; }, [onRow]);
+  const rowClick = useCallback((row) => { if (onRowRef.current) onRowRef.current(row); }, []);
 
   function clearSelection() { setSel(new Set()); setSelAll(false); setSelError(''); }
 
@@ -1097,21 +1171,16 @@ export default function DataTable({
               </thead>
               <tbody>
                 {pageRows.map((r) => (
-                  <tr key={r.id} className={sel.has(r.id) ? 'sel' : ''} onClick={() => onRow && onRow(r)} style={onRow ? { cursor: 'pointer' } : undefined}>
-                    {select ? (
-                      <td className="ck" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" className="ck" checked={sel.has(r.id)} onChange={() => toggleRow(r.id)} aria-label="Select row" />
-                      </td>
-                    ) : null}
-                    {activeCols.map((c) => {
-                      const v = r[c.key];
-                      return (
-                        <td key={c.key} className={(c.num ? 'num ' : '') + (c.cls || '')}>
-                          {c.editOpts && canEdit ? <EditableCell row={r} col={c} value={v} /> : c.cell ? c.cell(v, r) : v == null || v === '' ? <span className="dim">—</span> : v}
-                        </td>
-                      );
-                    })}
-                  </tr>
+                  <Row
+                    key={r.id}
+                    row={r}
+                    cols={activeCols}
+                    selected={sel.has(r.id)}
+                    select={select}
+                    canEdit={canEdit}
+                    onClick={onRow ? rowClick : null}
+                    onToggle={toggleRow}
+                  />
                 ))}
               </tbody>
             </table>

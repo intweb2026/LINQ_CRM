@@ -38,24 +38,6 @@ NEW_MODULES = ["paper_review", "proposal_submission"]
 FRONTEND = Path(settings.BASE_DIR).parent / "frontend" / "src"
 
 
-def _js_string_list(path, variable):
-    """
-    Pull the string literals out of a `const NAME = [...]` array in a JS file.
-
-    Deliberately crude — it only has to cope with the flat lists of quoted
-    module keys these three files actually contain. Returns None when the file
-    or the variable is absent so the caller can skip rather than fail on a
-    backend-only checkout.
-    """
-    if not path.exists():
-        return None
-    src = path.read_text(encoding="utf-8")
-    m = re.search(r"const\s+" + re.escape(variable) + r"\s*=\s*\[(.*?)\]", src, re.S)
-    if not m:
-        return None
-    return re.findall(r"[\"']([a-z_]+)[\"']", m.group(1))
-
-
 class PipelineModuleRegistrationTests(TestCase):
     def test_both_modules_are_registered(self):
         for module in NEW_MODULES:
