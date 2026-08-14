@@ -20,13 +20,13 @@ import json
 from datetime import date
 from urllib.parse import urlencode
 
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
 
 from book_event.models import BookEvent
 from webhooks.models import WebhookApiKey, WebhookLog
 from webhooks.tests_event_resolution import make_event
-from webhooks.utils import QUERY_KEY_ALIASES
+from webhooks.utils import QUERY_KEY_ALIASES, key_carrier_name
 from webhooks.views import WebhookIngestionView
 
 
@@ -199,6 +199,84 @@ class QueryKeyAliasTests(TestCase):
 
 
 @override_settings(WEBHOOK_SECRET_KEY="")
+class AliasHeaderTests(TestCase):
+    """
+    The same alias set is accepted as a HEADER name, not only as a query
+    parameter. The event websites hold their key in a vendor-named field and we
+    do not know which carrier they use, so both have to work as shipped.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        make_event("TST - PM", web_bookings=True, event_date=date(2026, 2, 11))
+        cls.raw_key = WebhookApiKey.generate_key()
+        WebhookApiKey.objects.create(name="url-test", api_key=cls.raw_key)
+
+    def test_a_zoho_flow_key_header_authenticates_as_a_header(self):
+        resp = self.client.get(reverse("webhook-ingest"), HTTP_ZOHO_FLOW_KEY=self.raw_key)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json().get("transport"), "header")
+
+    def test_a_zapikey_header_authenticates(self):
+        resp = self.client.post(
+            reverse("webhook-ingest"), data=payload("INV-HDR-ZAPI"),
+            content_type="application/json", HTTP_ZAPIKEY=self.raw_key,
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+    def test_the_canonical_header_wins_over_another_alias_header(self):
+        """X-CRM-API-KEY is resolved before anything else is consulted."""
+        resp = self.client.post(
+            reverse("webhook-ingest"), data=payload("INV-HDR-PREC"),
+            content_type="application/json",
+            HTTP_X_CRM_API_KEY=self.raw_key,
+            HTTP_ZOHO_FLOW_KEY="crm_live_garbage",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+    def test_a_garbage_canonical_header_is_not_rescued_by_an_alias_header(self):
+        resp = self.client.post(
+            reverse("webhook-ingest"), data=payload("INV-HDR-PREC-2"),
+            content_type="application/json",
+            HTTP_X_CRM_API_KEY="crm_live_garbage",
+            HTTP_ZOHO_FLOW_KEY=self.raw_key,
+        )
+        self.assertEqual(resp.status_code, 401, resp.content)
+
+    def test_two_alias_headers_resolve_by_sorted_name_every_run(self):
+        """
+        Determinism, not preference. HTTP_CRM_KEY sorts before
+        HTTP_ZOHO_FLOW_KEY, so the same header must win on every run rather
+        than whichever the environ happened to yield first.
+        """
+        other = WebhookApiKey.generate_key()
+        WebhookApiKey.objects.create(name="zeta-key", api_key=other)
+
+        seen = set()
+        for _ in range(5):
+            resp = self.client.get(
+                reverse("webhook-ingest"),
+                HTTP_CRM_KEY=self.raw_key, HTTP_ZOHO_FLOW_KEY=other,
+            )
+            self.assertEqual(resp.status_code, 200, resp.content)
+            seen.add(resp.json().get("key_name"))
+
+        self.assertEqual(seen, {"url-test"})
+
+    def test_key_carrier_name_reports_the_name_the_key_arrived_under(self):
+        """Diagnostic only. Nothing authenticates on the carrier name."""
+        rf = RequestFactory()
+        self.assertEqual(
+            key_carrier_name(rf.get("/", HTTP_ZOHO_FLOW_KEY=self.raw_key)),
+            "ZOHO_FLOW_KEY",
+        )
+        self.assertEqual(
+            key_carrier_name(rf.get(f"/?zapikey={self.raw_key}")), "zapikey",
+        )
+        self.assertEqual(key_carrier_name(rf.get("/")), "")
+
+
+@override_settings(WEBHOOK_SECRET_KEY="")
 class QueryKeyRejectionTests(TestCase):
     """A bad key in a URL is rejected exactly as a bad key in a header is."""
 
@@ -229,6 +307,66 @@ class QueryKeyRejectionTests(TestCase):
 
 
 @override_settings(WEBHOOK_SECRET_KEY="")
+class AuthDebugOnRejectionTests(TestCase):
+    """
+    A 401 records the NAMES a sender used, so an integration that put its key
+    somewhere we do not read can be diagnosed from the row instead of by asking
+    the sender what they sent. Names only, from both carriers, never values.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        make_event("TST - PM", web_bookings=True, event_date=date(2026, 2, 11))
+
+    def _debug_from(self, url, **headers):
+        self.client.post(url, data=payload("INV-DEBUG"),
+                         content_type="application/json", **headers)
+        return WebhookLog.objects.get().response["_auth_debug"]
+
+    def test_it_lists_the_query_parameter_names_that_were_sent(self):
+        """
+        The names a sender chose are stored nowhere else on the row, because the
+        query string never reaches the headers field.
+        """
+        debug = self._debug_from(ingest_url(zapi_token="crm_live_wrong", source="site"))
+        self.assertEqual(debug["query_param_names"], ["source", "zapi_token"])
+
+    def test_it_lists_the_header_names_that_were_sent(self):
+        debug = self._debug_from(reverse("webhook-ingest"),
+                                 HTTP_X_VENDOR_TOKEN="crm_live_wrong")
+        self.assertIn("X_VENDOR_TOKEN", debug["header_names"])
+
+    def test_key_shaped_value_seen_is_true_for_a_header_and_for_a_query_value(self):
+        header_debug = self._debug_from(reverse("webhook-ingest"),
+                                        HTTP_X_VENDOR_TOKEN="crm_live_wrong")
+        self.assertTrue(header_debug["key_shaped_value_seen"])
+
+        WebhookLog.objects.all().delete()
+
+        query_debug = self._debug_from(ingest_url(zapi_token="crm_live_wrong"))
+        self.assertTrue(query_debug["key_shaped_value_seen"])
+
+    def test_key_shaped_value_seen_is_false_when_nothing_looks_like_a_key(self):
+        debug = self._debug_from(ingest_url(token="not-a-key-at-all"))
+        self.assertFalse(debug["key_shaped_value_seen"])
+
+    def test_no_value_from_either_carrier_is_written_to_the_row(self):
+        """The whole row, serialised, must not contain the value that was sent."""
+        secret = WebhookApiKey.generate_key()
+        self.client.post(
+            ingest_url(zoho_flow_key=secret), data=payload("INV-DEBUG-2"),
+            content_type="application/json", HTTP_X_VENDOR_TOKEN=secret,
+        )
+        log = WebhookLog.objects.get()
+        serialised = json.dumps({
+            "source": log.source, "headers": log.headers,
+            "payload": log.payload, "response": log.response,
+            "error_message": log.error_message,
+        })
+        self.assertNotIn(secret, serialised)
+
+
+@override_settings(WEBHOOK_SECRET_KEY="")
 class QueryKeyIsNotStoredTests(TestCase):
     """
     The logs UI is readable by people the key was never shared with, so a key
@@ -256,6 +394,24 @@ class QueryKeyIsNotStoredTests(TestCase):
         self._post()
         log = WebhookLog.objects.get()
         self.assertNotIn(self.raw_key, json.dumps(log.payload))
+
+    def test_a_key_shaped_value_under_an_unknown_header_is_redacted(self):
+        """
+        The safety net. A sender that ships its credential under a header nobody
+        allow-listed is protected on arrival by the SHAPE of the value, while
+        the header NAME survives intact, since the name is exactly what an
+        operator needs in order to learn how that sender transmits its key.
+        """
+        vendor_token = WebhookApiKey.generate_key()
+        self._post(HTTP_X_SOME_VENDOR_TOKEN=vendor_token)
+
+        stored = WebhookLog.objects.get().headers
+        self.assertIn("HTTP_X_SOME_VENDOR_TOKEN", stored)
+        self.assertNotIn(vendor_token, json.dumps(stored))
+        self.assertTrue(
+            stored["HTTP_X_SOME_VENDOR_TOKEN"].endswith("...REDACTED"),
+            stored["HTTP_X_SOME_VENDOR_TOKEN"],
+        )
 
     def test_a_referer_carrying_the_key_is_redacted(self):
         """

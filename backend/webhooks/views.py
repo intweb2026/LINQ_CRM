@@ -35,7 +35,7 @@ from .serializers import (
 from .services import WebhookProcessor
 from .utils import (
     authenticate_request, coerce_form_wrapped_json, extract_api_key,
-    extract_ip, key_transport, safe_headers, unwrap_payload,
+    extract_ip, key_transport, looks_like_a_key, safe_headers, unwrap_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -184,10 +184,31 @@ class WebhookIngestionView(APIView):
             api_key_obj, auth_err = authenticate_request(request)
 
             if auth_err:
+                # NAMES ONLY, never values, from either source.
+                #
+                # Query parameter names are recorded nowhere else on the row.
+                # QUERY_STRING is not an HTTP_ key, so the prefix filter in
+                # safe_headers excludes it, and a sender that put its key under
+                # a parameter name we do not accept therefore leaves no trace of
+                # what that name was. Header names survive the same way even
+                # when the header itself was skipped as a secret. This is what
+                # turns a failed integration into a one-line fix rather than
+                # another round of asking the sender what they sent.
+                auth_debug = {
+                    "header_names": sorted(
+                        k[len("HTTP_"):] for k in request.META if k.startswith("HTTP_")
+                    ),
+                    "query_param_names": sorted(request.query_params.keys()),
+                    "key_shaped_value_seen": (
+                        any(looks_like_a_key(v) for k, v in request.META.items()
+                            if k.startswith("HTTP_"))
+                        or any(looks_like_a_key(v) for v in request.query_params.values())
+                    ),
+                }
                 WebhookLog.objects.create(
                     source=self._stamp_source("", transport),
                     ip_address=ip, payload=data, headers=hdrs,
-                    response={"error": auth_err},
+                    response={"error": auth_err, "_auth_debug": auth_debug},
                     status=WebhookLog.Status.FAILED,
                     http_status=401,
                     error_message=auth_err,
