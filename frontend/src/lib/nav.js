@@ -27,7 +27,7 @@ export const NAV = [
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },
-    { id: 'roles', l: 'Roles', ic: 'shield', mod: 'roles', path: '/roles' },
+    { id: 'roles', l: 'Permissions', ic: 'shield', mod: 'roles', path: '/roles' },
     { id: 'teams', l: 'Teams Management', ic: 'team', mod: 'teams', path: '/teams' },
     { id: 'webhooks', l: 'Webhooks', ic: 'webhook', mod: 'webhooks', path: '/webhooks' },
     { id: 'googlesync', l: 'Google Sync', ic: 'refresh', mod: 'webhooks', path: '/googlesync' },

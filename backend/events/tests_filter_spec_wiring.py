@@ -15,9 +15,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+
 from events.models import Event
 from events.views import EventViewSet
+from teams.models import Team
 
 User = get_user_model()
 
@@ -33,13 +34,13 @@ DERIVED_LABELS = [
 class EventsFilterSpecTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(
-            name="ev_filter_admin", display_label="Ev Filter", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="ev_filter_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="ev_filter", password="x", role="admin", email="evf@iq-hub.com",
         )
-        cls.user.custom_role = cls.role
+        cls.user.team = cls.role
         cls.user.save()
 
     def setUp(self):

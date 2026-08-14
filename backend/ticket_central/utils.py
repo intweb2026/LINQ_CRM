@@ -25,6 +25,46 @@ _WRITABLE_FIELDS = frozenset(
 ) - _AUTO_FIELDS
 _INTERNAL_KEYS = frozenset({"_preserved_created_at", "_modified_time"})
 
+# Fields _coerce_row accepts but that a spreadsheet must not carry: they are set
+# from the request user or by the workflow transitions, and letting an import
+# name them would let a file rewrite who submitted what.
+IMPORT_HIDDEN_FIELDS = frozenset({
+    "created_by", "mr_submitted_by", "mr_submitted_at",
+    "dmd_submitted_by", "dmd_submitted_at",
+    "returned_by", "returned_at", "return_reason",
+})
+
+
+def import_fields():
+    """
+    [(key, label)] — every column Smart Import may map, derived from the model.
+
+    WHY DERIVED AND NOT WRITTEN OUT
+    frontend/src/api/import.js listed 15 ticket fields by hand while _coerce_row
+    accepts every writable column on the model — roughly forty. The twenty-five it
+    omitted (the whole DMD result block, the LX-2 second pass, mined_count,
+    complete_date, status, ticket_type, …) had nowhere to map to, so a Zoho export
+    carrying them imported as an empty shell of a ticket and nothing said so.
+    Reading the model means a column added to Ticket is mappable the day it exists.
+
+    `created_at` is included deliberately: _coerce_row honours it through
+    _preserved_created_at (D15), so an import can carry Zoho's "Added Time"
+    instead of stamping everything with the moment of the upload.
+    """
+    fields = []
+    for f in Ticket._meta.get_fields():
+        if not hasattr(f, "name") or f.auto_created:
+            continue
+        if f.name in IMPORT_HIDDEN_FIELDS or f.name not in _WRITABLE_FIELDS:
+            continue
+        label = str(getattr(f, "verbose_name", f.name) or f.name).strip()
+        fields.append((f.name, label[:1].upper() + label[1:]))
+    # created_at is excluded from _WRITABLE_FIELDS as an auto field, so the loop
+    # above skips it — but the importer DOES read it, through
+    # _preserved_created_at. Appended once, under the name the Zoho export uses.
+    fields.append(("created_at", "Added Time"))
+    return fields
+
 
 def generate_ticket_number():
     """

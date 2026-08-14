@@ -48,6 +48,7 @@ from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
+from accounts.period_filter import PeriodFilterMixin
 from accounts.permissions import IsHPAccount
 from proposal_submission.models import ProposalSubmission
 
@@ -84,7 +85,8 @@ BUSINESS_FIELDS = [
 ]
 
 
-class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet):
+class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
+                         viewsets.ModelViewSet):
     """
     GET    /api/paper-reviews/            — list (paginated, filtered, searchable)
     POST   /api/paper-reviews/            — create (+ Part A proposal, + Part B email)
@@ -104,6 +106,14 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
     serializer_class   = PaperReviewSerializer
     filterset_class    = PaperReviewFilter
 
+    # ?period= presets over the date this module is ABOUT — when the paper was
+    # submitted — falling back to created_at for a row whose submission date was
+    # never filled in. paper_submission_date is nullable (models.py:57), and on a
+    # nullable column alone a window silently hides every blank row; the fallback
+    # keeps those rows datable by when they reached the CRM instead. See
+    # accounts/period_filter.py.
+    period_date_fields = ("paper_submission_date", "created_at")
+
     # StableOrderingFilter appends the pk as a final tiebreaker to EVERY ordering:
     # paper_submission_date is non-unique AND nullable, so without it LIMIT/OFFSET
     # paging both repeats and silently SKIPS rows. Named explicitly so a future
@@ -115,10 +125,29 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
         "speaker_name", "company_name", "email", "event_code", "theme",
         "session_location_on_agenda",
     ]
+    # Every column the table renders EXCEPT the MR-restricted one, so a header
+    # click sorts over all 7,080 rows rather than the fifty on screen. The table
+    # pages server side, and DataTable only offers a header as sortable when the
+    # backend will honour it, so a field missing here is a column that silently
+    # stops sorting.
+    #
+    # internal_footnotes is deliberately absent, and must stay absent.
+    # _reject_mr_query_params answers 400 for ?ordering=internal_footnotes from
+    # anyone outside MR, because a row ORDER over a column leaks what
+    # to_representation strips. Registering it would advertise a sort that works
+    # for two roles and errors for the rest.
+    #
+    # duplicate_count is the Subquery annotation get_queryset attaches, not a
+    # column; OrderingFilter orders by it exactly as it would a real field.
     ordering_fields = [
         "id", "paper_submission_date", "speaker_name", "company_name", "email",
         "proposal_score", "grade", "linkedin_followers", "event_code",
         "created_at", "updated_at",
+        "speaker_email_ref", "research_email_ref", "duplicate_count",
+        "linkedin_speaker", "linkedin_company", "nos",
+        *CRITERIA_FIELDS,
+        "session_location_on_agenda", "feedback_to_speaker",
+        "theme", "proposal_received", "agenda_addition",
     ]
     ordering = ["-paper_submission_date"]
 
@@ -494,6 +523,42 @@ class PaperReviewViewSet(FilterSpecMixin, BulkUpdateMixin, viewsets.ModelViewSet
         because a value nobody has used yet must still be selectable there.
         """
         return Response(self._distinct_option_values())
+
+    @action(detail=False, methods=["get"], url_path="stats")
+    def stats(self, request):
+        """
+        GET /api/paper-reviews/stats/[?period=<key>] — how many reviews the caller
+        can see in the current window, without loading a single one.
+
+        WHY THIS EXISTS
+        The page used to get that number by walking every page of the list and
+        reading `.length`. On this database that is 7,080 rows across 15 requests
+        and roughly 36 MB of JSON, most of it the two long prose columns, fetched
+        before the table could paint a single row. The table now pages server
+        side, so it never holds the whole set and cannot count it; a count is what
+        was actually wanted, so the database answers it directly.
+
+        The window is applied HERE as well as on the list, for the reason
+        TicketViewSet.stats gives. These numbers sit directly above the filtered
+        table and are read together with it, so a header reading "7,080 reviews"
+        over a window showing eleven rows is the same defect as an unfiltered
+        aggregate.
+
+        Scope comes from get_queryset(), so a scoped user counts their own events
+        and nothing else, exactly as their table shows.
+
+        NOT COUNTED HERE: duplicates. `duplicate_count` is a correlated Subquery,
+        so counting the rows with one costs a per row evaluation over the whole
+        table, measured at 389 ms against 13 ms for this. The "Duplicates only"
+        toggle sends ?has_duplicates=true instead and reads its total off the
+        list response it was already paying for.
+        """
+        from accounts.period_filter import apply_period
+
+        qs = self.get_queryset()
+        _, p_from, p_to = self.resolved_period()
+        qs = apply_period(qs, self.period_date_fields, p_from, p_to)
+        return Response({"total": qs.count()})
 
     @action(detail=False, methods=["get"], url_path="permitted_events")
     def permitted_events(self, request):

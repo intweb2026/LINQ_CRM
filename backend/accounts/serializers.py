@@ -4,32 +4,46 @@ accounts/serializers.py
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from events.models import Event
-from .models import CustomRole, RolePermission, CRM_MODULES
+from .models import CRM_MODULES, PERM_ACTIONS, UserPermission
 
 User = get_user_model()
 
 
-class RolePermissionSerializer(serializers.ModelSerializer):
+def team_permission_matrix(team):
+    """
+    {module: {view, create, update, delete}} for a team, every module present.
+
+    Densified deliberately. A sparse map would make the UI read a missing module
+    as a missing ANSWER and have to guess; the answer for a module with no row is
+    "no", and it is stated.
+    """
+    matrix = {m: {a: False for a in PERM_ACTIONS} for m in CRM_MODULES}
+    if team is None:
+        return matrix
+    if team.is_all_access:
+        return {m: {a: True for a in PERM_ACTIONS} for m in CRM_MODULES}
+    for row in team.permissions.all():
+        if row.module in matrix:
+            matrix[row.module] = {a: bool(getattr(row, f"can_{a}")) for a in PERM_ACTIONS}
+    return matrix
+
+
+class UserPermissionSerializer(serializers.ModelSerializer):
+    """
+    One person's delta against their team, per module.
+
+    Every cell is nullable and null means INHERIT, so `allow_null` is not
+    politeness here — without it a cell the caller left alone would be rejected
+    as required, and the only expressible states would be grant and revoke.
+    """
+    can_view   = serializers.BooleanField(allow_null=True, required=False)
+    can_create = serializers.BooleanField(allow_null=True, required=False)
+    can_update = serializers.BooleanField(allow_null=True, required=False)
+    can_delete = serializers.BooleanField(allow_null=True, required=False)
+
     class Meta:
-        model  = RolePermission
+        model  = UserPermission
         fields = ["module", "can_view", "can_create", "can_update", "can_delete"]
-
-
-class CustomRoleSerializer(serializers.ModelSerializer):
-    user_count  = serializers.SerializerMethodField()
-    permissions = RolePermissionSerializer(many=True, read_only=True)
-
-    class Meta:
-        model  = CustomRole
-        fields = [
-            "id", "name", "display_label", "color", "description",
-            "is_all_access", "is_system_role", "user_count", "permissions",
-            "created_at",
-        ]
-        read_only_fields = ["created_at", "is_system_role"]
-
-    def get_user_count(self, obj):
-        return obj.users.count()
 
 
 class EventMiniSerializer(serializers.ModelSerializer):
@@ -49,15 +63,21 @@ class UserListSerializer(serializers.ModelSerializer):
     # required — the field is DROPPED FROM THE PAYLOAD ALTOGETHER rather than
     # emitted as null. So the row shape varied per user: everyone with a team had
     # `team_id`, everyone without simply had no such key, and the same for
-    # custom_role_id, custom_role_label and mapped_lead_id. allow_null turns each
-    # of those into an explicit null, so the shape is the same for every row.
+    # mapped_lead_id. allow_null turns each of those into an explicit null, so
+    # the shape is the same for every row.
     team_name       = serializers.ReadOnlyField(source='team.name', allow_null=True)
     team_id         = serializers.ReadOnlyField(source='team.id', allow_null=True)
     assigned_events_count = serializers.IntegerField(source='assigned_events.count', read_only=True)
     mapped_lead_id  = serializers.ReadOnlyField(source='mapped_lead.id', allow_null=True)
     mapped_lead_name = serializers.SerializerMethodField()
-    custom_role_id    = serializers.ReadOnlyField(source='custom_role.id', allow_null=True)
-    custom_role_label = serializers.ReadOnlyField(source='custom_role.display_label', allow_null=True)
+    # The team's grid, this person's deltas, and what the two add up to. All
+    # three, because the user form has to draw a checkbox that says "on, because
+    # your team says so" differently from "on, because someone ticked it here" —
+    # and the effective matrix alone cannot tell them apart.
+    team_permissions      = serializers.SerializerMethodField()
+    permission_overrides  = UserPermissionSerializer(many=True, read_only=True)
+    effective_permissions = serializers.SerializerMethodField()
+    has_all_access        = serializers.ReadOnlyField()
 
     class Meta:
         model  = User
@@ -65,7 +85,9 @@ class UserListSerializer(serializers.ModelSerializer):
             "id", "username", "email", "first_name", "last_name", "full_name",
             "role", "status", "is_active", "assigned_events", "assigned_events_count",
             "date_joined", "last_login", "team_id", "team_name", "is_team_lead",
-            "mapped_lead_id", "mapped_lead_name", "custom_role_id", "custom_role_label"
+            "mapped_lead_id", "mapped_lead_name",
+            "team_permissions", "permission_overrides", "effective_permissions",
+            "has_all_access",
         ]
         read_only_fields = ["id", "date_joined", "last_login"]
 
@@ -74,6 +96,12 @@ class UserListSerializer(serializers.ModelSerializer):
 
     def get_mapped_lead_name(self, obj):
         return obj.mapped_lead.get_full_name() or obj.mapped_lead.username if obj.mapped_lead else None
+
+    def get_team_permissions(self, obj):
+        return team_permission_matrix(obj.team if obj.team_id else None)
+
+    def get_effective_permissions(self, obj):
+        return obj.effective_permissions()
 
 
 class UserWriteSerializer(serializers.ModelSerializer):
@@ -86,7 +114,6 @@ class UserWriteSerializer(serializers.ModelSerializer):
     )
     team_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
     mapped_lead_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
-    custom_role_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
     # Sign-in is by email (accounts/views.py RequestOTPView), so an account
     # without one cannot be used at all. AbstractUser leaves email optional and
     # non-unique, which let two accounts share an address — and RequestOTPView's
@@ -99,7 +126,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
         fields = [
             "username", "email", "first_name", "last_name",
             "password", "role", "status", "assigned_event_ids", "team_id", "is_team_lead",
-            "mapped_lead_id", "custom_role_id"
+            "mapped_lead_id",
         ]
 
     def validate_email(self, value):
@@ -125,7 +152,6 @@ class UserWriteSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         event_ids = validated_data.pop("assigned_event_ids", [])
         team_id = validated_data.pop("team_id", None)
-        custom_role_id = validated_data.pop("custom_role_id", None)
         mapped_lead_id = validated_data.pop("mapped_lead_id", None)
         password  = validated_data.pop("password", None)
         user = User(**validated_data)
@@ -141,8 +167,6 @@ class UserWriteSerializer(serializers.ModelSerializer):
             user.mapped_lead = User.objects.filter(id=mapped_lead_id).first()
         if password:
             user.set_password(password)
-        if custom_role_id is not None:
-            user.custom_role = CustomRole.objects.filter(id=custom_role_id).first() if custom_role_id else None
         user.save()
         if event_ids:
             user.assigned_events.set(Event.objects.filter(id__in=event_ids))
@@ -161,7 +185,6 @@ class UserWriteSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         event_ids = validated_data.pop("assigned_event_ids", None)
         team_id = validated_data.pop("team_id", None)
-        custom_role_id = validated_data.pop("custom_role_id", None)
         mapped_lead_id = validated_data.pop("mapped_lead_id", None)
         password  = validated_data.pop("password", None)
 
@@ -181,9 +204,6 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
         if mapped_lead_id is not None:
             instance.mapped_lead = User.objects.filter(id=mapped_lead_id).first() if mapped_lead_id else None
-
-        if custom_role_id is not None:
-            instance.custom_role = CustomRole.objects.filter(id=custom_role_id).first() if custom_role_id else None
 
         if password:
             instance.set_password(password)

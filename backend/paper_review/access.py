@@ -30,17 +30,16 @@ MR_ROLES = ("market_research",)
 def has_full_visibility(user) -> bool:
     """
     The three bypasses this codebase already recognises: the admin role, the HP
-    account (accounts/crm_permissions.py:53), and any custom role flagged
-    is_all_access (crm_permissions.py:62).
+    account, and a TEAM flagged is_all_access.
+
+    The third used to be a per-user CustomRole. It now lives on the team, and
+    User.has_all_access covers both it and the HP account.
     """
     if user is None or not getattr(user, "is_authenticated", False):
         return False
-    if getattr(user, "username", None) == "HP":
-        return True
     if getattr(user, "is_admin", False):
         return True
-    custom_role = getattr(user, "custom_role", None)
-    return bool(custom_role is not None and getattr(custom_role, "is_all_access", False))
+    return bool(getattr(user, "has_all_access", False))
 
 
 def may_see_mr_fields(user) -> bool:

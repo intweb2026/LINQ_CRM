@@ -48,14 +48,14 @@ class IsAdminRole(BasePermission):
         if not (request.user and request.user.is_authenticated):
             return False
         # HP bypasses everything
-        if request.user.username == "HP":
+        if request.user.username == HP_USERNAME:
             return True
         # Standard admin role check
         if request.user.is_admin:
             return True
-        # Custom role with full access also qualifies
-        custom_role = getattr(request.user, "custom_role", None)
-        return bool(custom_role and custom_role.is_all_access)
+        # A team flagged is_all_access also qualifies. This read a per-user
+        # CustomRole until access moved onto the team.
+        return bool(request.user.has_all_access)
     
 
 class IsSalesOrAdmin(BasePermission):

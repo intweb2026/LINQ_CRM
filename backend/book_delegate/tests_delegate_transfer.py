@@ -29,11 +29,12 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole, RolePermission
+
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
 from events.models import Event
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -47,13 +48,13 @@ class TransferTestBase(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.all_access = CustomRole.objects.create(
-            name="xfr_all", display_label="Transfer All", is_all_access=True,
+        cls.all_access = Team.objects.create(
+            name="xfr_all", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="xfr_admin", password="x", role="admin", email="xa@iq-hub.com",
         )
-        cls.user.custom_role = cls.all_access
+        cls.user.team = cls.all_access
         cls.user.save()
 
         cls.rep = User.objects.create_user(
@@ -352,17 +353,17 @@ class TransferPermissionTests(TransferTestBase):
 
     def setUp(self):
         super().setUp()
-        self.role = CustomRole.objects.create(
-            name="xfr_create_only", display_label="Create Only",
+        self.role = Team.objects.create(
+            name="xfr_create_only",
         )
-        RolePermission.objects.create(
-            custom_role=self.role, module="bookings",
+        TeamPermission.objects.create(
+            team=self.role, module="bookings",
             can_view=True, can_create=True, can_update=False, can_delete=False,
         )
         self.create_only = User.objects.create_user(
             username="xfr_create", password="x", role="sales", email="xc@iq-hub.com",
         )
-        self.create_only.custom_role = self.role
+        self.create_only.team = self.role
         self.create_only.save()
         self.create_only.assigned_events.add(self.src_event, self.dst_event)
 

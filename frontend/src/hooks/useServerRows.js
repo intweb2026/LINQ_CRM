@@ -28,7 +28,7 @@ import { fetchPage, fetchFilterSchema } from '../api/client';
 
 const DEBOUNCE_MS = 350;
 
-export function useServerRows({ resource, page, pageSize, ordering, filterSpec, search, enabled = true, hasStoredSpec = false }) {
+export function useServerRows({ resource, page, pageSize, ordering, filterSpec, search, paramsJson = null, enabled = true, hasStoredSpec = false }) {
   const [schema, setSchema] = useState(null);
   const [schemaFailed, setSchemaFailed] = useState(false);
   const [rows, setRows] = useState([]);
@@ -66,7 +66,10 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
   // Identity of the request the current params describe. Stamped onto whatever
   // rows come back, so a caller can tell rows that answer THIS request from rows
   // still sitting in state from the last one.
-  const reqKey = `${page}|${pageSize}|${ordering || ''}|${effectiveSpec || ''}|${search || ''}`;
+  // paramsJson is a JSON STRING, not an object, precisely so it belongs in this
+  // key and in the effect's dep list by value. An object would be a new identity
+  // every render and the effect would refetch without end.
+  const reqKey = `${page}|${pageSize}|${ordering || ''}|${effectiveSpec || ''}|${search || ''}|${paramsJson || ''}`;
 
   /**
    * Set by refetch({ quiet: true }) and consumed by the next run of the effect
@@ -89,7 +92,10 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
     let cancelled = false;
     if (!quiet) setLoading(true);
     const timer = setTimeout(() => {
-      fetchPage(resource, { page, pageSize, ordering, filterSpec: effectiveSpec, search })
+      fetchPage(resource, {
+        page, pageSize, ordering, filterSpec: effectiveSpec, search,
+        params: paramsJson ? JSON.parse(paramsJson) : undefined,
+      })
         .then((res) => {
           if (cancelled) return;
           setRows(res.results);
@@ -110,7 +116,7 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
     // reqKey is derived from the params already listed here; including it would
     // only re-trigger the fetch on the same changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resource, enabled, gateOpen, page, pageSize, ordering, effectiveSpec, search, reloadKey]);
+  }, [resource, enabled, gateOpen, page, pageSize, ordering, effectiveSpec, search, paramsJson, reloadKey]);
 
   const refetch = useCallback((opts) => {
     quietRef.current = !!(opts && opts.quiet);

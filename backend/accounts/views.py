@@ -4,14 +4,18 @@ accounts/views.py
 User management — admin only.
 """
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .permissions import IsAdminRole
-from .serializers import UserListSerializer, UserWriteSerializer, AssignEventsSerializer, CustomRoleSerializer, RolePermissionSerializer
-from .models import CustomRole, RolePermission, CRM_MODULES, role_from_team_name
+from .serializers import (
+    UserListSerializer, UserWriteSerializer, AssignEventsSerializer,
+    UserPermissionSerializer, team_permission_matrix,
+)
+from .models import CRM_MODULES, PERM_ACTIONS, PERM_FIELDS, UserPermission, role_from_team_name
 from .crm_permissions import crm_permission
 
 from rest_framework.authtoken.views import ObtainAuthToken
@@ -25,6 +29,48 @@ from datetime import timedelta
 from .models import OTPToken
 
 User = get_user_model()
+
+
+def _clean_permission_rows(items, allow_null=False):
+    """
+    Validate a permission payload and return ({module: {can_*: value}}, error).
+
+    Shared by the team grid and the per-user deltas so one payload shape is
+    parsed in one place. `allow_null` is the difference between them: a team cell
+    is a plain yes/no, while a user cell has a third state, null for inherit,
+    which must survive rather than being coerced to False. bool(None) is False,
+    so a single shared bool() cast here would silently turn every inherit into a
+    revoke — the whole point of the delta, lost at the boundary.
+
+    An unknown or duplicated module fails the WHOLE request. A partially applied
+    permission change is worse than a rejected one.
+    """
+    if not isinstance(items, list):
+        return None, "permissions must be a list."
+
+    valid = set(CRM_MODULES)
+    cleaned = {}
+    for item in items:
+        if not isinstance(item, dict):
+            return None, "Each permission entry must be an object."
+        module = item.get("module")
+        if module not in valid:
+            return None, f"Unknown module: {module}"
+        if module in cleaned:
+            return None, f"Duplicate module: {module}"
+        cells = {}
+        for field in PERM_FIELDS:
+            raw = item.get(field, None if allow_null else False)
+            if raw is None and allow_null:
+                cells[field] = None
+            elif isinstance(raw, bool):
+                cells[field] = raw
+            elif raw is None:
+                cells[field] = False
+            else:
+                return None, f"{module}.{field} must be true, false or null."
+        cleaned[module] = cells
+    return cleaned, None
 
 
 class RequestOTPView(APIView):
@@ -158,7 +204,7 @@ class UserViewSet(viewsets.ModelViewSet):
     """CRUD + event assignment. Write actions require users-module permission."""
     permission_classes = [crm_permission("users")]
     queryset = User.objects.prefetch_related("assigned_events").order_by("-date_joined")
-    filterset_fields = ["role", "status", "team", "custom_role"]
+    filterset_fields = ["role", "status", "team"]
     search_fields = ["username", "first_name", "last_name", "email"]
 
     def get_permissions(self):
@@ -172,6 +218,12 @@ class UserViewSet(viewsets.ModelViewSet):
             "my_permissions", "role_stats", "sync_roles",
         ):
             return [IsAuthenticated()]
+        # Deciding what someone MAY DO is gated on `roles`, the same right that
+        # governs a team's grid — not on `users`, which is about their name and
+        # their team. Set here rather than on the @action, because this override
+        # replaces permission_classes wholesale and would ignore it there.
+        if self.action == "set_permissions":
+            return [crm_permission("roles")()]
         return [crm_permission("users")()]
 
     def get_serializer_class(self):
@@ -378,82 +430,59 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="my-permissions",
             permission_classes=[IsAuthenticated])
     def my_permissions(self, request):
-        """GET /api/users/my-permissions/ — returns the current user's full permission matrix."""
+        """
+        GET /api/users/my-permissions/ — the caller's own effective matrix.
+
+        Team grid plus their own deltas, resolved once in
+        User.effective_permissions(). The response shape is unchanged, so the
+        frontend's SessionContext keeps reading it as it did.
+        """
         user = request.user
+        return Response({
+            "is_all_access": user.has_all_access,
+            "modules": user.effective_permissions(),
+        })
 
-        # HP gets full access to everything
-        if user.username == "HP":
-            all_perms = {m: {"view": True, "create": True, "update": True, "delete": True} for m in CRM_MODULES}
-            return Response({"is_all_access": True, "modules": all_perms})
-
-        custom_role = getattr(user, "custom_role", None)
-        if not custom_role:
-            return Response({"is_all_access": False, "modules": {}})
-
-        if custom_role.is_all_access:
-            all_perms = {m: {"view": True, "create": True, "update": True, "delete": True} for m in CRM_MODULES}
-            return Response({"is_all_access": True, "modules": all_perms})
-
-        modules = {}
-        for perm in custom_role.permissions.all():
-            modules[perm.module] = {
-                "view":   perm.can_view,
-                "create": perm.can_create,
-                "update": perm.can_update,
-                "delete": perm.can_delete,
-            }
-        return Response({"is_all_access": False, "modules": modules})
-
-
-class CustomRoleViewSet(viewsets.ModelViewSet):
-    """Admin-only CRUD for roles."""
-    permission_classes = [IsAdminRole]
-    queryset           = CustomRole.objects.prefetch_related("permissions").all()
-    serializer_class   = CustomRoleSerializer
-
-    def destroy(self, request, *args, **kwargs):
-        """Allow deletion of any role. Users assigned to it will have custom_role set to NULL."""
-        return super().destroy(request, *args, **kwargs)
-
-    @action(detail=True, methods=["put"], url_path="permissions")
+    @action(detail=True, methods=["get", "put"], url_path="permissions")
     def set_permissions(self, request, pk=None):
         """
-        PUT /api/roles/{id}/permissions/
-        Body: [{"module": "events", "can_view": true, "can_create": false, ...}, ...]
-        Replaces all permissions for this role.
+        GET/PUT /api/users/{id}/permissions/ — this person's DELTA from their team.
+
+        Body: {"permissions": [{"module": "events", "can_view": true,
+                                "can_create": null, ...}, ...]}
+
+        null means INHERIT and is the default state of every cell. A module whose
+        four cells are all null is not stored — an empty override row and no row
+        mean the same thing, and keeping one would leave rows behind that read as
+        "this person was singled out" when nobody was.
+
+        Gated on the `roles` module, not `users`: deciding what somebody may do
+        is a different job from editing their name, and it is the same right that
+        governs a team's grid.
         """
-        role = self.get_object()
+        user = self.get_object()
+
+        if request.method == "GET":
+            return Response({
+                "team_permissions": team_permission_matrix(user.team if user.team_id else None),
+                "permission_overrides": UserPermissionSerializer(
+                    user.permission_overrides.all(), many=True).data,
+                "effective_permissions": user.effective_permissions(),
+            })
+
         items = request.data if isinstance(request.data, list) else request.data.get("permissions", [])
+        cleaned, error = _clean_permission_rows(items, allow_null=True)
+        if error:
+            return Response({"detail": error}, status=400)
 
-        # Validate
-        valid_modules = set(CRM_MODULES)
-        seen = set()
-        for item in items:
-            m = item.get("module")
-            if m not in valid_modules:
-                return Response({"detail": f"Unknown module: {m}"}, status=400)
-            if m in seen:
-                return Response({"detail": f"Duplicate module: {m}"}, status=400)
-            seen.add(m)
+        with transaction.atomic():
+            user.permission_overrides.all().delete()
+            UserPermission.objects.bulk_create([
+                UserPermission(user=user, module=module, **cells)
+                for module, cells in cleaned.items()
+                # All-null carries no information; see the docstring.
+                if any(v is not None for v in cells.values())
+            ])
 
-        # Upsert permissions
-        for item in items:
-            RolePermission.objects.update_or_create(
-                custom_role=role,
-                module=item["module"],
-                defaults={
-                    "can_view":   bool(item.get("can_view",   False)),
-                    "can_create": bool(item.get("can_create", False)),
-                    "can_update": bool(item.get("can_update", False)),
-                    "can_delete": bool(item.get("can_delete", False)),
-                },
-            )
-
-        # If is_all_access changed, update it
-        if "is_all_access" in request.data:
-            role.is_all_access = bool(request.data["is_all_access"])
-            role.save(update_fields=["is_all_access"])
-
-        # Return updated role
-        role.refresh_from_db()
-        return Response(CustomRoleSerializer(role).data)
+        user._effective_permissions = None
+        return Response(UserListSerializer(user, context={"request": request}).data)

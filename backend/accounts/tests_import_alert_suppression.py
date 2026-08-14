@@ -30,6 +30,7 @@ from django.core import mail
 from django.test import override_settings
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
+from teams.models import Team
 
 User = get_user_model()
 
@@ -43,20 +44,19 @@ INVOICES_IMPORT = "/api/invoices/bulk_import/"
 def _all_access_user(username="importer"):
     """
     Both viewsets are guarded by crm_permission(...), which resolves through
-    User.custom_role. An all-access role sidesteps per-module naming entirely.
+    User.team. An all-access role sidesteps per-module naming entirely.
     """
-    from accounts.models import CustomRole
 
-    role, _ = CustomRole.objects.get_or_create(
+    role, _ = Team.objects.get_or_create(
         name="test-all-access",
-        defaults={"display_label": "Test All Access", "is_all_access": True},
+        defaults={"is_all_access": True},
     )
     user = User.objects.create_user(
         username=username, password="testpass123", role=User.Role.ADMIN,
         email=f"{username}@example.com",
     )
-    user.custom_role = role
-    user.save(update_fields=["custom_role"])
+    user.team = role
+    user.save(update_fields=["team"])
     Token.objects.create(user=user)
     return user
 

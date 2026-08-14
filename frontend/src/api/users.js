@@ -2,6 +2,32 @@
 // UserListSerializer / UserWriteSerializer, and accounts/views.py for the
 // extra actions below).
 import { http, fetchAllPages } from './client';
+import { toMatrix, emptyMatrix } from './teams';
+import { ALL_MODULES, PERM_ACTIONS } from '../lib/constants';
+
+/**
+ * The stored deltas, as a dense {module: {action: true|false|null}} map.
+ *
+ * null is the third state and it is the DEFAULT one: inherit whatever the team
+ * says, now and after the team changes. Only a real true or false is an
+ * exception. Collapsing null to false here would turn every untouched cell into
+ * a revoke the moment the form saved.
+ */
+function overridesToMatrix(rows) {
+  const m = {};
+  ALL_MODULES.forEach((k) => {
+    m[k] = {};
+    PERM_ACTIONS.forEach((a) => { m[k][a] = null; });
+  });
+  (rows || []).forEach((row) => {
+    if (!m[row.module]) return;
+    PERM_ACTIONS.forEach((a) => {
+      const v = row[`can_${a}`];
+      m[row.module][a] = v === null || v === undefined ? null : !!v;
+    });
+  });
+  return m;
+}
 
 function toFrontend(u) {
   return {
@@ -22,8 +48,14 @@ function toFrontend(u) {
     events_count: u.assigned_events_count || 0,
     assigned_events: u.assigned_events || [],
     last_login: u.last_login,
-    custom_role_id: u.custom_role_id,
-    custom_role_label: u.custom_role_label,
+    has_all_access: !!u.has_all_access,
+    // Three matrices, because the user form has to draw a cell that is on
+    // BECAUSE OF THE TEAM differently from one somebody ticked for this person.
+    // `effective` alone cannot tell them apart, and `overrides` alone cannot say
+    // what a cleared cell would fall back to.
+    team_permissions: toMatrix(u.team_permissions),
+    effective_permissions: toMatrix(u.effective_permissions),
+    permission_overrides: overridesToMatrix(u.permission_overrides),
   };
 }
 
@@ -80,6 +112,38 @@ export function inviteByEmail(emails, role, teamId) {
 export function create(payload) {
   return http.post('users/', toBackend(payload)).then((r) => toFrontend(r.data));
 }
+
+/**
+ * Save one person's exceptions, given the grid the form is SHOWING.
+ *
+ * The form works in effective terms — a checkbox is either ticked or it is not —
+ * and the delta is derived here by comparing against the team. That direction
+ * matters:
+ *
+ *   * a cell matching the team is sent as null, so it goes back to inheriting.
+ *     Tick something on, then off again, and the exception disappears rather
+ *     than lingering as an explicit "no" that happens to agree today;
+ *   * a cell differing from the team is sent as the value the user chose, which
+ *     is a grant when the team says no and a revoke when the team says yes.
+ *
+ * The alternative — storing the resolved matrix — would freeze each person at
+ * the moment they were last edited, and the next widening of their team would
+ * pass them by.
+ */
+export function savePermissions(id, desired, teamMatrix) {
+  const rows = ALL_MODULES.map((module) => {
+    const want = desired[module] || {};
+    const team = (teamMatrix || {})[module] || {};
+    const row = { module };
+    PERM_ACTIONS.forEach((a) => {
+      row[`can_${a}`] = !!want[a] === !!team[a] ? null : !!want[a];
+    });
+    return row;
+  });
+  return http.put(`users/${id}/permissions/`, { permissions: rows }).then((r) => toFrontend(r.data));
+}
+
+export { emptyMatrix };
 
 export function remove(id) {
   return http.delete(`users/${id}/`).then(() => true);

@@ -11,7 +11,29 @@ import { fetchAllPages, http } from './client';
 // (config/pagination.py), so reading `results` off page 1 silently returns the
 // first 50 rows and the table reads as "there are only 50 reviews" with nothing
 // indicating more exist. Same fix proposalSubmission.js's own comment documents.
-export const list = () => fetchAllPages('paper-reviews/');
+// `period` is an optional DASH_PERIODS key, applied by the server over
+// paper_submission_date falling back to created_at — see
+// backend/accounts/period_filter.py. Narrowing here rather than in the browser is
+// what makes the window worth having on this page: it is a fetchAllPages walk, so
+// a 7-day window is 1 request instead of 8.
+//
+// NO LONGER USED BY THE TABLE, and should not be again at this size. The page
+// walked every page through this and it cost 15 sequential requests and roughly
+// 36 MB of JSON before a single row could render — the wait, and the empty table
+// during it. PaperReviewPage passes DataTable a `server` prop instead, so Django
+// filters, orders and pages, and the browser holds fifty rows at a time. Kept
+// for a caller that genuinely needs the whole set in memory; there is none today.
+export const list = (period) => fetchAllPages('paper-reviews/', period ? { period } : {});
+
+// GET /api/paper-reviews/stats/ — { total } for the caller's scope and window.
+//
+// The page reads this instead of taking `.length` off a fetchAllPages walk. The
+// table pages server side now, so it holds one page at a time and cannot count
+// the set; the count is what the header, the clear-all confirmation and the
+// mass-update modal actually wanted, and one aggregate answers all three. See
+// PaperReviewViewSet.stats for why the window is applied on both sides.
+export const stats = (period) =>
+  http.get('paper-reviews/stats/', { params: period ? { period } : {} }).then((r) => r.data);
 
 export const get = (id) => http.get(`paper-reviews/${id}/`).then((r) => r.data);
 

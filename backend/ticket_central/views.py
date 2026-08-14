@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from accounts.audit import log_module_wipe
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
+from accounts.period_filter import PeriodFilterMixin
 from accounts.permissions import RBACMixin, IsAdminRole, IsHPAccount
 from accounts.crm_permissions import crm_permission
 from .models import Ticket, TicketSequence
@@ -34,7 +35,8 @@ from .permissions import (
 logger = logging.getLogger(__name__)
 
 
-class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelViewSet):
+class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
+                    RBACMixin, viewsets.ModelViewSet):
     """
     GET    /api/tickets/                   — list (paginated, filtered)
     POST   /api/tickets/                   — create (MR only)
@@ -46,6 +48,16 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
     GET    /api/tickets/stats/             — status counts for dashboard
     """
     permission_classes = [crm_permission("ticket_central")]
+
+    # ?period= presets over "Added Time" — created_at is the column this table
+    # sorts by and the one the Zoho report this module replaces was ordered on.
+    # It cannot be a filter_spec criterion: accounts/filter_spec.DEFAULT_EXCLUDES
+    # keeps created_at/updated_at out of every filterable registry deliberately,
+    # and widening that whitelist for one date picker would weaken the policy for
+    # all eleven resources. assign_date is NOT used instead — it is blank until
+    # Data Mining picks a ticket up, so every unassigned ticket would silently
+    # fall out of every window.
+    period_date_fields = ("created_at",)
 
     # ── Mass update ───────────────────────────────────────────────────────────
     # Ticket has no parent FK — every row is independent, so there is no
@@ -305,8 +317,20 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
 
     @action(detail=False, methods=["get"], url_path="stats")
     def stats(self, request):
-        """GET /api/tickets/stats/ — counts by status for dashboard tabs."""
+        """
+        GET /api/tickets/stats/[?period=<key>] — counts by status for the tabs.
+
+        The window is applied HERE as well as on the list, because these counts
+        label the tabs sitting directly above the filtered table. A tab reading
+        "Completed 35,690" over a table showing eleven rows is the same defect as
+        an unfiltered aggregate: the two are read together, so they have to answer
+        the same question.
+        """
+        from accounts.period_filter import apply_period
+
         qs = self.get_queryset()
+        _, p_from, p_to = self.resolved_period()
+        qs = apply_period(qs, self.period_date_fields, p_from, p_to)
         from django.db.models import Count, Q
         data = qs.aggregate(
             total=Count("id"),
@@ -333,6 +357,25 @@ class TicketViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelV
                 {"success": False, "error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    @action(detail=False, methods=["get"], url_path="import_schema")
+    def import_schema(self, request):
+        """
+        GET /api/tickets/import_schema/ — the columns bulk_import accepts.
+
+        Derived from the model by utils.import_fields(), which is the same
+        allowlist _coerce_row filters against. The Smart Import wizard used to
+        carry its own hand-written list of 15 fields against the ~40 the importer
+        accepts, so a Zoho export's DMD and LX-2 columns had nowhere to map and
+        were dropped without a word.
+        """
+        from .utils import import_fields
+
+        return Response({
+            "kind": "tickets",
+            "fields": [{"key": key, "label": label, "aliases": []}
+                       for key, label in import_fields()],
+        })
 
     @action(detail=False, methods=["post"], url_path="bulk_import",
             permission_classes=[IsAdminRole])  # D24 — bulk import is a privileged migration tool

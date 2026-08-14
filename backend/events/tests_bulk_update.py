@@ -15,9 +15,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import ActionLog, CustomRole, RolePermission
+from accounts.models import ActionLog
 from events.models import Event
 from events.views import EventViewSet
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -33,27 +34,27 @@ DERIVED_FIELDS = [
 class EventBulkUpdateTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.all_access = CustomRole.objects.create(
-            name="ev_bulk_admin", display_label="Ev Bulk Admin", is_all_access=True,
+        cls.all_access = Team.objects.create(
+            name="ev_bulk_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="ev_bulk", password="x", role="admin", email="ev@iq-hub.com",
         )
-        cls.user.custom_role = cls.all_access
+        cls.user.team = cls.all_access
         cls.user.save()
 
-        readonly_role, _ = CustomRole.objects.get_or_create(
-            name="ev_view_only", defaults={"display_label": "Ev View", "is_all_access": False},
+        readonly_role, _ = Team.objects.get_or_create(
+            name="ev_view_only", defaults={"is_all_access": False},
         )
-        RolePermission.objects.update_or_create(
-            custom_role=readonly_role, module="events",
+        TeamPermission.objects.update_or_create(
+            team=readonly_role, module="events",
             defaults={"can_view": True, "can_create": False,
                       "can_update": False, "can_delete": False},
         )
         cls.readonly = User.objects.create_user(
             username="ev_readonly", password="x", role="sales", email="evro@iq-hub.com",
         )
-        cls.readonly.custom_role = readonly_role
+        cls.readonly.team = readonly_role
         cls.readonly.save()
 
     def setUp(self):

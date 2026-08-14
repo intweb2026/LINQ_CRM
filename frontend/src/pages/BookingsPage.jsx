@@ -18,6 +18,7 @@ import TransferBookingModal from './bookings/TransferBookingModal';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
+import DateRangeFilter from '../components/DateRangeFilter';
 import * as bookingsApi from '../api/bookings';
 
 /**
@@ -157,9 +158,18 @@ export default function BookingsPage() {
   // silently did nothing, because `tableRefetch` was never actually a function.
   const keepRefetch = useCallback((fn) => setTableRefetch(() => fn), []);
 
+  // Date range. Applied by the SERVER over COALESCE(request_date, invoice_date)
+  // — the same date the Dashboard's monthly chart is keyed on, so the same button
+  // gives the same number on both screens. See accounts/period_filter.py.
+  const [period, setPeriod] = useState('all');
+
+  // The tab counts take the window too. They sit directly above the rows, so
+  // "Paid (1,204)" over a table showing 52 bookings would be the same defect as
+  // an unfiltered aggregate beside a filtered table.
   const reloadCounts = useCallback(() => {
-    bookingsApi.countsByPaymentStatus(TAB_STATUSES).then(setCounts).catch(() => setCounts(null));
-  }, []);
+    bookingsApi.countsByPaymentStatus(TAB_STATUSES, period)
+      .then(setCounts).catch(() => setCounts(null));
+  }, [period]);
 
   useEffect(() => { reloadCounts(); }, [reloadCounts]);
 
@@ -247,12 +257,16 @@ export default function BookingsPage() {
         </>}
       />
 
+      <DateRangeFilter value={period} onChange={setPeriod}
+        count={counts?.total} noun="bookings" note="by request date" />
+
       <DataTable
         tableId="bookings"
         // live: the rows are READ from delegates/, but an invoice edit and the
         // import both write invoices/ — named here so those reach the table too.
         server={{ resource: bookingsApi.RESOURCE, mapRow: bookingsApi.fromApi, live: ['invoices'] }}
         serverCriteria={serverCriteria}
+        serverParams={{ period }}
         onServerReady={keepRefetch}
         noun="bookings" select={can('delete', 'bookings') || can('update', 'bookings')} infinite pageSize={50}
         defaultSort={{ key: 'request_date', dir: 'desc' }} searchPlaceholder="Search invoice, delegate, company…"
@@ -278,9 +292,11 @@ export default function BookingsPage() {
         onRow={can('update', 'bookings') ? openInvoice : undefined}
         bulkActions={(ids, { clear, total }) => (
           <div className="bulk">
-            {/* Selection spans loaded rows only — there is no "select all N
-                matching". Saying so here is what stops `ids.length` being read as
-                the whole filtered set. */}
+            {/* `ids.length` is the truth of what the buttons below act on,
+                whether that is six rows ticked by hand or every match the header
+                checkbox resolved. The "of N matching" tail appears only while the
+                two differ, so a partial selection can never read as the whole
+                filtered set. */}
             <span className="n">{nf(ids.length)}</span> selected
             {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
             <div className="sep" />
@@ -294,7 +310,11 @@ export default function BookingsPage() {
             {can('delete', 'bookings') ? (
               <button className="btn btn-sm btn-d" onClick={async () => {
                 const ok = await confirm({ title: 'Delete bookings?', sub: plur(ids.length, 'record') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. Related delegate rows are removed with the invoice.</p> });
-                if (ok) { await bookingsApi.bulkRemove(ids); clear(); refresh(); toast(plur(ids.length, 'record') + ' deleted', 'ok'); }
+                // The toast reports what the SERVER deleted, not how many were
+                // asked for. Those differ whenever RBAC scoping skips a row, and
+                // that gap widens with select-all — "13,264 records deleted" over
+                // a scoped delete of 900 is the kind of number people act on.
+                if (ok) { const res = await bookingsApi.bulkRemove(ids); clear(); refresh(); toast(plur(res.deleted, 'record') + ' deleted', 'ok'); }
               }}><Icon name="trash" size={13} />Delete</button>
             ) : null}
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>

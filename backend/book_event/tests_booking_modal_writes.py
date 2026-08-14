@@ -28,10 +28,11 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
+from teams.models import Team
 
 User = get_user_model()
 
@@ -60,13 +61,13 @@ class BookingModalWriteTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(
-            name="modal_admin", display_label="Modal Admin", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="modal_admin", is_all_access=True,
         )
         cls.admin = User.objects.create_user(
             username="modal_admin_u", password="x", role="admin", email="ma@iq-hub.com",
         )
-        cls.admin.custom_role = cls.role
+        cls.admin.team = cls.role
         cls.admin.save()
 
         cls.rep_a = User.objects.create_user(

@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
-import { TEAM_ROLES, ROLE_FULL } from '../../lib/constants';
+import { TEAM_ROLES, ROLE_FULL, CRM_MODULES, PERM_ACTIONS } from '../../lib/constants';
 import { roleFromTeamName } from '../../lib/roleFromTeam';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { useSession } from '../../context/SessionContext';
 import { useFetch } from '../../hooks/useFetch';
 import { apiErrorMessage } from '../../api/client';
+import PermissionGrid, { PermissionLegend } from '../../components/PermissionGrid';
 import * as usersApi from '../../api/users';
-import * as rolesApi from '../../api/roles';
 import * as teamsApi from '../../api/teams';
 
 /**
@@ -19,14 +19,21 @@ import * as teamsApi from '../../api/teams';
  * endpoints; the only real difference is that create sends every field and edit
  * sends the ones that changed.
  *
- * TWO FIELDS LOOK ALIKE AND ARE NOT
- *   Role            the legacy `User.role` enum. It labels people and gates the
- *                   handful of `is_admin` checks left in the backend, and
- *                   User.save() RE-DERIVES it from the team's name for anyone
- *                   who is not an Admin — so it is shown with that caveat.
- *   Permission set  the CustomRole, which is what crm_permission() actually
- *                   reads. A user without one can see NOTHING, which is the
- *                   quiet failure mode this form exists to make visible.
+ * ACCESS COMES FROM THE TEAM. There is no permission set to pick any more: put
+ * someone in a team and they inherit its grid. The grid shown here is their
+ * EFFECTIVE access, tinted to say which cells came from the team and which were
+ * set for this person, and every difference is saved as a delta so that widening
+ * the team later still reaches them.
+ *
+ * The grid is editable on BOTH paths. Giving one person an extra module is part
+ * of hiring them, not a follow-up task, so a create that could only inherit
+ * meant saving the form, finding the row again and reopening it — with a window
+ * in between where the account existed with the wrong access. Create takes two
+ * requests because the exceptions need an id to hang off; see save().
+ *
+ * `Role` remains, and remains a label: it names a job function, drives the
+ * Users list filters, and User.save() fills it in from the team's name. It
+ * grants nothing.
  */
 export default function UserFormModal({ user: u, onClose, onSaved }) {
   const isNew = !u;
@@ -34,9 +41,7 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
   const confirm = useConfirm();
   const { can, user: me } = useSession();
   const { data: teams } = useFetch(teamsApi.list, [], { initialData: [] });
-  const { data: roles } = useFetch(rolesApi.list, [], { initialData: [] });
   const TEAMS = teams || [];
-  const ROLES = roles || [];
   const [busy, setBusy] = useState(false);
 
   const [form, setForm] = useState(() => {
@@ -48,7 +53,6 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       password: '',
       role: u?.role || 'sales',
       team_id: u?.team_id ? String(u.team_id) : '',
-      custom_role_id: u?.custom_role_id ? String(u.custom_role_id) : '',
       status: u?.status || 'active',
       is_lead: !!u?.is_lead,
     };
@@ -74,7 +78,57 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
     const team = TEAMS.find((t) => String(t.id) === String(teamId));
     const implied = team ? roleFromTeamName(team.name) : null;
     setForm((f) => ({ ...f, team_id: teamId, role: implied || f.role }));
+    // Exceptions were relative to the OLD team's grid. Carrying them across
+    // would mean "revoke Bookings delete" following someone into a team that
+    // never granted it, and reading afterwards as a deliberate decision about
+    // the new team. Moving team is a fresh start; grant again if still needed.
+    setGrid(teamsApi.toMatrix(team ? team.permissions : null));
   }
+
+  /**
+   * The grid is EFFECTIVE access, not the stored deltas.
+   *
+   * It starts as what this person resolves to today — team plus their own
+   * exceptions — and api/users.savePermissions works the delta out again by
+   * comparing against the team on save. So ticking a cell back to whatever the
+   * team says removes the exception rather than freezing agreement, and the
+   * person keeps following the team on every cell nobody touched.
+   */
+  const teamGrid = chosenTeam ? teamsApi.toMatrix(chosenTeam.permissions) : teamsApi.emptyMatrix();
+  const [grid, setGrid] = useState(
+    () => (u ? teamsApi.toMatrix(u.effective_permissions) : teamsApi.emptyMatrix()),
+  );
+  const allAccess = !!chosenTeam?.is_all_access;
+
+  function differs(a, b) {
+    return CRM_MODULES.some((mo) => PERM_ACTIONS.some(
+      (act) => !!(a[mo.k] || {})[act] !== !!(b[mo.k] || {})[act],
+    ));
+  }
+
+  /**
+   * Two different questions, and they have different answers on an edit.
+   *
+   *   hasExceptions  the grid on screen differs from the TEAM, so there is
+   *                  something to offer to clear.
+   *   needsSave      the grid differs from where this form STARTED, so the
+   *                  second request is worth making.
+   *
+   * They come apart when an existing exception is cleared: the grid then agrees
+   * with the team, so there is nothing to reset, but the stored delta still has
+   * to be deleted. Gating the save on hasExceptions would leave it behind and
+   * the cleared box would come back on the next open.
+   */
+  const hasExceptions = differs(grid, teamGrid);
+  const needsSave = isNew
+    ? hasExceptions
+    : differs(grid, teamsApi.toMatrix(u.effective_permissions));
+
+  function toggleCell(module, action) {
+    if (allAccess) return;
+    setGrid((g) => ({ ...g, [module]: { ...g[module], [action]: !g[module][action] } }));
+  }
+  const resetGrid = () => setGrid(teamsApi.toMatrix(teamGrid));
 
   function validate() {
     if (!form.username.trim()) return 'Username is required';
@@ -95,23 +149,48 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       role: form.role,
       status: form.status,
       team_id: form.team_id ? +form.team_id : null,
-      custom_role_id: form.custom_role_id ? +form.custom_role_id : null,
       is_lead: form.is_lead,
       password: form.password,
     };
     setBusy(true);
+    let saved;
     try {
-      const saved = isNew ? await usersApi.create(payload) : await usersApi.update(u.id, payload);
-      onClose();
-      toast((isNew ? 'User created: ' : 'User updated: ') + (saved.name || payload.username), 'ok');
-      onSaved();
+      saved = isNew ? await usersApi.create(payload) : await usersApi.update(u.id, payload);
     } catch (err) {
       // The modal STAYS OPEN on failure with the server's own reason. It used to
       // be possible for a save to fail and still close behind a success toast.
       toast(apiErrorMessage(err, isNew ? 'Could not create the user.' : 'Could not save the user.'), 'er');
-    } finally {
       setBusy(false);
+      return;
     }
+
+    // Permissions are a SECOND request, and it has to be second either way: on a
+    // create there is no id to hang them off until the account exists, and on an
+    // edit the delta is worked out against the team, so a team change has to have
+    // landed first or the exceptions would be measured against the old grid.
+    //
+    // Reported separately when it fails. The account is real by this point and
+    // saying "could not create the user" would send someone off to create it a
+    // second time; what actually needs redoing is the grid.
+    if (needsSave) {
+      try {
+        await usersApi.savePermissions(saved.id, grid, teamGrid);
+      } catch (err) {
+        setBusy(false);
+        onSaved();
+        toast(
+          `${saved.name || payload.username} was ${isNew ? 'created' : 'saved'}, but their permissions were not: `
+          + apiErrorMessage(err, 'the request failed.') + ' Reopen them to try again.',
+          'er',
+        );
+        return;
+      }
+    }
+
+    setBusy(false);
+    onClose();
+    toast((isNew ? 'User created: ' : 'User updated: ') + (saved.name || payload.username), 'ok');
+    onSaved();
   }
 
   async function del() {
@@ -164,22 +243,7 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
         </div>
       </div>
       <div className="fs">
-        <div className="fs-t"><Icon name="shield" size={13} />What they can open</div>
-        <div className="fg">
-          <div className="fd f">
-            <label className="fd-l">Permission set<span className="req">*</span></label>
-            <select className="in" value={form.custom_role_id} onChange={set('custom_role_id')}>
-              <option value="">— None. This user will see No Access everywhere —</option>
-              {ROLES.map((r) => <option key={r.id} value={r.id}>{r.display_label}</option>)}
-            </select>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-              One of the sets you defined on the Roles page. It is the only thing on this form that decides which modules open and whether they are read-only.
-            </span>
-          </div>
-        </div>
-      </div>
-      <div className="fs">
-        <div className="fs-t"><Icon name="team" size={13} />Where they sit</div>
+        <div className="fs-t"><Icon name="team" size={13} />Team, and the role it implies</div>
         <div className="fg">
           <div className="fd">
             <label className="fd-l">Team</label>
@@ -217,6 +281,31 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
             </label>
           </div>
         </div>
+      </div>
+      <div className="fs">
+        <div className="fs-t">
+          <Icon name="shield" size={13} />What they can open
+          {hasExceptions && !allAccess ? (
+            <button className="btn btn-g btn-sm" style={{ marginLeft: 'auto' }} onClick={resetGrid} disabled={busy}>
+              <Icon name="refresh" size={13} />Back to the team
+            </button>
+          ) : null}
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-4)', lineHeight: 1.5, marginBottom: 10 }}>
+          {chosenTeam
+            ? <>Inherited from <b>{chosenTeam.name}</b>. Tick to add something on top, untick to take something away; anything you leave alone keeps following the team, including when {chosenTeam.name} changes later.</>
+            : 'No team, so nothing is inherited. Anything ticked here is granted to this person alone.'}
+        </p>
+        {allAccess ? (
+          <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
+            <b>{chosenTeam.name}</b> has full access, so there is nothing to add.
+          </p>
+        ) : (
+          <>
+            <PermissionGrid value={grid} inherited={teamGrid} onToggle={toggleCell} disabled={busy} />
+            <PermissionLegend />
+          </>
+        )}
       </div>
     </Modal>
   );

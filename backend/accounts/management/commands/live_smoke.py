@@ -279,7 +279,7 @@ class Command(BaseCommand):
                 raise CommandError(f"no such user: {username}")
             return user
         user = (User.objects.filter(username="HP").first()
-                or User.objects.filter(custom_role__is_all_access=True).first())
+                or User.objects.filter(team__is_all_access=True).first())
         if user is None:
             raise CommandError("no all-access user to act as; pass --user")
         return user

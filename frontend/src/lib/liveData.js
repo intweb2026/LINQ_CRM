@@ -64,8 +64,20 @@ function deliver(path) {
   });
 }
 
+/**
+ * Gated on `window`, not merely on BroadcastChannel being defined.
+ *
+ * Node has had a global BroadcastChannel since v18, and an OPEN channel is a
+ * handle that holds the event loop open — so under bare Node this module made the
+ * process refuse to exit. backend/accounts/wire_probe.mjs imports api/client.js,
+ * which imports this file, and `node wire_probe.mjs` hung forever instead of
+ * printing its JSON; tests_wire_probe.py reads a non-zero exit as "probe
+ * unavailable" and SKIPS, so the failure mode was a suite that quietly stopped
+ * asserting anything about the frontend. Cross-tab messaging is meaningless
+ * without tabs; requiring a window says that, and fixes it.
+ */
 let channel = null;
-if (typeof BroadcastChannel !== 'undefined') {
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
   try {
     channel = new BroadcastChannel(CHANNEL_NAME);
     channel.onmessage = (ev) => {

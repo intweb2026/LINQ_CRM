@@ -13,10 +13,11 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import ActionLog, CustomRole
+from accounts.models import ActionLog
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
+from teams.models import Team
 
 User = get_user_model()
 
@@ -27,16 +28,16 @@ SCHEMA = BookDelegateViewSet.as_view({"get": "bulk_update_schema"})
 class _BaseBulk(TestCase):
     @classmethod
     def setUpTestData(cls):
-        # crm_permission("bookings") resolves through custom_role, so a bare
+        # crm_permission("bookings") resolves through the team, so a bare
         # superuser is not enough — it returns 403 without one.
-        cls.role = CustomRole.objects.create(
-            name="phase3_admin_role", display_label="Phase 3 Admin", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="phase3_admin_role", is_all_access=True,
         )
         cls.user = User.objects.create_superuser(
             username="phase3_admin", email="p3@example.com", password="x",
         )
         cls.user.role = "admin"
-        cls.user.custom_role = cls.role
+        cls.user.team = cls.role
         cls.user.save()
 
     def _post(self, body):
@@ -82,7 +83,10 @@ class ExcludedFieldsTests(_BaseBulk):
     def test_payment_date_rejected(self):     self._assert_rejected("payment_date", "2026-01-01")
     def test_invoice_number_rejected(self):   self._assert_rejected("invoice_number", "X")
 
-    # managed by save()
+    # PARTIALLY managed by save(): forced to 0 on a Cancelled delegate and
+    # restored to 1 on the transition off it. A batch write would stick on some
+    # rows and be silently reverted on others, after a preview that promised all
+    # of them. It moves as a declared side effect of delegate_payment_status.
     def test_delegate_count_rejected(self):   self._assert_rejected("delegate_count", 0)
 
     # derived in save()
@@ -92,17 +96,79 @@ class ExcludedFieldsTests(_BaseBulk):
     # provenance — mass-editing corrupts the webhook audit trail
     def test_source_rejected(self):           self._assert_rejected("source", "manual")
 
-    def test_schema_exposes_only_the_seven_intended_fields(self):
+    # identity: email is half of unique_together (invoice, email), and a name is
+    # not a batch property of anybody
+    def test_identity_fields_rejected(self):
+        for field in ("email", "first_name", "last_name"):
+            with self.subTest(field=field):
+                self._assert_rejected(field, "x@example.com")
+
+    def test_the_schema_covers_both_groups_and_no_excluded_column(self):
+        """
+        Both registries derive from their model now, so what must NOT be there is
+        the whole safety argument. The seven original fields are still required
+        — they are the ones the Bookings workflow runs on.
+        """
         req = self.factory.get("/bulk_update_schema/")
         force_authenticate(req, user=self.user)
         r = SCHEMA(req)
-        self.assertEqual(set(r.data["fields"].keys()), {
+        wired = set(r.data["fields"])
+
+        required = {
             "delegate_payment_status", "delegate_payment_type",
             "delegate_ticket_tier", "delegate_paid_or_free",
             "delegate_payment_date", "attendance", "invoice.currency",
-        })
+        }
+        self.assertTrue(required <= wired, required - wired)
+
+        for forbidden in (
+            # read-only @property, or derived / partially derived in save()
+            "payment_status", "payment_date", "invoice_number",
+            "delegate_count", "event_code", "edition", "delegate_number",
+            # identity
+            "email", "first_name", "last_name",
+            # the FK objects themselves
+            "invoice", "company",
+            # invoice-side identity, derived columns and intake provenance
+            "invoice.invoice_number", "invoice.event_code", "invoice.edition",
+            "invoice.event_name", "invoice.source", "invoice.form_name",
+            "invoice.form_url", "invoice.paid_free",
+            # audit
+            "id", "created_at", "updated_at", "import_batch_id",
+        ):
+            self.assertNotIn(forbidden, wired)
+
         self.assertEqual(r.data["label"], "delegates")
         self.assertTrue(r.data["parent_enabled"])
+
+    def test_every_parent_key_is_dotted_and_grouped_as_parent(self):
+        """
+        A parent key must carry the `invoice.` prefix — _read_current follows the
+        dotted path — and must be group=parent, which is what makes the modal
+        show the blast-radius warning instead of the two-click path.
+        """
+        req = self.factory.get("/bulk_update_schema/")
+        force_authenticate(req, user=self.user)
+        for key, cfg in SCHEMA(req).data["fields"].items():
+            with self.subTest(field=key):
+                self.assertEqual(cfg["group"] == "parent", key.startswith("invoice."))
+
+    def test_a_parent_write_declares_that_saving_the_invoice_re_derives_it(self):
+        """
+        BookEvent.save() rebuilds event_name from the Events catalogue and
+        re-parses edition out of event_code on EVERY save, whatever column was
+        actually set. The preview must say so rather than presenting a currency
+        change as touching one column.
+        """
+        r = self._preview([self.d.id], "invoice.currency", "GBP")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["side_effects"]), 1)
+        self.assertIn("event_name", r.data["side_effects"][0])
+
+    def test_a_booking_code_write_declares_the_stale_invoice_column(self):
+        r = self._preview([self.d.id], "booking_code", "SPK")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("invoice", r.data["side_effects"][0])
 
     def test_choices_match_the_model_enums(self):
         req = self.factory.get("/bulk_update_schema/")

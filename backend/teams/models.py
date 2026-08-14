@@ -14,6 +14,10 @@ class Team(models.Model):
         null=True, blank=True,
         related_name="led_teams",
     )
+    is_all_access = models.BooleanField(
+        default=False,
+        help_text="Full access to every module, ignoring the permission rows below.",
+    )
     is_archived = models.BooleanField(default=False)
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
@@ -41,6 +45,37 @@ class Team(models.Model):
         super().save(*args, **kwargs)
 
 
+class TeamPermission(models.Model):
+    """
+    What a team can reach. The team IS the role.
+
+    Access used to hang off a per-user CustomRole, which meant a team and a
+    permission set were two things that had to be kept in step by hand — and in
+    the live data they had already drifted, with four people in Sales Team
+    holding the Speaker Sales set. There is now one answer per team, and a user
+    inherits it by being in the team; per-person differences are recorded as
+    deltas in accounts.UserPermission rather than as a second parallel hierarchy.
+
+    Rows are keyed on the module strings in accounts.models.CRM_MODULES.
+    """
+    team       = models.ForeignKey(
+        Team, on_delete=models.CASCADE, related_name="permissions"
+    )
+    module     = models.CharField(max_length=50)
+    can_view   = models.BooleanField(default=False)
+    can_create = models.BooleanField(default=False)
+    can_update = models.BooleanField(default=False)
+    can_delete = models.BooleanField(default=False)
+
+    class Meta:
+        db_table        = "team_permissions"
+        unique_together = [("team", "module")]
+        ordering        = ["module"]
+
+    def __str__(self):
+        return f"{self.team} · {self.module}"
+
+
 class TeamActivityLog(models.Model):
     class ActionType(models.TextChoices):
         MEMBER_MOVED   = "member_moved",   "Member Moved"
@@ -51,6 +86,7 @@ class TeamActivityLog(models.Model):
         TEAM_DELETED   = "team_deleted",   "Team Deleted"
         TEAM_ARCHIVED  = "team_archived",  "Team Archived"
         TEAM_CREATED   = "team_created",   "Team Created"
+        PERMISSIONS_CHANGED = "permissions_changed", "Permissions Changed"
 
     action_type      = models.CharField(max_length=30, choices=ActionType.choices)
     team             = models.ForeignKey(

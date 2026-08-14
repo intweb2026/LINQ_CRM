@@ -20,9 +20,9 @@ from django.db import connection, transaction
 # Accounts layer — who can log in and what they may do.
 ACCOUNT_MODELS = {
     "accounts.User",
-    "accounts.CustomRole",
-    "accounts.RolePermission",
+    "accounts.UserPermission",
     "teams.Team",
+    "teams.TeamPermission",
     "authtoken.Token",
 }
 

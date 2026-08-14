@@ -296,6 +296,18 @@ table.gt th.num,table.gt td.num{text-align:right}
 .pm td:first-child{text-align:left;font-weight:650;color:var(--text)}
 .pm tr:last-child td{border-bottom:none}
 .pm tbody tr:hover{background:var(--n-25)}
+/* Permission grid cell states. The tint is the ONLY thing that distinguishes a
+   tick inherited from the team from one added or removed for one person; the
+   checkbox itself shows the effective answer either way, because that is the
+   question the reader is asking. Colour is backed up by the title attribute so
+   the distinction does not rest on hue alone. */
+.pm-key{display:flex;flex-wrap:wrap;gap:14px;margin-top:9px;font-size:10.5px;color:var(--text-4)}
+.pm-key span{display:flex;align-items:center;gap:5px}
+.pm-sw{width:11px;height:11px;border-radius:3px;border:1px solid var(--border)}
+.pm-c.pm-inherited,.pm-sw.pm-inherited{background:var(--n-50)}
+.pm-c.pm-granted,.pm-sw.pm-granted{background:color-mix(in srgb,var(--green) 16%,transparent)}
+.pm-c.pm-revoked,.pm-sw.pm-revoked{background:color-mix(in srgb,var(--red) 16%,transparent)}
+.pm-grid td.pm-c{position:relative}
 .rcd{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;transition:all .15s var(--ease);position:relative;overflow:hidden;cursor:pointer;box-shadow:var(--sh-xs)}
 .rcd:hover{box-shadow:var(--sh-md);transform:translateY(-1px)}
 .rcd-b{position:absolute;top:0;left:0;right:0;height:3px}

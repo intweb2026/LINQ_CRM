@@ -34,12 +34,12 @@ from django.test import TestCase
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from accounts.models import (
-    CRM_MODULES, TEAM_NAME_ROLE_KEYWORDS, CustomRole, role_from_team_name,
+    CRM_MODULES, TEAM_NAME_ROLE_KEYWORDS, role_from_team_name,
 )
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
-from teams.models import Team
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -151,6 +151,18 @@ class WireProbeTests(TestCase):
             "client.bulkUpdate", "client.assertIdArray", "filterSpec.partitionConds",
             "bookings.bulkRemove", "is_empty criterion carries no value key",
             "filter_spec is single-encoded", "rejects a Set loudly",
+            # Select-all, and the batching it forced on every id-carrying
+            # surface. Named here because both halves fail SILENTLY: a paged
+            # select-all still selects rows and still reports a number, and an
+            # unbatched 35,690-id body comes back 400 on an action the user
+            # already confirmed.
+            "select-all sends no page or page_size",
+            "select-all narrows by exactly the same terms as the page it replaces",
+            "bulkRemove batches at the endpoint's 1000-id cap",
+            "bulkRemove sends every id exactly once across its batches",
+            "mapLimit never exceeds its limit in flight",
+            "merged plan sums permitted",
+            "merged collateral is flagged as batched",
             # The Bookings modal's invoice write. Named here because both bugs it
             # covers were invisible from the browser — the request succeeded and
             # the table still looked correct — so nothing else would report their
@@ -164,10 +176,11 @@ class WireProbeTests(TestCase):
             # SUCCESSFUL request: a role saved with a same-shaped permission
             # payload the backend read as all-false, and a Deactivate button
             # whose empty body the endpoint refused.
-            "role permissions use the backend's can_* field names",
-            "role permissions do NOT send the UI's bare view/create/update/delete keys",
+            "team permissions use the backend's can_* field names",
+            "team permissions do NOT send the UI's bare view/create/update/delete keys",
             "user create sends is_team_lead, not the UI's is_lead",
-            "user create carries custom_role_id",
+            "a cell matching the team is sent as null, so it keeps inheriting",
+            "a revoke is sent as false, not as an omission",
             "toggle-status patches the user's toggle action with an empty body",
             "team create carries name, colour and description",
         ):
@@ -179,14 +192,13 @@ class WireLiteralReplayTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(
-            name="wire_probe_admin", display_label="Wire Probe", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="wire_probe_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="wire_probe", password="x", role="admin", email="wp@iq-hub.com",
+            team=cls.role,
         )
-        cls.user.custom_role = cls.role
-        cls.user.save()
 
     def setUp(self):
         self.probe = require_probe(self)
@@ -228,27 +240,28 @@ class WireLiteralReplayTests(TestCase):
         params = self.probe["literals"]["delegates_count_params"]
         self.assertEqual(params["page_size"], 1, params)
 
-    def test_captured_role_permissions_body_actually_grants_them(self):
+    def test_captured_team_permissions_body_actually_grants_them(self):
         """
-        THE REGRESSION TEST FOR THE ROLE BUG.
+        THE REGRESSION TEST FOR THE PERMISSION-GRID BUG.
 
         The frontend's grid and the backend's columns are different names for the
         same four booleans, and the request carrying the wrong set still returned
-        200 — set_permissions defaults every absent key to False, so a role saved
+        200 — set_permissions defaults every absent key to False, so a grid saved
         with every box ticked came back with none of them. Replaying the body the
-        real api/roles.js builds is the only way to see that from a test: both
-        payloads are well-formed JSON and both are accepted.
+        real api/teams.js builds is the only way to see that from a test: both
+        payloads are well-formed JSON and both are accepted, and the grid now
+        belongs to a TEAM, so one bad save is everyone in it.
         """
-        body = self.probe["literals"]["role_permissions_body"]
-        self.assertIsNotNone(body, "probe captured no role permissions body")
+        body = self.probe["literals"]["team_permissions_body"]
+        self.assertIsNotNone(body, "probe captured no team permissions body")
 
-        role = CustomRole.objects.create(name="wp_grid", display_label="WP Grid")
+        team = Team.objects.create(name="wp_grid")
         resp = self.client.put(
-            f"/api/roles/{role.id}/permissions/", body, format="json",
+            f"/api/teams/{team.id}/permissions/", body, format="json",
         )
         self.assertEqual(resp.status_code, 200, resp.content)
 
-        stored = {p.module: p for p in role.permissions.all()}
+        stored = {p.module: p for p in team.permissions.all()}
         self.assertEqual(set(stored), set(CRM_MODULES), "not every module was written")
         for module, perm in stored.items():
             self.assertTrue(
@@ -262,16 +275,15 @@ class WireLiteralReplayTests(TestCase):
         """
         The Add user form's body, replayed.
 
-        Two things at once: the field names have to land (is_team_lead, team_id,
-        custom_role_id), and the RESPONSE has to carry the read shape. It used to
-        echo the write serializer, which has no `id` and no `full_name`, so the
-        frontend mapped a freshly created user to `{id: undefined}`.
+        Two things at once: the field names have to land (is_team_lead, team_id),
+        and the RESPONSE has to carry the read shape. It used to echo the write
+        serializer, which has no `id` and no `full_name`, so the frontend mapped a
+        freshly created user to `{id: undefined}`.
         """
         body = dict(self.probe["literals"]["user_create_body"])
         team = Team.objects.create(name="WP Sales")
-        target_role = CustomRole.objects.create(name="wp_target", display_label="WP Target")
         body["team_id"] = team.id
-        body["custom_role_id"] = target_role.id
+        body.pop("custom_role_id", None)
 
         resp = self.client.post("/api/users/", body, format="json")
         self.assertEqual(resp.status_code, 201, resp.content)
@@ -284,7 +296,6 @@ class WireLiteralReplayTests(TestCase):
         created = User.objects.get(username=body["username"])
         self.assertTrue(created.is_team_lead, "the Team lead checkbox was discarded")
         self.assertEqual(created.team_id, team.id)
-        self.assertEqual(created.custom_role_id, target_role.id)
         self.assertTrue(
             created.check_password(body["password"]),
             "the password was accepted and not set",

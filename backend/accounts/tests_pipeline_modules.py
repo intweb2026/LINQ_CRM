@@ -26,8 +26,10 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.crm_permissions import crm_permission
-from accounts.models import CRM_MODULES, CustomRole, RolePermission
-from accounts.views import CustomRoleViewSet, UserViewSet
+from accounts.models import CRM_MODULES
+from accounts.views import UserViewSet
+from teams.views import TeamViewSet
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -63,51 +65,78 @@ class PipelineModuleRegistrationTests(TestCase):
         self.assertEqual(len(CRM_MODULES), len(set(CRM_MODULES)))
 
 
-class PipelineModuleMigrationTests(TestCase):
+class PipelineModuleDefaultDenyTests(TestCase):
     """
-    Exercises migration 0020 against the roles migration 0018 seeded. The test
-    database is built by running the full migration chain, so these rows exist
-    only if the backfill actually ran.
+    Registering a module must not grant it to anyone.
+
+    This used to assert that migration 0020 had BACKFILLED an all-false row onto
+    every seeded CustomRole, because a module with no row was previously
+    unanswerable — crm_permission did `permissions.get(module=...)` and a missing
+    row meant an exception, not a decision.
+
+    Access hangs off the team now and the guarantee is structural rather than
+    backfilled: team_permission_matrix() and User.effective_permissions() both
+    start from a dense all-false matrix and only ever turn cells ON. A module
+    nobody has heard of is therefore denied by construction, with no migration
+    needed to say so. That is the property worth pinning, so it is pinned
+    directly instead of through the migration that used to imply it.
     """
 
-    def test_every_seeded_role_has_rows_for_both_modules(self):
-        roles = CustomRole.objects.all()
-        self.assertGreater(roles.count(), 0, "0018 should have seeded system roles")
-        for role in roles:
-            for module in NEW_MODULES:
-                self.assertTrue(
-                    RolePermission.objects.filter(
-                        custom_role=role, module=module).exists(),
-                    f"{role.name} is missing a {module} row",
-                )
+    def test_a_module_with_no_row_grants_nothing(self):
+        team = Team.objects.create(name="Blank Grid")
+        member = User.objects.create_user(
+            username="blank", password="x", email="blank@iq-hub.com", team=team,
+        )
+        resolved = member.effective_permissions()
+        for module in NEW_MODULES:
+            self.assertIn(module, resolved, f"{module} has no answer at all")
+            self.assertFalse(any(resolved[module].values()), module)
 
-    def test_backfilled_rows_grant_nothing(self):
-        for perm in RolePermission.objects.filter(module__in=NEW_MODULES):
-            self.assertFalse(perm.can_view,   f"{perm.custom_role.name}/{perm.module}")
-            self.assertFalse(perm.can_create, f"{perm.custom_role.name}/{perm.module}")
-            self.assertFalse(perm.can_update, f"{perm.custom_role.name}/{perm.module}")
-            self.assertFalse(perm.can_delete, f"{perm.custom_role.name}/{perm.module}")
+    def test_an_existing_grid_does_not_reach_a_newly_registered_module(self):
+        """
+        The failure this guards: a team granted everything it was asked for at
+        the time, then a module is added to CRM_MODULES and silently falls inside
+        that grant. Rows are per module, so it cannot — asserted rather than
+        assumed, because the cost of being wrong is a module visible to everyone
+        the day it ships.
+        """
+        team = Team.objects.create(name="Older Grid")
+        for module in CRM_MODULES:
+            if module in NEW_MODULES:
+                continue
+            TeamPermission.objects.create(
+                team=team, module=module,
+                can_view=True, can_create=True, can_update=True, can_delete=True,
+            )
+        member = User.objects.create_user(
+            username="older", password="x", email="older@iq-hub.com", team=team,
+        )
+        resolved = member.effective_permissions()
+        for module in NEW_MODULES:
+            self.assertFalse(any(resolved[module].values()),
+                             f"{module} was granted by a grid written before it existed")
+        self.assertTrue(resolved["bookings"]["view"], "the rest of the grid was lost")
 
 
 class PipelineModulePermissionTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.open_role = CustomRole.objects.create(
-            name="pm_admin", display_label="PM Admin", is_all_access=True)
+        cls.open_role = Team.objects.create(
+            name="pm_admin", is_all_access=True)
         cls.admin = User.objects.create_user(
             username="pm_admin_u", password="x", role="admin", email="pma@iq-hub.com")
-        cls.admin.custom_role = cls.open_role
+        cls.admin.team = cls.open_role
         cls.admin.save()
 
-        cls.rep_role = CustomRole.objects.create(
-            name="pm_rep", display_label="PM Rep", is_all_access=False)
+        cls.rep_role = Team.objects.create(
+            name="pm_rep", is_all_access=False)
         for module in CRM_MODULES:
-            RolePermission.objects.create(
-                custom_role=cls.rep_role, module=module,
+            TeamPermission.objects.create(
+                team=cls.rep_role, module=module,
                 can_view=(module == "bookings"))
         cls.rep = User.objects.create_user(
             username="pm_rep_u", password="x", role="sales", email="pmr@iq-hub.com")
-        cls.rep.custom_role = cls.rep_role
+        cls.rep.team = cls.rep_role
         cls.rep.save()
 
     def setUp(self):
@@ -142,8 +171,8 @@ class PipelineModulePermissionTests(TestCase):
             self.assertFalse(perm.has_permission(req, _StubView("list")))
 
     def test_crm_permission_allows_once_granted(self):
-        RolePermission.objects.filter(
-            custom_role=self.rep_role, module="paper_review",
+        TeamPermission.objects.filter(
+            team=self.rep_role, module="paper_review",
         ).update(can_view=True)
         self.rep_role.refresh_from_db()
         perm = crm_permission("paper_review")()
@@ -153,11 +182,11 @@ class PipelineModulePermissionTests(TestCase):
 
     def test_set_permissions_accepts_the_new_modules(self):
         """
-        CustomRoleViewSet.set_permissions validates against CRM_MODULES; the
-        RolesPage always posts the full grid, so an unregistered key would 400
-        the whole save — not just the new rows.
+        TeamViewSet.set_permissions validates against CRM_MODULES; the Teams &
+        permissions page always posts the full grid, so an unregistered key
+        would 400 the whole save — not just the new rows.
         """
-        view = CustomRoleViewSet.as_view({"put": "set_permissions"})
+        view = TeamViewSet.as_view({"put": "set_permissions"})
         body = [
             {"module": m, "can_view": m in NEW_MODULES,
              "can_create": False, "can_update": False, "can_delete": False}
@@ -170,8 +199,8 @@ class PipelineModulePermissionTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         for module in NEW_MODULES:
             self.assertTrue(
-                RolePermission.objects.get(
-                    custom_role=self.rep_role, module=module).can_view)
+                TeamPermission.objects.get(
+                    team=self.rep_role, module=module).can_view)
 
 
 class _StubView:

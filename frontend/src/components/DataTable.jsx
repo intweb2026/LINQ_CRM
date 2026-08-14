@@ -8,7 +8,7 @@ import {
 } from '../lib/filterSpec';
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
-import { fetchPage } from '../api/client';
+import { apiErrorMessage, fetchAllIds, fetchPage } from '../api/client';
 
 const PAGE_SIZE_DEFAULT = 50;
 
@@ -363,6 +363,20 @@ export default function DataTable({
   // happen to have", and for payment_status the resolved-field semantics mean
   // the browser cannot reproduce the server's answer anyway.
   serverCriteria = null,
+  /**
+   * Extra query params sent with every server request — `{ period: 'last_7_days' }`
+   * is the one caller today (see accounts/period_filter.py PeriodFilterMixin).
+   *
+   * Separate from serverCriteria because it is NOT a filter_spec criterion and
+   * cannot be one: the booking window is COALESCE(request_date, invoice_date),
+   * which no single-column criterion expresses, and Ticket Central's window is
+   * over created_at, which filter_spec excludes from every resource on purpose.
+   * Sent as its own param so the server owns both definitions.
+   *
+   * Values are folded into the fetch key by VALUE, so a caller may rebuild the
+   * object every render without retriggering the request.
+   */
+  serverParams = null,
   // Background refresh, server mode only — see the liveReload block below.
   // `false` opts a table out; a number overrides the poll interval.
   live = true,
@@ -383,6 +397,19 @@ export default function DataTable({
   const [page, setPage] = useState(1);
   const [shown, setShown] = useState(pageSize);
   const [sel, setSel] = useState(new Set());
+  /**
+   * Non-null when `sel` holds every row the current query matches, rather than
+   * rows the user ticked off the page — see selectEverything.
+   *
+   * The distinction is load-bearing twice over: the prune effect below must not
+   * run against a selection whose rows were never loaded, and the caption has to
+   * be able to say "all 35,690" without inferring it from `sel.size === total`,
+   * which would also be true of a 12-row table where every row happens to be
+   * ticked by hand.
+   */
+  const [selAll, setSelAll] = useState(false);
+  const [selBusy, setSelBusy] = useState(false);
+  const [selError, setSelError] = useState('');
   const [hidden, setHidden] = useState(() => new Set(stored && stored.hidden ? stored.hidden : hiddenDefault));
   const [view, setView] = useState('table');
 
@@ -417,6 +444,55 @@ export default function DataTable({
   const specTooLarge = specBytes > MAX_SPEC_BYTES;
   const ordering = serverMode ? orderingParam(sort, cols) : null;
 
+  // Serialised for the same reason specJson is: a params object rebuilt each
+  // render would be a new identity every time and refetch forever. Sorted so
+  // `{a,b}` and `{b,a}` are one key rather than two.
+  const paramsJson = serverMode && serverParams
+    ? JSON.stringify(Object.fromEntries(
+      Object.entries(serverParams).filter(([, v]) => v !== undefined && v !== null && v !== '').sort(),
+    ))
+    : null;
+
+  /**
+   * Identity of the MATCHING SET — deliberately not useServerRows' request key.
+   *
+   * That key includes page, page size and ordering, because they change which
+   * rows come back. None of them changes which rows MATCH, and a select-all has
+   * to survive the user re-sorting the column or paging around to spot-check
+   * what they are about to edit. Only the spec, the search text and the extra
+   * server params do.
+   */
+  const matchKey = serverMode ? `${specJson || ''}|${q || ''}|${paramsJson || ''}` : null;
+
+  /**
+   * A whole-set selection describes ONE query, so a new query retires it.
+   *
+   * Deliberately narrower than "clear the selection whenever the filter moves":
+   * a hand-assembled selection survives filtering, because narrowing a column to
+   * find the next row to tick is how one gets built (see the prune effect). But
+   * "all 35,690 matching" cannot survive the filter that defined it changing —
+   * silently keeping those ids would leave a bulk action pointed at rows the
+   * table is no longer showing, under a caption still reading "all matching".
+   */
+  const matchKeyRef = useRef(matchKey);
+  const selReqRef = useRef(0);
+  useEffect(() => {
+    if (matchKeyRef.current === matchKey) return;
+    matchKeyRef.current = matchKey;
+    // Abandons any select-all still in flight: its answer describes the previous
+    // query, and applying it here is exactly the bug this effect exists to stop.
+    // The busy flag has to be released HERE as well as in selectEverything's
+    // finally, because that finally deliberately leaves the state of an
+    // abandoned request alone — without this the spinner would run forever and
+    // the checkbox would stay disabled.
+    selReqRef.current += 1;
+    setSelBusy(false);
+    setSelError('');
+    // Read straight from state rather than from inside a setSelAll updater: an
+    // updater must stay pure, and StrictMode invokes it twice.
+    if (selAll) { setSel(new Set()); setSelAll(false); }
+  }, [matchKey, selAll]);
+
   const serverState = useServerRows({
     resource: serverMode ? server.resource : null,
     page,
@@ -426,6 +502,7 @@ export default function DataTable({
     // the request, so there is no error body to show the user.
     filterSpec: specTooLarge ? null : specJson,
     search: q || null,
+    paramsJson,
     enabled: serverMode,
     hasStoredSpec,
   });
@@ -455,13 +532,25 @@ export default function DataTable({
   // In server mode, infinite scroll accumulates fetched pages instead of
   // discarding the previous one. Reset whenever the QUERY changes — a new filter
   // or sort makes previously accumulated rows wrong, not merely stale.
-  const fetchKey = `${specJson || ''}|${ordering || ''}|${q}|${pageSize}`;
+  // paramsJson is part of the key: changing the date range makes every
+  // accumulated page wrong, not stale, exactly as a new filter does. Leaving it
+  // out would keep the previous window's rows on screen and append the new
+  // window's page 2 underneath them.
+  const fetchKey = `${specJson || ''}|${ordering || ''}|${q}|${pageSize}|${paramsJson || ''}`;
   const [acc, setAcc] = useState([]);
   const lastAppliedRef = useRef('');
+  /**
+   * The count a background reload found, while it is the most recent answer to
+   * this query — see liveReload below, which fetches a whole span at once and so
+   * gets a count useServerRows never sees. Null means "no background answer
+   * newer than the paged one", which is the state after every ordinary fetch.
+   */
+  const [liveTotal, setLiveTotal] = useState(null);
   useEffect(() => {
     if (!serverMode || !infinite) return;
     setAcc([]);
     setPage(1);
+    setLiveTotal(null);
     lastAppliedRef.current = '';
   }, [serverMode, infinite, fetchKey]);
   // Keyed on the page the ROWS came from, never on the `page` we asked for.
@@ -478,18 +567,15 @@ export default function DataTable({
     lastAppliedRef.current = stamp;
     const incoming = mapServerRows(serverState.rows);
     setAcc((prev) => (dataPage <= 1 ? incoming : [...prev, ...incoming]));
+    // A page that has genuinely just landed carries a fresher count than any
+    // earlier background reload, so that one stops overriding it. Without this,
+    // one background reload would pin the footer's total for as long as the query
+    // stayed put, and scrolling on would report the count from minutes ago.
+    setLiveTotal(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverMode, infinite, dataPage, serverState.rows, fetchKey, mapServerRows]);
 
   // ── Staying current ───────────────────────────────────────────────────────
-  /**
-   * The count a background reload found, when it is newer than the one the paged
-   * fetch last reported. Reset with the query, which is the only thing that makes
-   * a count meaningless rather than merely old.
-   */
-  const [liveTotal, setLiveTotal] = useState(null);
-  useEffect(() => { setLiveTotal(null); }, [fetchKey]);
-
   /**
    * REFRESH AFTER A WRITE — what a parent gets through onServerReady.
    *
@@ -549,6 +635,12 @@ export default function DataTable({
         ordering,
         filterSpec: specTooLarge ? null : specJson,
         search: q || null,
+        // Load-bearing: this path re-fetches the whole scrolled span itself
+        // rather than going through useServerRows, so omitting the params here
+        // would make a background refresh silently replace a windowed table with
+        // unfiltered rows — the filter would appear to switch itself off after a
+        // poll, which is worse than not refreshing at all.
+        params: paramsJson ? JSON.parse(paramsJson) : undefined,
       })
         .then((res) => {
           setAcc(mapServerRows(res.results));
@@ -558,7 +650,7 @@ export default function DataTable({
         // screen alone and say nothing. The user did not ask for this fetch.
         .catch(() => {});
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [serverMode, infinite, page, pageSize, ordering, specJson, specTooLarge, q, mapServerRows, serverState.refetch, server && server.resource]),
+    }, [serverMode, infinite, page, pageSize, ordering, specJson, specTooLarge, q, paramsJson, mapServerRows, serverState.refetch, server && server.resource]),
     {
       resources: liveResources,
       enabled: serverMode && live !== false,
@@ -572,6 +664,12 @@ export default function DataTable({
     // The write that prompted this is about to arrive over the bus as well;
     // stamping the clock stops that echo fetching the same page a second time.
     markRefreshed();
+    // serverState.refetch, NOT serverState — which is what the exhaustive-deps
+    // rule asks for and cannot be given. That object is rebuilt every render, so
+    // depending on it would give this callback a new identity every render, the
+    // effect below would re-register on each one, and each registration is a
+    // setState in the parent: a render loop. `refetch` itself is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetAccumulation, serverState.refetch, markRefreshed]);
 
   useEffect(() => { if (onServerReady) onServerReady(refreshRows); }, [onServerReady, refreshRows]);
@@ -579,6 +677,46 @@ export default function DataTable({
   // ── The rows actually rendered ────────────────────────────────────────────
   // acc is already mapped by the accumulate effect; the non-infinite path maps here.
   const sourceRows = serverMode ? (infinite ? acc : mapServerRows(serverState.rows)) : rows;
+
+  /**
+   * Selected ids that no longer exist stop being selected.
+   *
+   * Nothing pruned `sel`, so a selection outlived the rows it named. Clear all
+   * data was the clearest way to see it: tick some rows, wipe the module, and the
+   * table empties while the bulk bar stays put above it announcing "12 selected"
+   * over nothing. Every button on that bar was live, so Delete or Mark paid could
+   * still be pressed, sending ids the database no longer had. Only F5 cleared it,
+   * because only a remount discarded the state — the same "it needs a refresh"
+   * shape as the stale rows, one component up.
+   *
+   * Pruned against the LOADED rows, not the filtered ones, so typing in the search
+   * box or narrowing a column does not silently drop a selection the user is still
+   * assembling; a row hidden by a filter is still loaded. A row that has left the
+   * loaded set is either deleted or filtered out server-side, and in both cases a
+   * bulk action on it would be acting blind.
+   *
+   * Never mid-fetch: rows are empty for a moment during a page or filter change,
+   * and pruning there would clear the selection on every one of them.
+   *
+   * Never against a whole-set selection either. `selAll` holds ids resolved by
+   * the server across every page, so all but the ~50 on screen are legitimately
+   * absent from the loaded rows; pruning would cut a 35,690-row selection to one
+   * page and report it as if the user had asked for that. What retires such a
+   * selection instead is the query changing, handled by the matchKey effect
+   * above, which is the only event that actually invalidates it.
+   */
+  useEffect(() => {
+    if (!sel.size || selAll) return;
+    if (serverMode && serverState.loading) return;
+    const present = new Set((sourceRows || []).map((r) => r.id));
+    setSel((prev) => {
+      const next = new Set();
+      prev.forEach((id) => { if (present.has(id)) next.add(id); });
+      // Same Set back when nothing was dropped: a new one every render would be a
+      // fresh state value each time and this effect would never settle.
+      return next.size === prev.size ? prev : next;
+    });
+  }, [sel, selAll, sourceRows, serverMode, serverState.loading]);
 
   const data = useMemo(() => {
     let d = sourceRows || [];
@@ -675,8 +813,75 @@ export default function DataTable({
   }, [sentinelEl, canLoadMore, loadMore, loadedCount]);
 
   function resetPaging() { setPage(1); setShown(pageSize); }
-  function toggleRow(id) { setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
-  function toggleAll() { const all = pageRows.length && pageRows.every((r) => sel.has(r.id)); setSel((s) => { const n = new Set(s); pageRows.forEach((r) => (all ? n.delete(r.id) : n.add(r.id))); return n; }); }
+  function toggleRow(id) {
+    // Un-ticking one row out of "all 35,690" leaves a selection that is no longer
+    // the whole match, so the flag goes with it and the caption stops claiming it.
+    if (selAll) setSelAll(false);
+    setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  }
+
+  function clearSelection() { setSel(new Set()); setSelAll(false); setSelError(''); }
+
+  /**
+   * Select EVERY row the current query matches, not the page.
+   *
+   * In-memory tables already hold the whole match in `data`, so this is a local
+   * operation. Server-mode tables hold one page of it and have to ask: the
+   * server resolves the same filter_queryset() the list endpoint uses and hands
+   * back bare ids (accounts/filter_spec.py, the `ids` action).
+   *
+   * Two cases keep it local even in server mode, and both are the same reason —
+   * the server cannot resolve what it was never sent:
+   *
+   *   • clientNarrowed — a column filter the backend has no term for is applied
+   *     here, against the loaded page. Asking the server for "all matching"
+   *     would return rows this table is deliberately hiding.
+   *   • specTooLarge — the spec is past what a URL can carry, so it was not sent
+   *     at all and the server is answering an unfiltered question.
+   *
+   * In both, `data` is the honest answer to "everything you can see", and the
+   * caption stays a subset caption rather than claiming the whole set.
+   */
+  async function selectEverything() {
+    setSelError('');
+    const localOnly = !serverMode || clientNarrowed || specTooLarge;
+    if (localOnly) {
+      setSel(new Set(data.map((r) => r.id)));
+      setSelAll(false);
+      return;
+    }
+
+    // Tick the page up front so the click always does something visible, then
+    // widen when the ids land. A select-all that sits inert for a second reads
+    // as a dead checkbox and gets clicked again.
+    setSel(new Set(pageRows.map((r) => r.id)));
+    const token = ++selReqRef.current;
+    setSelBusy(true);
+    try {
+      const { ids } = await fetchAllIds(server.resource, {
+        filterSpec: specJson,
+        search: q || null,
+        params: paramsJson ? JSON.parse(paramsJson) : undefined,
+      });
+      // The query moved while this was in flight — these ids answer a filter the
+      // user has already left, so they are dropped rather than applied.
+      if (selReqRef.current !== token) return;
+      setSel(new Set(ids));
+      setSelAll(true);
+    } catch (err) {
+      if (selReqRef.current !== token) return;
+      // The backend's own 400 when the match is past select_all_max names the
+      // count and the ceiling, which is more use than anything phrased here.
+      setSelError(apiErrorMessage(err, `Could not select all ${noun}.`));
+    } finally {
+      if (selReqRef.current === token) setSelBusy(false);
+    }
+  }
+
+  function toggleAll() {
+    if (sel.size) clearSelection();
+    else selectEverything();
+  }
   function clearAll() { setConds([]); setQ(''); resetPaging(); }
   function addCond(col) { setConds((cs) => [...cs, { key: col.key, op: 'Contains', values: [] }]); resetPaging(); }
   function updateCond(key, next) { setConds((cs) => cs.map((c) => (c.key === key ? next : c))); resetPaging(); }
@@ -855,19 +1060,22 @@ export default function DataTable({
               <thead>
                 <tr>
                   {select ? (
-                    /* The header checkbox selects THIS PAGE, never the whole
-                       filtered set — toggleAll iterates pageRows. The title says
-                       so, and the caption under the table repeats it whenever the
-                       filtered total exceeds what is selectable, because a
-                       "select all" that silently means "select 50 of 1,204" is
-                       how a bulk action ends up applied to the wrong scope.
-                       Selecting every match server-side is deliberately not
-                       offered rather than approximated. */
-                    <th className="ck"><input type="checkbox" className="ck" checked={pageRows.length > 0 && pageRows.every((r) => sel.has(r.id))} onChange={toggleAll}
-                      aria-label={`Select the ${pageRows.length} row${pageRows.length === 1 ? '' : 's'} on this page`}
-                      title={total > pageRows.length
-                        ? `Selects the ${nf(pageRows.length)} row${pageRows.length === 1 ? '' : 's'} shown here — not all ${nf(total)} matching ${noun}`
-                        : `Selects all ${nf(pageRows.length)} ${noun}`} /></th>
+                    /* The header checkbox selects every MATCHING row, not the
+                       page. It used to iterate pageRows, so on a filter matching
+                       35,690 tickets it selected 50 and a mass update reached
+                       0.1% of what was asked for. Checked whenever anything is
+                       selected — clicking it again is the clear — because with
+                       whole-set selection the useful second click is "none",
+                       not "this page as well". */
+                    <th className="ck"><input type="checkbox" className="ck"
+                      checked={sel.size > 0}
+                      ref={(el) => { if (el) el.indeterminate = sel.size > 0 && !selAll && total > sel.size; }}
+                      onChange={toggleAll}
+                      disabled={selBusy}
+                      aria-label={sel.size > 0 ? 'Clear the selection' : `Select all ${total} matching ${noun}`}
+                      title={sel.size > 0
+                        ? 'Clears the selection'
+                        : `Selects all ${nf(total)} matching ${noun}, not just this page`} /></th>
                   ) : null}
                   {activeCols.map((c) => {
                     if (c.sortable === false) return <th key={c.key} className={c.num ? 'num' : ''}>{c.label}</th>;
@@ -920,20 +1128,45 @@ export default function DataTable({
         </>
       )}
 
-      {/* C5 — the selection states what it actually covers. `sel` holds only ids
-          the user has ticked, and the header checkbox reaches one page at a time,
-          so a selection smaller than the filtered total is a SUBSET and says so
-          instead of letting a bulk action look table-wide. Rendered above
-          bulkActions so the caveat is read before the button is pressed. */}
-      {select && sel.size > 0 && total > sel.size ? (
+      {/* C5 — the selection states what it actually covers, and the three states
+          are genuinely different things to say. Rendered above bulkActions so the
+          caveat is read before the button is pressed. */}
+      {select && selBusy ? (
         <div className="hint" style={{ marginTop: 9 }}>
-          <b>{nf(sel.size)}</b> of <b>{nf(total)}</b> {noun} selected — actions below
-          apply to those {nf(sel.size)} only. Selecting every match at once is not
-          available; widen the selection page by page, or narrow the filter first.
+          <span className="spin" /> Selecting all {nf(total)} matching {noun}…
         </div>
       ) : null}
 
-      {select && sel.size > 0 && bulkActions ? bulkActions([...sel], { clear: () => setSel(new Set()), total, loadedCount }) : null}
+      {select && selError ? (
+        <div className="vr er" style={{ marginTop: 9 }}>
+          <Icon name="warn" size={15} />
+          <span>{selError} The {nf(sel.size)} {noun} on this page are still selected.</span>
+        </div>
+      ) : null}
+
+      {select && !selBusy && sel.size > 0 && total > sel.size ? (
+        <div className="hint" style={{ marginTop: 9 }}>
+          <b>{nf(sel.size)}</b> of <b>{nf(total)}</b> {noun} selected — actions below
+          apply to those {nf(sel.size)} only.{' '}
+          <button type="button" className="btn btn-s btn-sm" onClick={selectEverything}>
+            Select all {nf(total)}
+          </button>
+        </div>
+      ) : null}
+
+      {/* selAll rather than sel.size === total: on a 12-row table those are the
+          same number the moment every row is ticked by hand, and only one of the
+          two was actually resolved server-side across every page. */}
+      {select && !selBusy && selAll && sel.size > 0 ? (
+        <div className="hint" style={{ marginTop: 9 }}>
+          All <b>{nf(sel.size)}</b> matching {noun} selected — including{' '}
+          {nf(Math.max(0, sel.size - pageRows.length))} not shown on this page.
+        </div>
+      ) : null}
+
+      {select && sel.size > 0 && bulkActions
+        ? bulkActions([...sel], { clear: clearSelection, total, loadedCount, allMatching: selAll })
+        : null}
     </>
   );
 

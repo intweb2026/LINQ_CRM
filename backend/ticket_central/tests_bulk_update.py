@@ -12,9 +12,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import ActionLog, CustomRole, RolePermission
+from accounts.models import ActionLog
 from ticket_central.models import Ticket
 from ticket_central.views import TicketViewSet
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -26,11 +27,11 @@ RETURN_MR  = TicketViewSet.as_view({"post": "return_to_mr"})
 
 
 def _role(name, **perms):
-    role, _ = CustomRole.objects.get_or_create(
-        name=name, defaults={"display_label": name, "is_all_access": False},
+    role, _ = Team.objects.get_or_create(
+        name=name, defaults={"is_all_access": False},
     )
-    RolePermission.objects.update_or_create(
-        custom_role=role, module="ticket_central",
+    TeamPermission.objects.update_or_create(
+        team=role, module="ticket_central",
         defaults={"can_view": True, "can_create": False,
                   "can_update": perms.get("update", False), "can_delete": False},
     )
@@ -40,14 +41,14 @@ def _role(name, **perms):
 class TicketBulkUpdateTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.all_access = CustomRole.objects.create(
-            name="tc_bulk_admin", display_label="TC Bulk Admin", is_all_access=True,
+        cls.all_access = Team.objects.create(
+            name="tc_bulk_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="tc_bulk_user", password="x", role="admin",
             email="tc.bulk@iq-hub.com",
         )
-        cls.user.custom_role = cls.all_access
+        cls.user.team = cls.all_access
         cls.user.save()
 
         # a user who may view but not update
@@ -55,7 +56,7 @@ class TicketBulkUpdateTests(TestCase):
             username="tc_readonly", password="x", role="market_research",
             email="tc.readonly@iq-hub.com",
         )
-        cls.readonly.custom_role = _role("tc_view_only", update=False)
+        cls.readonly.team = _role("tc_view_only", update=False)
         cls.readonly.save()
 
     def setUp(self):

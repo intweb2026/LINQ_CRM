@@ -132,11 +132,11 @@ export default function EventsPage() {
         onRow={(r) => setDrawerEvent(r)}
         bulkActions={(ids, { clear, total }) => (
           <div className="bulk">
-            {/* Selection spans the rows LOADED so far, not every match; the
-                header checkbox ticks what scrolling has revealed and nothing
-                below it. Saying so is what stops the count being read as the
-                whole filtered set. It also means scrolling further does not
-                retroactively add rows to a selection already made. */}
+            {/* The header checkbox selects every matching row. This table is
+                in-memory, so "every match" is resolved locally out of the rows
+                already held rather than fetched — but the count below still
+                states what the buttons act on, and the "of N matching" tail
+                appears only while a selection is a subset. */}
             <span className="n">{nf(ids.length)}</span> selected
             {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
             <div className="sep" />

@@ -51,6 +51,17 @@ function noun(n, label) {
 // across both groups and Events 34: a bare radio list that long is a scroll hunt.
 const SEARCH_THRESHOLD = 8;
 
+/**
+ * Settle time before a value change is priced.
+ *
+ * The preview used to be one request, so firing it per keystroke was merely
+ * wasteful. A selection now spans as many batches as it has thousands of rows
+ * (useBulkUpdate), so a full Ticket Central select-all costs 36 requests per
+ * keystroke — typing a six-character value would issue over two hundred. Matches
+ * useServerRows' DEBOUNCE_MS, which the filter inputs already feel like.
+ */
+const PREVIEW_DEBOUNCE_MS = 350;
+
 // The server sends the distribution keyed by str(value), so a BooleanField
 // arrives as Python's "True"/"False" while the picker offers Yes/No. Showing
 // both spellings for one column reads as two different things.
@@ -65,9 +76,10 @@ function display(value, config) {
 
 export default function BulkUpdateModal({
   onClose, selectedIds = [], schema, rowLabel = 'record', onPreview, onCommit,
-  // Selection spans loaded rows only — there is no "select all N matching".
-  // Passing the table's totals lets the header say exactly what will be touched
-  // so it cannot be mistaken for the whole filtered set.
+  // The table's total, so the header can say whether this selection IS the whole
+  // filtered set. Since the header checkbox began resolving every match, the two
+  // are equal often — and the caveat below correctly disappears when they are,
+  // rather than warning about a subset that no longer exists.
   totalMatching = null,
 }) {
   const toast = useToast();
@@ -82,6 +94,19 @@ export default function BulkUpdateModal({
   const [staleNotice, setStale] = useState('');
   const [clearing, setClearing] = useState(false); // explicit-null mode
   const [query, setQuery] = useState('');          // field-picker search
+  // {done, total, updated} while a batched commit walks its batches, else null.
+  const [progress, setProgress] = useState(null);
+  // Set when a batched commit failed PART WAY: some rows are already written.
+  const [partial, setPartial] = useState(null);
+  /**
+   * Bumped to force a re-preview with the same field and value.
+   *
+   * Needed because a plan is now a list of per-batch plan_hashes held inside
+   * useBulkUpdate, not one hash on this component's `plan`. After a 409 those
+   * hashes are ALL stale, and re-confirming would replay them and 409 again
+   * forever. Re-pricing is the only thing that mints fresh ones.
+   */
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const fields = useMemo(() => schema?.fields || {}, [schema]);
   const config = field ? fields[field] : null;
@@ -122,17 +147,19 @@ export default function BulkUpdateModal({
     const outgoing = clearing ? null : (value !== '' && value != null ? value : undefined);
     let cancelled = false;
     setBusy(true); setError('');
-    Promise.resolve(onPreview(field, outgoing))
-      .then((p) => { if (!cancelled) setPlan(p); })
-      .catch((err) => {
-        if (!cancelled) setError(err?.response?.data?.detail || 'Could not preview this change.');
-      })
-      .finally(() => { if (!cancelled) setBusy(false); });
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => {
+      Promise.resolve(onPreview(field, outgoing))
+        .then((p) => { if (!cancelled) setPlan(p); })
+        .catch((err) => {
+          if (!cancelled) setError(err?.response?.data?.detail || 'Could not preview this change.');
+        })
+        .finally(() => { if (!cancelled) setBusy(false); });
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => { cancelled = true; clearTimeout(timer); };
     // selectedIds.LENGTH, not the array: callers build it with [...set], a new
     // reference every render, which would re-fire this effect continuously.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [field, value, clearing, config, onPreview, selectedIds.length]);
+  }, [field, value, clearing, config, onPreview, selectedIds.length, refreshTick]);
 
   const pickField = useCallback((key) => {
     setField(key); setPlan(null); setError(''); setValue(''); setClearing(false);
@@ -147,22 +174,46 @@ export default function BulkUpdateModal({
     && plan.permitted === plan.requested && !hasSideEffects && !hasCollateral;
 
   async function doCommit() {
-    setBusy(true); setError(''); setStale('');
+    setBusy(true); setError(''); setStale(''); setPartial(null);
+    // Batched commits report after each batch. Seeded so the bar appears on the
+    // first click rather than only once batch 1 has come back.
+    const batches = plan?.batches || 1;
+    setProgress(batches > 1 ? { done: 0, total: batches, updated: 0 } : null);
     try {
-      const res = await onCommit(field, clearing ? null : value, plan.plan_hash);
+      const res = await onCommit(
+        field, clearing ? null : value, plan.plan_hash,
+        batches > 1 ? setProgress : undefined,
+      );
       setResult(res);
       setStep('result');
       toast(`Updated ${nf(res.updated)} ${noun(res.updated, rowLabel)}`, 'ok');
     } catch (err) {
-      if (err?.response?.status === 409) {
+      // Checked BEFORE the 409 branch, and it has to be. A partly-applied commit
+      // that came back 409 on a later batch must not offer "confirm again" —
+      // confirming would replay the batches that already landed and apply them
+      // twice. There is no clean retry here, only an honest account.
+      if (err?.partial) {
+        setPartial(err.partial);
+        setStep('result');
+        setResult({ updated: err.partial.updated, no_op: 0, partial: true });
+        toast(
+          `Stopped after ${nf(err.partial.updated)} ${noun(err.partial.updated, rowLabel)}`,
+          'er',
+        );
+      } else if (err?.response?.status === 409) {
+        // The server's refreshed plan goes up immediately so the numbers are
+        // current while the re-price runs; the re-price is what replaces the
+        // stale batch hashes, without which confirming again would 409 forever.
         setPlan(err.response.data);
         setStep('preview');
+        setRefreshTick((t) => t + 1);
         setStale('The underlying data changed since this plan was generated. Review the refreshed numbers and confirm again.');
       } else {
         setError(err?.response?.data?.detail || 'Bulk update failed.');
       }
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -338,12 +389,25 @@ export default function BulkUpdateModal({
           <Icon name="warn" size={15} />
           <div>
             <b>
+              {/* "up to" once the selection spans batches: the server computes
+                  collateral per batch as "shares a parent with this batch, minus
+                  this batch", so rows in a LATER batch — ones the user did
+                  select — are counted here too. Overstating rows nobody chose is
+                  the safe direction for this warning; presenting the inflated
+                  sum as an exact count is not. See mergePlans. */}
+              {plan.collateral.batched ? 'Up to ' : ''}
               {nf(plan.collateral.count)} {noun(plan.collateral.count, rowLabel)} you
               did not select will also change
               {plan.collateral.hidden_count > 0
                 ? ` — ${plan.collateral.sample.length} shown, ${nf(plan.collateral.hidden_count)} on records outside your access`
                 : ''}
             </b>
+            {plan.collateral.batched ? (
+              <div className="bu-coll">
+                Counted per batch of {nf(Math.ceil(plan.requested / plan.batches))}, so this
+                figure can include rows further down your own selection.
+              </div>
+            ) : null}
             {plan.collateral.sample.map((c) => (
               <div className="bu-coll" key={c.id}>{c.label}{c.parent ? ` — ${c.parent}` : ''}</div>
             ))}
@@ -360,10 +424,38 @@ export default function BulkUpdateModal({
 
   const resultBody = result ? (
     <div className="bu-prev">
-      Updated <b>{nf(result.updated)}</b> {noun(result.updated, rowLabel)}.
-      {result.no_op > 0 ? (
-        <div className="bu-dist">{nf(result.no_op)} already held that value and were left alone.</div>
-      ) : null}
+      {partial ? (
+        <>
+          <div className="vr er bu-warn">
+            <Icon name="warn" size={15} />
+            <div>
+              <b>Stopped part way — {nf(partial.updated)} {noun(partial.updated, rowLabel)} were
+              already updated.</b>
+              <div className="bu-coll">
+                {nf(partial.batchesDone)} of {nf(partial.batchesTotal)} batches completed.
+                The remaining {nf(partial.rowsRemaining)} {noun(partial.rowsRemaining, rowLabel)} were
+                not touched.
+              </div>
+            </div>
+          </div>
+          {/* No retry button. The batches that succeeded are committed, and
+              re-running the whole selection would apply them a second time.
+              The selection is left intact so it can be narrowed and re-run
+              deliberately. */}
+          <div className="bu-dist">
+            The table has been refreshed. Re-select the {noun(2, rowLabel)} that did not
+            change and run the update again.
+          </div>
+        </>
+      ) : (
+        <>
+          Updated <b>{nf(result.updated)}</b> {noun(result.updated, rowLabel)}
+          {result.batches > 1 ? <> across {nf(result.batches)} batches</> : null}.
+          {result.no_op > 0 ? (
+            <div className="bu-dist">{nf(result.no_op)} already held that value and were left alone.</div>
+          ) : null}
+        </>
+      )}
     </div>
   ) : null;
 
@@ -375,16 +467,26 @@ export default function BulkUpdateModal({
         <button className="btn btn-s" onClick={onClose}>Cancel</button>
         <button className="btn btn-p" disabled={!plan || !valueChosen || busy}
           onClick={() => (fastPath ? doCommit() : setStep('preview'))}>
-          {busy ? 'Working…' : fastPath ? `Apply to ${nf(changing)} ${noun(changing, rowLabel)}` : 'Review changes →'}
+          {/* fastPath commits from this step, and a fast path is not a short
+              one — a row-scoped field with no side effects over a whole-set
+              selection is still 36 batches. */}
+          {progress ? `Applying batch ${nf(progress.done + 1)} of ${nf(progress.total)}…`
+            : busy ? 'Working…'
+              : fastPath ? `Apply to ${nf(changing)} ${noun(changing, rowLabel)}`
+                : 'Review changes →'}
         </button>
       </>
     );
   } else if (step === 'preview') {
     footer = (
       <>
-        <button className="btn btn-s" onClick={() => setStep('pick')}>← Back</button>
+        <button className="btn btn-s" disabled={busy} onClick={() => setStep('pick')}>← Back</button>
         <button className={'btn ' + (hasCollateral ? 'btn-d' : 'btn-p')} disabled={busy} onClick={doCommit}>
-          {busy ? 'Applying…' : 'Apply'}
+          {/* A 36-batch commit takes long enough that a static "Applying…"
+              reads as a hang. The batch counter is the only signal that it is
+              still moving, so it is shown wherever the eye already is. */}
+          {progress ? `Applying batch ${nf(progress.done + 1)} of ${nf(progress.total)}…`
+            : busy ? 'Applying…' : 'Apply'}
         </button>
       </>
     );

@@ -24,8 +24,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from accounts.models import CRM_MODULES, CustomRole
-from teams.models import Team, TeamActivityLog
+from accounts.models import CRM_MODULES
+from teams.models import Team, TeamActivityLog, TeamPermission
 
 User = get_user_model()
 
@@ -33,14 +33,14 @@ User = get_user_model()
 class AdminCrudTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.admin_role = CustomRole.objects.create(
-            name="crud_admin", display_label="CRUD Admin", is_all_access=True,
+        cls.admin_role = Team.objects.create(
+            name="crud_admin", is_all_access=True,
         )
         cls.admin = User.objects.create_user(
             username="crud_admin", password="x", role="admin",
             email="crud_admin@iq-hub.com",
         )
-        cls.admin.custom_role = cls.admin_role
+        cls.admin.team = cls.admin_role
         cls.admin.save()
 
     def setUp(self):
@@ -256,15 +256,41 @@ class AdminCrudTests(TestCase):
         subject.refresh_from_db()
         self.assertEqual(subject.role, "market_research")
 
-    def test_an_admin_team_promotes_and_leaving_it_demotes(self):
+    def test_an_admin_named_team_promotes_and_grants_django_rights(self):
         admin_team = Team.objects.create(name="Admin Team")
-        sales = Team.objects.create(name="Sales Team")
-
-        self._create_user(username="promoted", email="promoted@iq-hub.com",
-                          team_id=admin_team.id)
+        # No `role` in the body, so the team's name is what decides. The form
+        # sends one, but it sends the value this same rule already filled in.
+        resp = self.client.post(
+            "/api/users/",
+            {"username": "promoted", "email": "promoted@iq-hub.com",
+             "team_id": admin_team.id},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
         subject = User.objects.get(username="promoted")
         self.assertEqual(subject.role, "admin")
         self.assertTrue(subject.is_superuser and subject.is_staff)
+
+    def test_an_admin_is_not_demoted_by_being_moved_out_of_the_admin_team(self):
+        """
+        Deliberate, and older than this change. `role == ADMIN` short-circuits
+        the whole team block, so admin is sticky in both directions: dragging
+        someone out of the Admin team on the board does NOT take their rights.
+
+        Pinned because it is the kind of asymmetry that reads as a bug from the
+        board, and because the fix is not to make a drag revoke superuser
+        silently; it is to change the role on the user form, which now works.
+        """
+        admin_team = Team.objects.create(name="Admin Team")
+        sales = Team.objects.create(name="Sales Team")
+        self.client.post(
+            "/api/users/",
+            {"username": "sticky_admin", "email": "sticky_admin@iq-hub.com",
+             "team_id": admin_team.id},
+            format="json",
+        )
+        subject = User.objects.get(username="sticky_admin")
+        self.assertEqual(subject.role, "admin")
 
         self.client.post(
             "/api/teams/move-member/",
@@ -272,8 +298,18 @@ class AdminCrudTests(TestCase):
             format="json",
         )
         subject.refresh_from_db()
+        self.assertEqual(subject.role, "admin", "a team move quietly revoked admin")
+        self.assertTrue(subject.is_superuser)
+
+        # The explicit path, which is what the Role field on the form drives.
+        resp = self.client.patch(
+            f"/api/users/{subject.id}/", {"role": "sales"}, format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        subject.refresh_from_db()
         self.assertEqual(subject.role, "sales")
-        self.assertFalse(subject.is_superuser or subject.is_staff)
+        self.assertFalse(subject.is_superuser or subject.is_staff,
+                         "demoting from admin left Django rights behind")
 
     def test_an_explicit_non_admin_role_does_not_pick_up_superuser(self):
         """
@@ -304,87 +340,202 @@ class AdminCrudTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(User.objects.get(username="renamed").role, "market_research")
 
-    # ── Roles ───────────────────────────────────────────────────────────────
+    # ── Permissions: the team grid, and one person's exceptions ─────────────
 
     def _grid(self, **flags):
         row = {"can_view": False, "can_create": False, "can_update": False, "can_delete": False}
         row.update(flags)
         return {"permissions": [dict(row, module=m) for m in CRM_MODULES]}
 
-    def test_creating_a_role_and_granting_it_permissions(self):
-        resp = self.client.post(
-            "/api/roles/",
-            {"name": "regional_manager", "display_label": "Regional Manager",
-             "color": "#009CBC", "description": "Runs a region"},
-            format="json",
-        )
-        self.assertEqual(resp.status_code, 201, resp.content)
-        role_id = resp.json()["id"]
+    def _delta(self, module, **flags):
+        row = {"can_view": None, "can_create": None, "can_update": None, "can_delete": None}
+        row.update(flags)
+        return {"permissions": [dict(row, module=module)]}
 
+    def test_a_team_grants_its_grid_to_every_member(self):
+        team = Team.objects.create(name="Grid Holders")
         resp = self.client.put(
-            f"/api/roles/{role_id}/permissions/",
+            f"/api/teams/{team.id}/permissions/",
             self._grid(can_view=True, can_create=True),
             format="json",
         )
         self.assertEqual(resp.status_code, 200, resp.content)
 
-        role = CustomRole.objects.get(pk=role_id)
-        self.assertEqual(role.permissions.count(), len(CRM_MODULES))
-        for perm in role.permissions.all():
-            self.assertTrue(perm.can_view)
-            self.assertTrue(perm.can_create)
-            self.assertFalse(perm.can_update)
-            self.assertFalse(perm.can_delete)
-
-    def test_setting_permissions_twice_replaces_rather_than_duplicates(self):
-        role = CustomRole.objects.create(name="twice", display_label="Twice")
-        self.client.put(f"/api/roles/{role.id}/permissions/", self._grid(can_view=True), format="json")
-        self.client.put(f"/api/roles/{role.id}/permissions/", self._grid(can_view=False), format="json")
-        self.assertEqual(role.permissions.count(), len(CRM_MODULES))
-        self.assertFalse(any(p.can_view for p in role.permissions.all()),
-                         "a revoked permission survived the second save")
-
-    def test_a_role_name_is_unique(self):
-        CustomRole.objects.create(name="dup", display_label="Dup")
-        resp = self.client.post(
-            "/api/roles/", {"name": "dup", "display_label": "Dup Again"}, format="json",
+        member = User.objects.create_user(
+            username="member1", password="x", email="member1@iq-hub.com", team=team,
         )
-        self.assertEqual(resp.status_code, 400, resp.content)
+        resolved = member.effective_permissions()
+        for module in CRM_MODULES:
+            self.assertTrue(resolved[module]["view"], module)
+            self.assertTrue(resolved[module]["create"], module)
+            self.assertFalse(resolved[module]["update"], module)
 
-    def test_editing_a_role_keeps_its_name_and_permissions(self):
-        role = CustomRole.objects.create(name="keep", display_label="Keep")
-        self.client.put(f"/api/roles/{role.id}/permissions/", self._grid(can_view=True), format="json")
-        resp = self.client.patch(
-            f"/api/roles/{role.id}/", {"display_label": "Kept", "color": "#111111"}, format="json",
+    def test_widening_a_team_widens_everyone_already_in_it(self):
+        """
+        THE POINT OF INHERITANCE. Members hold no copy of the grid, so a change
+        to the team reaches them without touching a single user row.
+        """
+        team = Team.objects.create(name="Growing")
+        member = User.objects.create_user(
+            username="member2", password="x", email="member2@iq-hub.com", team=team,
+        )
+        self.assertFalse(member.effective_permissions()["events"]["view"])
+
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=True), format="json")
+
+        member = User.objects.get(pk=member.pk)
+        self.assertTrue(member.effective_permissions()["events"]["view"])
+
+    def test_a_brand_new_account_can_be_given_exceptions_immediately(self):
+        """
+        The Add user form's two-request sequence, in order.
+
+        The exceptions need an id to hang off, so the account has to exist first;
+        the form does POST /users/ then PUT /users/{id}/permissions/ without an
+        intervening reload. Pinned as a sequence because the failure it guards is
+        an ordering one: computing the delta before the team has landed would
+        measure it against the wrong grid, and the account would go live with
+        access nobody asked for.
+        """
+        team = Team.objects.create(name="Fresh Start")
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=True), format="json")
+
+        created = self._create_user(username="dayone", email="dayone@iq-hub.com",
+                                    team_id=team.id).json()
+        self.assertEqual(
+            self.client.put(
+                f"/api/users/{created['id']}/permissions/",
+                self._delta("reports", can_create=True, can_delete=False),
+                format="json",
+            ).status_code, 200,
+        )
+
+        resolved = User.objects.get(pk=created["id"]).effective_permissions()
+        self.assertTrue(resolved["reports"]["view"], "the team grant was lost")
+        self.assertTrue(resolved["reports"]["create"], "the day-one grant did not apply")
+        self.assertFalse(resolved["reports"]["delete"], "the day-one revoke did not apply")
+        self.assertTrue(resolved["events"]["view"], "the exception leaked to another module")
+
+    def test_a_user_can_be_granted_something_their_team_lacks(self):
+        team = Team.objects.create(name="Narrow")
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=False), format="json")
+        member = User.objects.create_user(
+            username="extra", password="x", email="extra@iq-hub.com", team=team,
+        )
+
+        resp = self.client.put(
+            f"/api/users/{member.id}/permissions/",
+            self._delta("reports", can_view=True), format="json",
         )
         self.assertEqual(resp.status_code, 200, resp.content)
-        role.refresh_from_db()
-        self.assertEqual(role.name, "keep", "the permission key changed under the label")
-        self.assertEqual(role.display_label, "Kept")
-        self.assertTrue(all(p.can_view for p in role.permissions.all()))
+
+        resolved = User.objects.get(pk=member.pk).effective_permissions()
+        self.assertTrue(resolved["reports"]["view"], "the extra grant did not apply")
+        self.assertFalse(resolved["events"]["view"], "the grant leaked to another module")
+
+    def test_a_user_can_have_something_taken_away_that_their_team_grants(self):
+        """The third state. A revoke has to beat the team, not merely not-add."""
+        team = Team.objects.create(name="Wide")
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=True, can_delete=True), format="json")
+        member = User.objects.create_user(
+            username="norm", password="x", email="norm@iq-hub.com", team=team,
+        )
+        self.assertTrue(member.effective_permissions()["bookings"]["delete"])
+
+        resp = self.client.put(
+            f"/api/users/{member.id}/permissions/",
+            self._delta("bookings", can_delete=False), format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        resolved = User.objects.get(pk=member.pk).effective_permissions()
+        self.assertFalse(resolved["bookings"]["delete"], "the revoke was ignored")
+        self.assertTrue(resolved["bookings"]["view"], "the revoke took the whole module")
+        self.assertTrue(resolved["events"]["delete"], "the revoke leaked to another module")
+
+    def test_an_untouched_cell_keeps_following_the_team(self):
+        """
+        null is INHERIT, not false. Storing the resolved value instead would
+        freeze the person at the moment they were edited, and the next change to
+        their team would pass them by.
+        """
+        team = Team.objects.create(name="Later")
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=True), format="json")
+        member = User.objects.create_user(
+            username="follower", password="x", email="follower@iq-hub.com", team=team,
+        )
+        self.client.put(f"/api/users/{member.id}/permissions/",
+                        self._delta("reports", can_create=True), format="json")
+
+        # The team now loses view on everything. The member kept an override on
+        # reports.create only, so their view must follow the team down.
+        self.client.put(f"/api/teams/{team.id}/permissions/",
+                        self._grid(can_view=False), format="json")
+
+        resolved = User.objects.get(pk=member.pk).effective_permissions()
+        self.assertFalse(resolved["reports"]["view"], "an inherited cell did not follow the team")
+        self.assertTrue(resolved["reports"]["create"], "the explicit grant was lost")
+
+    def test_an_all_null_module_is_not_stored(self):
+        team = Team.objects.create(name="Nulls")
+        member = User.objects.create_user(
+            username="nulls", password="x", email="nulls@iq-hub.com", team=team,
+        )
+        self.client.put(f"/api/users/{member.id}/permissions/",
+                        self._delta("reports"), format="json")
+        self.assertEqual(
+            member.permission_overrides.count(), 0,
+            "an override row with nothing in it was kept, and reads as an exception",
+        )
+
+    def test_setting_a_team_grid_twice_replaces_rather_than_duplicates(self):
+        team = Team.objects.create(name="twice")
+        self.client.put(f"/api/teams/{team.id}/permissions/", self._grid(can_view=True), format="json")
+        self.client.put(f"/api/teams/{team.id}/permissions/", self._grid(can_view=False), format="json")
+        self.assertEqual(team.permissions.count(), len(CRM_MODULES))
+        self.assertFalse(any(p.can_view for p in team.permissions.all()),
+                         "a revoked permission survived the second save")
 
     def test_an_unknown_module_is_refused_whole(self):
-        role = CustomRole.objects.create(name="unknown", display_label="Unknown")
+        team = Team.objects.create(name="unknown")
         resp = self.client.put(
-            f"/api/roles/{role.id}/permissions/",
+            f"/api/teams/{team.id}/permissions/",
             {"permissions": [{"module": "not_a_module", "can_view": True}]},
             format="json",
         )
         self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertEqual(role.permissions.count(), 0)
+        self.assertEqual(team.permissions.count(), 0)
 
-    def test_deleting_a_role_leaves_its_holders_without_one(self):
-        role = CustomRole.objects.create(name="doomed", display_label="Doomed")
-        holder = User.objects.create_user(
-            username="holder", password="x", email="holder@iq-hub.com",
+    def test_an_all_access_team_opens_everything(self):
+        team = Team.objects.create(name="Everything", is_all_access=True)
+        member = User.objects.create_user(
+            username="omni", password="x", email="omni@iq-hub.com", team=team,
         )
-        holder.custom_role = role
-        holder.save()
+        resolved = member.effective_permissions()
+        self.assertTrue(all(resolved[m][a] for m in CRM_MODULES
+                            for a in ("view", "create", "update", "delete")))
+        self.assertTrue(member.has_all_access)
 
-        resp = self.client.delete(f"/api/roles/{role.id}/")
+    def test_a_user_with_no_team_has_nothing(self):
+        loner = User.objects.create_user(
+            username="loner", password="x", email="loner@iq-hub.com",
+        )
+        resolved = loner.effective_permissions()
+        self.assertFalse(any(resolved[m][a] for m in CRM_MODULES
+                             for a in ("view", "create", "update", "delete")))
+
+    def test_deleting_a_team_takes_its_grid_with_it(self):
+        team = Team.objects.create(name="doomed")
+        self.client.put(f"/api/teams/{team.id}/permissions/", self._grid(can_view=True), format="json")
+        team_id = team.id
+        resp = self.client.delete(f"/api/teams/{team_id}/")
         self.assertEqual(resp.status_code, 204, resp.content)
-        holder.refresh_from_db()
-        self.assertIsNone(holder.custom_role, "the holder was deleted along with the role")
+        self.assertEqual(TeamPermission.objects.filter(team_id=team_id).count(), 0)
 
     # ── Teams ───────────────────────────────────────────────────────────────
 

@@ -15,11 +15,12 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+
 from accounts.ordering import StableOrderingFilter
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
+from teams.models import Team
 
 User = get_user_model()
 LIST = BookDelegateViewSet.as_view({"get": "list"})
@@ -56,13 +57,13 @@ class PaginationStabilityTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(
-            name="ord_admin", display_label="Ord", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="ord_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="ord_user", password="x", role="admin", email="ord@iq-hub.com",
         )
-        cls.user.custom_role = cls.role
+        cls.user.team = cls.role
         cls.user.save()
 
         # One invoice: every delegate therefore shares invoice__request_date,

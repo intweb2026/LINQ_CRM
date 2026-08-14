@@ -28,7 +28,7 @@ from django.test import TestCase
 from django.urls import get_resolver, reverse
 from rest_framework.test import APIClient
 
-from accounts.models import CustomRole, RolePermission
+
 from accounts.permissions import HP_USERNAME
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
@@ -36,6 +36,7 @@ from events.models import Event
 from paper_review.models import PaperReview
 from proposal_submission.models import ProposalSubmission
 from ticket_central.models import Ticket
+from teams.models import Team, TeamPermission
 
 User = get_user_model()
 
@@ -75,15 +76,15 @@ class ClearAllGateTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.all_access = CustomRole.objects.create(
-            name="wipe_all_access", display_label="All Access", is_all_access=True,
+        cls.all_access = Team.objects.create(
+            name="wipe_all_access", is_all_access=True,
         )
-        cls.full_crud = CustomRole.objects.create(
-            name="wipe_full_crud", display_label="Full CRUD",
+        cls.full_crud = Team.objects.create(
+            name="wipe_full_crud",
         )
         for module in ENDPOINTS:
-            RolePermission.objects.create(
-                custom_role=cls.full_crud, module=module,
+            TeamPermission.objects.create(
+                team=cls.full_crud, module=module,
                 can_view=True, can_create=True, can_update=True, can_delete=True,
             )
 
@@ -95,19 +96,19 @@ class ClearAllGateTests(TestCase):
         cls.admin_role = User.objects.create_user(
             username="wipe_admin", password="x", email="a@iq-hub.com", role="admin",
         )
-        cls.admin_role.custom_role = cls.all_access
+        cls.admin_role.team = cls.all_access
         cls.admin_role.save()
 
         cls.superuser = User.objects.create_superuser(
             username="wipe_super", password="x", email="s@iq-hub.com",
         )
-        cls.superuser.custom_role = cls.all_access
+        cls.superuser.team = cls.all_access
         cls.superuser.save()
 
         cls.deleter = User.objects.create_user(
             username="wipe_deleter", password="x", email="d@iq-hub.com", role="sales",
         )
-        cls.deleter.custom_role = cls.full_crud
+        cls.deleter.team = cls.full_crud
         cls.deleter.save()
 
         cls.nobody = User.objects.create_user(

@@ -21,6 +21,7 @@ from companies.models import Company
 from companies.serializers import CompanySerializer
 from events.models import Event
 from events.serializers import EventListSerializer
+from teams.models import Team
 
 
 def _event_codes(user):
@@ -413,22 +414,15 @@ class DashboardAggregateView(APIView):
         from teams.models import Team
         from ticket_central.models import Ticket
 
-        period = request.query_params.get("period") or "all"
-        if period not in PERIOD_DAYS:
-            return Response(
-                {"detail": f"Unknown period {period!r}. "
-                           f"Expected one of: {', '.join(sorted(PERIOD_DAYS))}."},
-                status=400,
-            )
-        # settings.TIME_ZONE is "UTC", so this is the UTC date — the same thing
-        # book_event/views.py:166 gets from timezone.now().date() for its own
-        # period filter. Deliberately the same convention: two date filters in one
-        # CRM that disagree about when "today" ends is worse than either
-        # convention alone. Note the consequence for anyone operating well east of
-        # UTC — for the first hours of their day the window ends on what they call
-        # yesterday. Fixing that is a TIME_ZONE decision, not a per-view one.
-        today = timezone.localdate()
-        p_from, p_to = period_window(period, today)
+        # One resolver for every screen that offers these presets, so the
+        # Dashboard and the Bookings table cannot disagree about where a window
+        # starts. See accounts/period_filter.py for the rolling-window rule and
+        # for why "today" is the UTC date.
+        try:
+            period, p_from, p_to = period_filter.resolve_period(
+                request.query_params.get("period"))
+        except period_filter.PeriodError as exc:
+            return Response({"detail": str(exc)}, status=400)
 
         codes = _event_codes(request.user)
         del_qs = BookDelegate.objects.all()

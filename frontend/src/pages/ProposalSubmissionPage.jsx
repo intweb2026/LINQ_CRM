@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { EmptyState, PageHead } from '../components/UI';
+import { useCallback, useState } from 'react';
+import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Dot, Who } from '../components/Badge';
-import { fdate, nf, uniq } from '../lib/helpers';
+import { fdate, nf } from '../lib/helpers';
 import {
   PARTICIPATION_TYPES, QC_GRADES, QC_GRADE_TONE, SPEAKER_SLOT_STATUSES, SPEAKER_SLOT_TONE,
   SPONSORSHIP_STATUSES, SPONSORSHIP_TONE, REVENUE_POSSIBILITY, REVENUE_TONE,
@@ -18,20 +18,46 @@ import ProposalFormModal from './proposalSubmission/ProposalFormModal';
 import ProposalImportModal from './proposalSubmission/ProposalImportModal';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
+import DateRangeFilter from '../components/DateRangeFilter';
 
 export default function ProposalSubmissionPage() {
   const { canView, can } = useSession();
-  const { data: proposals, refetch, refetchQuiet, loading, error } = useFetch(proposalApi.list, [], { initialData: [] });
-  const PROPOSALS = proposals || [];
+  // Date range, applied by the SERVER over submission_date falling back to
+  // created_at — see accounts/period_filter.py. submission_date is nullable, and
+  // the fallback is what stops a window hiding every row that never got one.
+  const [period, setPeriod] = useState('all');
   /**
-   * Also fires when PAPER REVIEWS are written: importing a review generates the
-   * proposals derived from it, so a page showing proposals goes stale on a write
-   * to a resource it never reads. That is exactly the kind of link a per-page
-   * refresh call misses and a subscription does not.
+   * The row count, as its own small aggregate; the table no longer holds the set.
+   *
+   * This page used to load every proposal into the browser with a fetchAllPages
+   * walk and read `.length` off it — 3,752 rows over 8 sequential requests on the
+   * current database, none of which rendered until the last one landed. See
+   * ProposalSubmissionViewSet.stats.
    */
-  const { refreshNow: refresh } = useLiveData(refetchQuiet, {
+  const fetchStats = useCallback(() => proposalApi.stats(period), [period]);
+  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } =
+    useFetch(fetchStats, [period], { initialData: {} });
+  const total = stats && stats.total != null ? stats.total : null;
+
+  /**
+   * The table keeps its own rows current in server mode; this pair is for the
+   * count beside it, which is a separate query.
+   *
+   * The subscription also fires when PAPER REVIEWS are written: importing a
+   * review generates the proposals derived from it, so a page showing proposals
+   * goes stale on a write to a resource it never reads. That is exactly the kind
+   * of link a per-page refresh call misses and a subscription does not. The table
+   * gets the same reach through server.live.
+   */
+  const [tableRefetch, setTableRefetch] = useState(null);
+  const keepRefetch = useCallback((fn) => setTableRefetch(() => fn), []);
+  const { refreshNow: refreshStats } = useLiveData(reloadStats, {
     resources: ['proposal-submissions', 'paper-reviews'],
   });
+  const refresh = useCallback(() => {
+    if (tableRefetch) tableRefetch();
+    refreshStats();
+  }, [tableRefetch, refreshStats]);
   // Router path, not the permission module key — see config/urls.py.
   const bulk = useBulkUpdate('proposal-submissions', refresh);
   const [editProposal, setEditProposal] = useState(null);
@@ -52,17 +78,30 @@ export default function ProposalSubmissionPage() {
           ) : null}
           {/* Outside the create gate: its audience is the HP account, and nesting it
               would make that the intersection of two unrelated checks. */}
-          <ClearAllButton noun="proposal submission" count={PROPOSALS.length}
+          <ClearAllButton noun="proposal submission" count={total}
             onClear={proposalApi.clearAll} onCleared={refresh}
             extra="Paper reviews are not touched. Proposals that were generated from a review will be recreated if that review is imported again." />
         </>} />
 
-      {error && !loading ? (
-        <EmptyState icon="warn" title="Unable to load proposal submissions" body="Something went wrong while loading this data. Please try again in a moment."
-          action={<button className="btn btn-s btn-sm" onClick={() => refetch().catch(() => {})}><Icon name="refresh" size={13} />Try again</button>} />
-      ) : (
+      <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
+        count={total} noun="proposals" note="by submission date" />
+
       <DataTable
-        rows={PROPOSALS} noun="proposals" pageSize={50} defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        /**
+         * SERVER MODE, for the reasons set out on the same prop in
+         * PaperReviewPage: the first paint costs one 50-row request instead of a
+         * walk of the whole table, and the wait now shows a "Loading proposals…"
+         * spinner rather than the "No Proposals Found" state, which the table was
+         * previously obliged to render while it still had nothing.
+         *
+         * `live` names paper-reviews as well, because the bridge creates
+         * proposals from a review write — the same link the stats subscription
+         * above covers, applied to the rows.
+         */
+        server={{ resource: 'proposal-submissions', live: ['paper-reviews'] }}
+        serverParams={{ period }}
+        onServerReady={keepRefetch}
+        noun="proposals" pageSize={50} infinite defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
         select={can('update', 'proposal_submission')}
         groups={[
           { key: 'id', label: 'Identification' }, { key: 'sp', label: 'Speaker & company' }, { key: 'qc', label: 'Quality & content' },
@@ -70,25 +109,31 @@ export default function ProposalSubmissionPage() {
         ]}
         hiddenDefault={['internal_footnotes_mr', 'slot_recommendation_mr']}
         cols={[
-          { key: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span>, opts: () => uniq(PROPOSALS.map((p) => p.event_code)) },
-          { key: 'submission_date', label: 'Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
-          { key: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
-          { key: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
-          { key: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
-          { key: 'company_name', label: 'Company Name', group: 'sp', opts: () => uniq(PROPOSALS.map((p) => p.company_name)) },
-          { key: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-          { key: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-          { key: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-          { key: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
-          { key: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-          { key: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
-          { key: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
-          { key: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
-          { key: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
-          { key: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
-          { key: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
-          { key: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
-          { key: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
+          /* event_code and company_name carry NO `opts`. Those dropdowns were
+             built by scanning the loaded rows, which under server paging means
+             the fifty on screen. Both are registered filter_spec fields, so a
+             text condition on either is still evaluated by the database over
+             every row. The status columns keep theirs; those lists are constants
+             rather than a scan of the data. */
+          { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
+          { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+          { key: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
+          { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
+          { key: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
+          { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
+          { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+          { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+          { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+          { key: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
+          { key: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+          { key: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
+          { key: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
+          { key: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
+          { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+          { key: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
+          { key: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
+          { key: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
+          { key: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
           { key: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
           { key: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
         ]}
@@ -104,11 +149,12 @@ export default function ProposalSubmissionPage() {
           </div>
         )}
         onRow={can('update', 'proposal_submission') ? (r) => setEditProposal(r) : undefined}
-        bulkActions={(ids, { clear, total }) => (
+        bulkActions={(ids, { clear, total: matching }) => (
           <div className="bulk">
-            {/* The rows on this page, not every match — the count says which. */}
+            {/* Whatever the header checkbox resolved — every match, or the rows
+                ticked by hand. The count says which. */}
             <span className="n">{nf(ids.length)}</span> selected
-            {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
+            {matching > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(matching)} matching</span> : null}
             <div className="sep" />
             <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
               <Icon name="edit" size={13} />Update field…
@@ -117,10 +163,9 @@ export default function ProposalSubmissionPage() {
           </div>
         )}
       />
-      )}
 
       {bulk.ready ? (
-        <BulkUpdateModal {...bulk.props} rowLabel="proposal" totalMatching={PROPOSALS.length} />
+        <BulkUpdateModal {...bulk.props} rowLabel="proposal" totalMatching={total} />
       ) : null}
 
       {editProposal ? <ProposalFormModal proposal={editProposal} onClose={() => setEditProposal(null)} onSaved={refresh} /> : null}

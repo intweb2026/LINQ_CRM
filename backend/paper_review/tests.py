@@ -15,9 +15,10 @@ from datetime import date
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
-from accounts.models import CustomRole, RolePermission
+
 from events.models import Event
 from paper_review.models import PaperReview
+from teams.models import Team, TeamPermission
 
 # Nothing in this suite may reach a real mailbox. locmem is asserted rather than
 # assumed, and every address below is under example.com / .invalid.
@@ -79,10 +80,10 @@ class _Base(APITestCase):
         # immediately visible to them, which is a row-scope claim tested through
         # the proposal endpoint, so the module grant has to be there for the
         # request to get that far.
-        cls.role = CustomRole.objects.create(name="Reviews Full")
+        cls.role = Team.objects.create(name="Reviews Full")
         for module in ("paper_review", "proposal_submission"):
-            RolePermission.objects.create(
-                custom_role=cls.role, module=module,
+            TeamPermission.objects.create(
+                team=cls.role, module=module,
                 can_view=True, can_create=True, can_update=True, can_delete=True,
             )
         # role="sales" deliberately: a SCOPED, non-MR, non-admin author, so the
@@ -90,18 +91,18 @@ class _Base(APITestCase):
         # Cc recipient, since "sales" is not in notifications.CC_ROLES.
         cls.user = U.objects.create_user(
             username="pr_author", password="x", role="sales",
-            email="author@example.com", custom_role=cls.role,
+            email="author@example.com", team=cls.role,
         )
         cls.user.assigned_events.set([cls.event, cls.other_event])
 
-        cls.blind_role = CustomRole.objects.create(name="No Reviews")
-        RolePermission.objects.create(
-            custom_role=cls.blind_role, module="paper_review",
+        cls.blind_role = Team.objects.create(name="No Reviews")
+        TeamPermission.objects.create(
+            team=cls.blind_role, module="paper_review",
             can_view=False, can_create=False, can_update=False, can_delete=False,
         )
         cls.blind_user = U.objects.create_user(
             username="pr_blind", password="x", email="blind@example.com",
-            custom_role=cls.blind_role,
+            team=cls.blind_role,
         )
 
     def payload(self, **over):

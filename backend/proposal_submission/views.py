@@ -38,6 +38,7 @@ from accounts.import_common import catalogue_notice
 from accounts.crm_permissions import crm_permission
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
+from accounts.period_filter import PeriodFilterMixin
 from accounts.permissions import IsHPAccount
 from .access import (
     has_full_visibility, may_see_mr_fields, may_use_event_code,
@@ -72,7 +73,7 @@ BUSINESS_FIELDS = [
 ]
 
 
-class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
+class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                                 viewsets.ModelViewSet):
     """
     GET    /api/proposal-submissions/            — list (paginated, filtered, searchable)
@@ -89,6 +90,12 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
     serializer_class   = ProposalSubmissionSerializer
     filterset_class    = ProposalSubmissionFilter
 
+    # ?period= presets over submission_date, falling back to created_at. Same
+    # reasoning as PaperReviewViewSet: submission_date is nullable, and a window
+    # over a nullable column alone hides every blank row rather than dating it by
+    # when it arrived. See accounts/period_filter.py.
+    period_date_fields = ("submission_date", "created_at")
+
     # Declared explicitly rather than inherited from DEFAULT_FILTER_BACKENDS.
     # StableOrderingFilter appends the pk as a final tiebreaker to EVERY
     # ordering, default or user-selected; submission_date is non-unique AND
@@ -102,11 +109,25 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
         "speaker_name", "email", "company_name", "event_code",
         "presentation_theme", "agenda_slot", "spex_remarks",
     ]
+    # Every column the table renders EXCEPT the two MR-restricted ones, so a
+    # header click sorts over the whole set rather than the fifty rows on screen.
+    # The table pages server side, and DataTable only offers a header as sortable
+    # when the backend will honour it, so a field missing here is a column that
+    # silently stops sorting. Same widening as PaperReviewViewSet, for the same
+    # reason.
+    #
+    # internal_footnotes_mr and slot_recommendation_mr are deliberately absent
+    # and must stay absent: _reject_mr_query_params answers 400 for an ordering on
+    # either from anyone outside MR, so registering them would advertise a sort
+    # that works for two roles and errors for the rest.
     ordering_fields = [
         "id", "submission_date", "speaker_name", "company_name", "email",
         "qc_score", "qc_grade", "participation_type",
         "speaker_slot_status", "sponsorship_status", "revenue_possibility",
         "linkedin_followers", "created_at", "updated_at",
+        "linkedin_speaker", "linkedin_company", "duplicate_count",
+        "presentation_theme", "sales_pitch_factor", "agenda_slot",
+        "agenda_addition", "spex_remarks",
     ]
     ordering = ["-submission_date"]
 
@@ -441,6 +462,29 @@ class ProposalSubmissionViewSet(FilterSpecMixin, BulkUpdateMixin,
         nobody has used yet must still be selectable there.
         """
         return Response(self._distinct_option_values())
+
+    @action(detail=False, methods=["get"], url_path="stats")
+    def stats(self, request):
+        """
+        GET /api/proposal-submissions/stats/[?period=<key>] — how many proposals
+        the caller can see in the current window, without loading a single one.
+
+        Identical in shape and reasoning to PaperReviewViewSet.stats; the two
+        modules stay parallel. The page used to derive this number from a walk of
+        every page of the list, roughly 3,752 rows over 8 requests, fetched before
+        the table could paint a row. The table now pages server side and never
+        holds the whole set, so the count comes from the database.
+
+        The window is applied here as well as on the list because the number is
+        read directly above the filtered table, and scope comes from
+        get_queryset() so a scoped user counts only their own events.
+        """
+        from accounts.period_filter import apply_period
+
+        qs = self.get_queryset()
+        _, p_from, p_to = self.resolved_period()
+        qs = apply_period(qs, self.period_date_fields, p_from, p_to)
+        return Response({"total": qs.count()})
 
     @action(detail=False, methods=["get"], url_path="permitted_events")
     def permitted_events(self, request):

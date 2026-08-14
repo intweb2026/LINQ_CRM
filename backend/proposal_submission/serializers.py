@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 from rest_framework import serializers
 
-from events.models import Event
+from events.name_lookup import EventNameMixin
 from webhooks.event_resolver import resolve_event_code
 from .access import may_see_mr_fields, may_use_event_code, permitted_event_codes
 from .models import ProposalSubmission
@@ -72,12 +72,16 @@ READ_ONLY_FIELDS = [
 ]
 
 
-class ProposalSubmissionSerializer(serializers.ModelSerializer):
+class ProposalSubmissionSerializer(EventNameMixin, serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     updated_by_name = serializers.SerializerMethodField()
     # Resolved from the Event catalogue for display, so the list view can show a
     # human-readable event without the client fetching all events just to label
     # a row. Never written.
+    #
+    # get_event_name comes from EventNameMixin. It used to query the catalogue
+    # once per row, which was 500 queries on a 500 row page; the mixin resolves
+    # the whole code to name map once per response. See events/name_lookup.py.
     event_name = serializers.SerializerMethodField()
     # READS the queryset annotation added in views._annotate_duplicates — it does
     # NOT query. A method field here is not the N+1 the annotation exists to
@@ -123,10 +127,6 @@ class ProposalSubmissionSerializer(serializers.ModelSerializer):
         "not evaluated here" rather than asserting a misleading False.
         """
         return getattr(obj, "qc_score_stale", None)
-
-    def get_event_name(self, obj):
-        ev = Event.objects.filter(event_code__iexact=obj.event_code).first()
-        return ev.name if ev else ""
 
     # ── MR-internal field visibility ──────────────────────────────────────────
 

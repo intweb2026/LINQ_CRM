@@ -368,6 +368,77 @@ export async function fetchPage(url, { page = 1, pageSize = 50, ordering, filter
 }
 
 /**
+ * GET {resource}/ids/ — every id the CURRENT filter matches, for select-all.
+ *
+ * The counterpart to fetchPage: same query, same server-side filtering, but the
+ * whole matching set as bare ids instead of one page of rows. The header
+ * checkbox used to tick only the rows on screen, so "select all" on a filter
+ * matching 35,690 tickets selected 50.
+ *
+ * Params are built exactly as fetchPage builds them, and deliberately so — the
+ * two must resolve the same rows or select-all would cover a different set than
+ * the table displays. `filterSpec` is RAW JSON for the same reason it is there:
+ * serializeParams encodes exactly once, and encoding here as well is the
+ * double-encoding bug that already shipped.
+ *
+ * Resolves { ids, count, max }. Rejects with the server's 400 when the filter
+ * matches more than the backend's select_all_max — that refusal is deliberate,
+ * since a silently truncated select-all looks identical to a complete one.
+ */
+export async function fetchAllIds(resource, { filterSpec, search, params } = {}) {
+  const query = { ...(params || {}) };
+  if (filterSpec) query.filter_spec = filterSpec;
+  if (search) query.search = search;
+
+  const { data } = await http.get(`${resource}/ids/`, { params: query });
+  const ids = Array.isArray(data) ? data : (data.ids || []);
+  return { ids, count: data.count ?? ids.length, max: data.max ?? null };
+}
+
+/**
+ * Split `items` into arrays of at most `size`.
+ *
+ * Every bulk endpoint on this backend caps at 1000 ids per request
+ * (accounts/bulk_update.py, and the bulk_delete actions on delegates and
+ * tickets). Select-all routinely produces more than that, so the callers that
+ * post id collections batch through here rather than sending one oversized body
+ * and getting a 400 the user reads as "the update did not work".
+ */
+export function chunk(items, size) {
+  if (!(size > 0)) throw new Error(`chunk: size must be positive, got ${size}`);
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * `items.map(fn)` with at most `limit` in flight, awaited in order.
+ *
+ * For the bulk helpers that have no batch endpoint and must issue one request
+ * PER id (bookings.bulkMarkPaid, tickets.bulkSubmit). Those were written as
+ * `Promise.all(ids.map(...))`, which was survivable while a selection could
+ * only ever hold one page: 50 parallel requests. Against a select-all it is
+ * 35,690 of them opened at once, which exhausts the browser's connection pool,
+ * buries the API under a self-inflicted burst, and reports as the app hanging.
+ *
+ * Order of results matches order of input regardless of completion order.
+ */
+export async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+  );
+  return results;
+}
+
+/**
  * GET {resource}/filter_schema/ — the server's registry of filterable fields
  * and the operators allowed on each. Fetched rather than hardcoded so the
  * frontend cannot drift from backend/accounts/filter_spec.py.

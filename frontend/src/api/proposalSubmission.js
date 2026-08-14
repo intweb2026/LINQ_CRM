@@ -21,7 +21,24 @@ import { fetchAllPages, http } from './client';
 // (config/pagination.py), so reading `results` off page 1 silently returns the
 // first 50 rows and the table reads as "there are only 50 proposals" with
 // nothing indicating more exist.
-export const list = () => fetchAllPages('proposal-submissions/');
+// `period` is an optional DASH_PERIODS key, applied by the server over
+// submission_date falling back to created_at — see
+// backend/accounts/period_filter.py. Same reasoning as paperReview.list(): this is
+// a fetchAllPages walk, so narrowing server-side cuts requests, not just rows.
+//
+// NO LONGER USED BY THE TABLE, and should not be again at this size. The page
+// walked every page through this, 8 sequential requests before a row could
+// render. ProposalSubmissionPage passes DataTable a `server` prop instead, so
+// Django filters, orders and pages. Kept for a caller that genuinely needs the
+// whole set in memory; there is none today.
+export const list = (period) => fetchAllPages('proposal-submissions/', period ? { period } : {});
+
+// GET /api/proposal-submissions/stats/ — { total } for the caller's scope and
+// window. The page reads this rather than taking `.length` off a fetchAllPages
+// walk; the table pages server side now, so it holds one page at a time and
+// cannot count the set. Mirrors api/paperReview.js stats().
+export const stats = (period) =>
+  http.get('proposal-submissions/stats/', { params: period ? { period } : {} }).then((r) => r.data);
 
 export const get = (id) => http.get(`proposal-submissions/${id}/`).then((r) => r.data);
 

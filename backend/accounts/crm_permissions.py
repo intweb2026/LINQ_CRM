@@ -6,8 +6,21 @@ Factory that returns a DRF permission class for a given CRM module.
 Usage in ViewSets:
     from accounts.crm_permissions import crm_permission
     permission_classes = [crm_permission("events")]
+
+WHERE ACCESS COMES FROM
+The team, and nothing else. A user inherits their team's grid by being in it;
+accounts.UserPermission records the cells where one person deliberately differs.
+Both are resolved in User.effective_permissions(), which is the single answer
+this module and every other gate reads.
+
+This replaced a per-user CustomRole. Under that design a team and a permission
+set were two things kept in step by hand, and in the live data they had already
+come apart — four people in Sales Team were carrying the Speaker Sales set, so
+"what can the sales team do" had no single answer.
 """
 from rest_framework.permissions import BasePermission
+
+from .permissions import HP_USERNAME
 
 # Actions that only need can_view
 _VIEW_ACTIONS = frozenset({
@@ -49,26 +62,17 @@ def has_module_action(user, module: str, action: str) -> bool:
     away, so it is gated on create (by the class, via the POST fallback) AND on
     update (by the view, through this helper).
 
-    The precedence is the class's, deliberately duplicated nowhere else: HP
-    bypasses, is_all_access grants everything, can_view is a prerequisite, and a
-    user with no custom role has nothing.
+    can_view remains a prerequisite for the other three: a module you cannot open
+    is not one you can write to, however the grid was filled in.
     """
-    if not user or not user.is_authenticated:
+    if not user or not getattr(user, "is_authenticated", False):
         return False
-    if user.username == "HP":
+    if getattr(user, "username", None) == HP_USERNAME:
         return True
-    custom_role = getattr(user, "custom_role", None)
-    if custom_role is None:
+    resolved = user.effective_permissions().get(module)
+    if not resolved or not resolved.get("view"):
         return False
-    if custom_role.is_all_access:
-        return True
-    try:
-        perm = custom_role.permissions.get(module=module)
-    except Exception:
-        return False
-    if not perm.can_view:
-        return False
-    return bool(getattr(perm, f"can_{action}", False))
+    return bool(resolved.get(action, False))
 
 
 def crm_permission(module: str):
@@ -78,30 +82,18 @@ def crm_permission(module: str):
         crm_module = module
 
         def has_permission(self, request, view):
-            if not request.user or not request.user.is_authenticated:
+            user = request.user
+            if not user or not user.is_authenticated:
                 return False
 
             # HP username bypasses all permission checks
-            if request.user.username == "HP":
+            if user.username == HP_USERNAME:
                 return True
 
-            # User must have a custom role assigned
-            custom_role = getattr(request.user, "custom_role", None)
-            if custom_role is None:
-                return False
-
-            # Admin override — is_all_access grants everything
-            if custom_role.is_all_access:
-                return True
-
-            # Fetch the module permission row
-            try:
-                perm = custom_role.permissions.get(module=self.crm_module)
-            except Exception:
-                return False
+            resolved = user.effective_permissions().get(self.crm_module)
 
             # View is a prerequisite for all other permissions
-            if not perm.can_view:
+            if not resolved or not resolved.get("view"):
                 return False
 
             action = getattr(view, "action", None)
@@ -109,22 +101,22 @@ def crm_permission(module: str):
             if action in _VIEW_ACTIONS:
                 return True
             if action in _CREATE_ACTIONS:
-                return perm.can_create
+                return resolved["create"]
             if action in _UPDATE_ACTIONS:
-                return perm.can_update
+                return resolved["update"]
             if action in _DELETE_ACTIONS:
-                return perm.can_delete
+                return resolved["delete"]
 
             # Map by HTTP method for unknown / custom actions
             method = request.method.upper()
             if method == "GET":
                 return True
             if method == "POST":
-                return perm.can_create
+                return resolved["create"]
             if method in ("PUT", "PATCH"):
-                return perm.can_update
+                return resolved["update"]
             if method == "DELETE":
-                return perm.can_delete
+                return resolved["delete"]
 
             return True
 

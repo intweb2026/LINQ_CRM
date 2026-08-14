@@ -23,8 +23,72 @@ from .serializers import (
 )
 from .filters import BookEventFilter
 from webhooks.utils import unwrap_payload
+from teams.models import Team
 
 logger = logging.getLogger(__name__)
+
+
+# ── Smart Import: the columns bulk_import accepts ────────────────────────────
+#
+# (key, label, aliases). `key` is the row key bulk_import reads; `label` is what
+# the mapping step shows; `aliases` are extra header spellings that should
+# auto-map onto the field.
+#
+# THE BUG THIS CLOSES
+# This list lived in frontend/src/api/import.js as a hand-written array of 17
+# entries, while bulk_import reads 28 keys. The eleven missing ones — currency,
+# paid_or_free, payment_date, discount_code, add_ons, delegate_count, edition,
+# sales_executive, position, notes, created_at — had nowhere to map to, so a
+# spreadsheet carrying them was silently imported without them. A skipped column
+# looks identical to a column that was not in the file.
+#
+# NOT LISTED, ON PURPOSE — bulk_import does not read these, and offering a field
+# the importer ignores is worse than omitting it, because the wizard would report
+# the column as mapped:
+#   total_amount, pre_tax_amount, tax_amount, add_ons_total_amount
+#                          money columns; the importer writes none of them
+#   source, form_name, form_url, packages, payment_due_date, parent_code
+#                          website-intake provenance, set by the webhook path
+#   team_leader, updated_by, import_batch_id
+#                          system/audit fields
+#   invoice_number         IS accepted and IS listed — omitted from this note
+#                          only to say plainly that a blank one is generated
+#                          ("IMP-…"), it is not required
+#
+# Order is specific-before-generic, because ImportWizard's autoMap falls back to
+# a substring scan that takes the first hit in this order: accounts_contact_email
+# before contact_email (else "Accounts Email" matches contact_email first),
+# discount_code before discount, invoice_date before invoice_number.
+BOOKING_IMPORT_FIELDS = (
+    ("invoice_number", "Invoice Number", ("Invoice No", "Invoice #")),
+    ("event_code", "Event Code", ()),
+    ("event_name", "Event Name", ()),
+    ("booking_code", "Booking Code", ()),
+    ("edition", "Edition", ("Year",)),
+    ("company_name", "Company", ("Company Name", "Organisation")),
+    ("contact_name", "Delegate Name", ("Name", "Attendee", "Full Name")),
+    ("position", "Job Title / Position", ("Designation", "Job Title")),
+    ("accounts_contact_email", "Accounts Email", ("Accounts Contact Email",)),
+    ("contact_email", "Email", ("Email Address",)),
+    ("contact_phone", "Direct Line", ("Phone", "Phone Number", "Mobile")),
+    ("request_date", "Request Date", ()),
+    ("invoice_date", "Invoice Date", ()),
+    ("payment_date", "Payment Date", ()),
+    ("payment_status", "Payment Status", ("Status",)),
+    ("paid_or_free", "Paid / Free", ("Paid or Free",)),
+    ("payment_type", "Payment Type", ("Payment Method",)),
+    ("ticket_tier", "Ticket Tier", ("Tier",)),
+    ("currency", "Currency", ()),
+    ("discount_code", "Discount Code", ()),
+    ("discount", "Discount", ()),
+    ("delegate_count", "Delegate Count", ("No of Delegates",)),
+    ("attendance", "Attendance", ("Attended", "Confirmed")),
+    ("add_ons", "Add-Ons", ("Addons",)),
+    ("reference", "Reference", ("Payment Reference",)),
+    ("notes", "Notes", ("Comments", "Remarks")),
+    ("sales_executive", "Sales Executive (username/email)", ("Sales Exec", "Sales Rep", "Sales Team")),
+    ("created_at", "Added Time", ("Created At", "Created Time")),
+)
 
 
 class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
@@ -578,12 +642,40 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         )
         return Response(resp_body, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=["get"], url_path="import_schema")
+    def import_schema(self, request):
+        """
+        GET /api/invoices/import_schema/ — the columns bulk_import below accepts.
+
+        WHY THIS ENDPOINT EXISTS
+        The Smart Import wizard's field list was a hand-written array in
+        frontend/src/api/import.js. It offered 17 of the 28 columns bulk_import
+        actually reads, and the eleven it left out are invisible: a spreadsheet
+        carrying Currency, Position, Sales Executive or Delegate Count has nowhere
+        to map them, so the wizard quietly skips those columns and the import looks
+        like it worked. Nothing in the UI could say otherwise, because the UI did
+        not know the fields existed.
+
+        Published FROM the definition the importer is driven by, so a field added
+        to one is offered by the other in the same commit.
+        """
+        return Response({
+            "kind": "bookings",
+            "fields": [
+                {"key": key, "label": label, "aliases": list(aliases)}
+                for key, label, aliases in BOOKING_IMPORT_FIELDS
+            ],
+        })
+
     @action(detail=False, methods=["post"], url_path="bulk_import")
     def bulk_import(self, request):
         """
         POST /api/invoices/bulk_import/
         Bulk-insert up to 500 BookEvent rows per call.
         Body: { rows: [...], duplicate_strategy: "skip"|"upsert", batch_number: int }
+
+        Accepted columns are BOOKING_IMPORT_FIELDS, published by import_schema
+        above. A test asserts the two agree — see tests_import_schema.py.
         """
         rows               = request.data.get("rows", [])
         strategy           = request.data.get("duplicate_strategy", "skip")

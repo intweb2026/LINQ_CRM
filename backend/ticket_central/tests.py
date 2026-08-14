@@ -20,6 +20,8 @@ from rest_framework import status as http_status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
+from teams.models import Team, TeamPermission
+
 from .models import Ticket, TicketSequence
 from .utils import (
     _coerce_row,
@@ -40,13 +42,12 @@ _ALL_ACCESS_ROLE_NAME = "test_all_access"
 
 def restricted_role(name, *, view=True, create=False, update=False, delete=False,
                     module="ticket_central"):
-    """A CustomRole with explicit per-module CRUD flags, for permission tests."""
-    from accounts.models import CustomRole, RolePermission
-    role, _ = CustomRole.objects.get_or_create(
-        name=name, defaults={"display_label": name, "is_all_access": False},
+    """A team with explicit per-module CRUD flags, for permission tests."""
+    role, _ = Team.objects.get_or_create(
+        name=name, defaults={"is_all_access": False},
     )
-    RolePermission.objects.update_or_create(
-        custom_role=role, module=module,
+    TeamPermission.objects.update_or_create(
+        team=role, module=module,
         defaults={"can_view": view, "can_create": create,
                   "can_update": update, "can_delete": delete},
     )
@@ -56,23 +57,22 @@ def restricted_role(name, *, view=True, create=False, update=False, delete=False
 def all_access_role():
     """
     TicketViewSet is guarded by crm_permission("ticket_central") (views.py:45),
-    which resolves through User.custom_role. A user without one is refused on
+    which resolves through User.team. A user without one is refused on
     every request, so the default test user needs a role attached or the whole
     suite 403s before it reaches the behaviour under test.
     """
-    from accounts.models import CustomRole
-    role, _ = CustomRole.objects.get_or_create(
+    role, _ = Team.objects.get_or_create(
         name=_ALL_ACCESS_ROLE_NAME,
-        defaults={"display_label": "Test All Access", "is_all_access": True},
+        defaults={"is_all_access": True},
     )
     return role
 
 
-def make_user(username, role, custom_role=_ALL_ACCESS_ROLE_NAME, **kwargs):
+def make_user(username, role, team=_ALL_ACCESS_ROLE_NAME, **kwargs):
     """
-    `custom_role` controls CRM permissions, independently of `role` (the legacy
-    string field). Defaults to an all-access role; pass custom_role=None for a
-    deliberately role-less user, or a CustomRole instance for a restricted one.
+    `team` controls CRM permissions, independently of `role` (the legacy
+    string field). Defaults to an all-access role; pass team=None for a
+    deliberately permission-less user, or a Team instance for a restricted one.
     """
     u = User.objects.create_user(
         username=username,
@@ -80,12 +80,12 @@ def make_user(username, role, custom_role=_ALL_ACCESS_ROLE_NAME, **kwargs):
         role=role,
         **kwargs,
     )
-    if custom_role == _ALL_ACCESS_ROLE_NAME:
-        u.custom_role = all_access_role()
-        u.save(update_fields=["custom_role"])
-    elif custom_role is not None:
-        u.custom_role = custom_role
-        u.save(update_fields=["custom_role"])
+    if team == _ALL_ACCESS_ROLE_NAME:
+        u.team = all_access_role()
+        u.save(update_fields=["team"])
+    elif team is not None:
+        u.team = team
+        u.save(update_fields=["team"])
     Token.objects.create(user=u)
     return u
 
@@ -344,15 +344,15 @@ class PermissionTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         # These tests assert what each role may NOT do, so they need genuinely
-        # restricted CustomRoles — the all-access default would grant everything
+        # restricted teams — the all-access default would grant everything
         # and every "cannot" assertion would fail.
         cls.admin = make_user("admin1", "admin")   # all-access
         cls.mr    = make_user("mr1", "market_research",
-                              custom_role=restricted_role("tc_mr", create=True, update=True))
+                              team=restricted_role("tc_mr", create=True, update=True))
         cls.dmd   = make_user("dmd1", "data_mining",
-                              custom_role=restricted_role("tc_dmd", update=True))
+                              team=restricted_role("tc_dmd", update=True))
         cls.sales = make_user("sales1", "sales",
-                              custom_role=restricted_role("tc_sales"))
+                              team=restricted_role("tc_sales"))
         cls.ticket = make_ticket(
             purpose="Permission Test", type_of_ticket="BX",
             created_by=cls.mr,

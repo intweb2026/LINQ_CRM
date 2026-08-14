@@ -11,10 +11,10 @@ because reads go through get_queryset() -> rbac_filter_invoice().
 
 THE USER THAT MAKES IT EXPLOITABLE
 IsAdminRole admits three kinds of caller (accounts/permissions.py):
-    username == "HP"  OR  user.is_admin  OR  custom_role.is_all_access
+    username == "HP"  OR  user.is_admin  OR  team.is_all_access
 but `is_admin` is `role == "admin"` (accounts/models.py:140), and
 rbac_filter() only short-circuits for `is_admin`. So a user with
-    role="sales"  +  custom_role.is_all_access=True
+    role="sales"  +  team.is_all_access=True
 passes the permission gate while STILL being scoped — the combination this suite
 uses throughout. Such a user existed in the live database at the time of writing.
 
@@ -29,13 +29,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
 from book_event.models import BookEvent
 from events.models import Event
 from ticket_central.models import Ticket
 from ticket_central.views import TicketViewSet
+from teams.models import Team
 
 User = get_user_model()
 
@@ -53,13 +54,13 @@ class DelegateBulkDeleteScopingTests(TestCase):
     def setUpTestData(cls):
         # Passes IsAdminRole via is_all_access, but is NOT role=admin, so
         # rbac_filter still scopes it. This is the dangerous combination.
-        cls.all_access_role = CustomRole.objects.create(
-            name="ws_all_access", display_label="WS All Access", is_all_access=True,
+        cls.all_access_role = Team.objects.create(
+            name="ws_all_access", is_all_access=True,
         )
         cls.scoped = User.objects.create_user(
             username="ws_scoped", password="x", role="sales", email="ws1@iq-hub.com",
         )
-        cls.scoped.custom_role = cls.all_access_role
+        cls.scoped.team = cls.all_access_role
         cls.scoped.save()
 
         # A real admin: unrestricted by design, used to prove the fix did not
@@ -67,7 +68,7 @@ class DelegateBulkDeleteScopingTests(TestCase):
         cls.admin = User.objects.create_user(
             username="ws_admin", password="x", role="admin", email="ws2@iq-hub.com",
         )
-        cls.admin.custom_role = cls.all_access_role
+        cls.admin.team = cls.all_access_role
         cls.admin.save()
 
         # Only the in-scope event is assigned to the scoped user.
@@ -150,7 +151,7 @@ class DelegateBulkDeleteScopingTests(TestCase):
         stranger = User.objects.create_user(
             username="ws_stranger", password="x", role="sales", email="ws3@iq-hub.com",
         )
-        stranger.custom_role = self.all_access_role
+        stranger.team = self.all_access_role
         stranger.save()
 
         resp = self._delete(stranger, [self.d_in.id, self.d_out.id])
@@ -173,13 +174,13 @@ class TicketBulkDeleteScopingTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(
-            name="ws_tickets", display_label="WS Tickets", is_all_access=True,
+        cls.role = Team.objects.create(
+            name="ws_tickets", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="ws_tk", password="x", role="sales", email="ws4@iq-hub.com",
         )
-        cls.user.custom_role = cls.role
+        cls.user.team = cls.role
         cls.user.save()
 
     def setUp(self):

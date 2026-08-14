@@ -17,6 +17,7 @@ import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
+import DateRangeFilter from '../components/DateRangeFilter';
 
 const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim">—</span> : null);
 const person = (v) => dim(v) || <Who name={v} />;
@@ -92,7 +93,13 @@ export default function TicketCentralPage() {
   // rows (~72 sequential requests) before the table could render a single row.
   // DataTable now pages against the server. Tab counts already came from
   // tickets/stats/, which is a real aggregate.
-  const { data: stats, refetchQuiet: reloadStats } = useFetch(ticketsApi.stats, [], { initialData: {} });
+  // Date range. The window is applied by the SERVER — over created_at ("Added
+  // Time"), which is what this table sorts by; see accounts/period_filter.py for
+  // why it cannot be a filter_spec criterion. The tab counts take the same
+  // window, so a tab and the rows under it never disagree.
+  const [period, setPeriod] = useState('all');
+  const fetchStats = useCallback(() => ticketsApi.stats(period), [period]);
+  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: {} });
   const [tableRefetch, setTableRefetch] = useState(null);
   // Wrapped in an updater: React treats a bare function passed to a state setter
   // as an updater and would call it instead of storing it.
@@ -142,6 +149,9 @@ export default function TicketCentralPage() {
 
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))} />
 
+      <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
+        count={S.total} noun="tickets" note="by Added Time" />
+
       <DataTable
         // Renamed from 'tickets' on purpose. Column visibility is persisted per
         // tableId (localStorage), and every user who had opened this page carried
@@ -151,6 +161,7 @@ export default function TicketCentralPage() {
         tableId="tickets.v2"
         server={{ resource: 'tickets', mapRow: ticketsApi.fromApi }}
         serverCriteria={serverCriteria}
+        serverParams={{ period }}
         onServerReady={keepRefetch}
         noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={50}
         defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"

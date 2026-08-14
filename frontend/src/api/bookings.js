@@ -17,13 +17,25 @@
 // book_event/management/commands/import_booking_excel.py:291). The Bookings tab
 // now shows ONE field, the checkbox, backed by `attendance`.
 import {
-  http, fetchAllPages, fetchPage, assertIdArray,
+  http, fetchAllPages, fetchPage, assertIdArray, chunk, mapLimit,
   bulkUpdate as bulkUpdateOn, fetchBulkUpdateSchema,
 } from './client';
 
 // The DRF resource these rows come from. Shared by the mass-update and
 // filter_spec surfaces so the path is declared once.
 export const RESOURCE = 'delegates';
+
+/** Matches the cap in book_delegate/views.py bulk_delete; past it, a 400. */
+const BULK_DELETE_MAX = 1000;
+
+/**
+ * PATCHes in flight at once for bulkMarkPaid, which has no batch endpoint.
+ *
+ * Six is what browsers allow per host over HTTP/1.1 anyway, so a higher number
+ * buys queueing rather than throughput, while a much lower one makes a 13,264
+ * delegate run needlessly serial.
+ */
+const MARK_PAID_CONCURRENCY = 6;
 
 // ── Discount units ──────────────────────────────────────────────────────────
 // The database stores a FRACTION: 0.2 means 20%, on both book_delegates.discount
@@ -270,10 +282,10 @@ export const fromApi = toFrontend;
  * count taken over a partial page is not merely approximate, it is a different
  * question. `total` comes from an unfiltered count.
  */
-export function countsByPaymentStatus(statuses) {
+export function countsByPaymentStatus(statuses, period) {
   return Promise.all([
-    count(null),
-    ...statuses.map((s) => count([{ field: 'payment_status', op: 'is', value: s }])),
+    count(null, period),
+    ...statuses.map((s) => count([{ field: 'payment_status', op: 'is', value: s }], period)),
   ]).then(([total, ...perStatus]) => {
     const out = { total };
     statuses.forEach((s, i) => { out[s] = perStatus[i]; });
@@ -290,16 +302,28 @@ export function countsByPaymentStatus(statuses) {
  * walking every page at page_size=500 to get it — roughly 70 requests and 35k
  * rows deserialised, on every route change, because both components mount in the
  * app shell.
+ *
+ * `period` is an optional DASH_PERIODS key. It is a separate param rather than
+ * another criterion because the booking window is COALESCE(request_date,
+ * invoice_date) — see backend/accounts/period_filter.py — which no single-column
+ * criterion can express.
  */
-export function count(criteria) {
+export function count(criteria, period) {
   return fetchPage(`${RESOURCE}/`, {
     page: 1,
     pageSize: 1,
     filterSpec: criteria ? JSON.stringify({ match: 'all', criteria }) : null,
+    params: period ? { period } : undefined,
   }).then((r) => r.count);
 }
 
-/** Convenience for the shell badges: how many bookings are awaiting payment. */
+/**
+ * Convenience for the shell badges: how many bookings are awaiting payment.
+ *
+ * Deliberately NOT windowed. The sidebar badge is a worklist count, and a booking
+ * does not stop awaiting payment because it was raised five weeks ago — the same
+ * reasoning that keeps the Dashboard's attention queue on all-time figures.
+ */
 export function countPending() {
   return count([{ field: 'payment_status', op: 'is', value: 'Pending' }]);
 }
@@ -326,20 +350,53 @@ export function update(id, patch) {
 export function markPaid(id) {
   return update(id, { payment_status: 'Paid', payment_date: new Date().toISOString().slice(0, 10) });
 }
+/**
+ * There is no batch "mark paid" endpoint, so this is one PATCH per delegate.
+ *
+ * Written as Promise.all(ids.map(...)), which was fine while a selection could
+ * only hold the rows on one page — 50 parallel requests. The header checkbox now
+ * selects every matching row, so the same expression on Bookings opens 13,264
+ * connections at once: the browser queues them behind its six-per-host limit,
+ * the tab stops responding, and the API takes the whole burst from one click.
+ * mapLimit holds it to a steady handful in flight.
+ *
+ * Per-row failures are still swallowed to null, unchanged: one delegate that
+ * cannot be marked paid must not abandon the rest of the batch.
+ */
 export function bulkMarkPaid(ids) {
   // Guarded like bulkRemove and bulkUpdate. A Set would reach `.map` and throw a
   // bare "ids.map is not a function" with no indication of which call site or
   // what type arrived; assertIdArray names both.
   assertIdArray(ids, 'bookings.bulkMarkPaid');
-  return Promise.all(ids.map((id) => markPaid(id).catch(() => null)));
+  return mapLimit(ids, MARK_PAID_CONCURRENCY, (id) => markPaid(id).catch(() => null));
 }
-export function bulkRemove(ids) {
+
+/**
+ * Delete delegates, in batches the endpoint will accept.
+ *
+ * delegates/bulk_delete/ caps at 1000 ids per request (book_delegate/views.py)
+ * and 400s past it. A select-all is routinely larger, and the 400 surfaced as
+ * "Maximum 1000 IDs per request" on a Delete the user had already confirmed —
+ * so the whole delete appeared to fail. Batches are sequential, so the totals
+ * returned describe what actually happened up to any failure rather than a
+ * half-known state.
+ */
+export async function bulkRemove(ids) {
   // Guarded for the same reason bulkUpdate is: this posts the collection as JSON,
   // and a Set has no enumerable own properties, so JSON.stringify turns it into
   // {} — the backend then answers "ids list required" and the delete silently
   // does nothing. Throw at the call site with the real type named instead.
   assertIdArray(ids, 'bookings.bulkRemove');
-  return http.post('delegates/bulk_delete/', { ids }).then((r) => r.data);
+  const totals = { deleted: 0, requested: 0, permitted: 0, out_of_scope: 0 };
+  for (const batch of chunk(ids, BULK_DELETE_MAX)) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await http.post('delegates/bulk_delete/', { ids: batch }).then((r) => r.data);
+    totals.deleted += res.deleted || 0;
+    totals.requested += res.requested || 0;
+    totals.permitted += res.permitted || 0;
+    totals.out_of_scope += res.out_of_scope || 0;
+  }
+  return totals;
 }
 
 // ── Mass update (accounts/bulk_update.py) ───────────────────────────────────

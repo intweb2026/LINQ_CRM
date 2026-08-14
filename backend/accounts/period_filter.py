@@ -38,9 +38,12 @@ A ROW WITH NO DATE IS OUTSIDE EVERY WINDOW
 It cannot be placed in time, so it belongs to "all" and to nothing else. Callers
 that care report the count rather than letting rows vanish unexplained.
 """
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
-from django.db.models.functions import Coalesce
+from django.conf import settings
+from django.db import models
+from django.db.models import F
+from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
 # Keys are the wire contract, shared with frontend/src/lib/constants.js
@@ -99,35 +102,80 @@ def resolve_period(value):
     return period, p_from, p_to
 
 
-def date_expression(fields):
+def _is_datetime_field(model, path):
     """
-    The single date expression for a list of candidate columns, in priority order.
+    Whether `path` ("created_at", "invoice__request_date") ends in a DateTimeField.
 
-    One field is passed through as its own name so the common case adds no SQL;
-    several are COALESCEd, which is what makes "dated by request_date, else
-    invoice_date" one filterable value rather than two criteria a caller has to
-    remember to OR together.
+    Walked through _meta rather than guessed from the name. The distinction is not
+    cosmetic — see day_bounds() and coalesced_date() for the two ways a datetime
+    column has to be handled differently from a date one.
     """
+    parts = path.split("__")
+    for name in parts[:-1]:
+        model = model._meta.get_field(name).related_model
+    return isinstance(model._meta.get_field(parts[-1]), models.DateTimeField)
+
+
+def day_bounds(p_from, p_to):
+    """
+    The half-open datetime interval covering the whole of [p_from, p_to].
+
+    A DateTimeField compared against a DATE is compared against midnight, so
+    `created_at__lte=today` silently excludes everything that happened today
+    after 00:00 — which on the "last 7 days" window is most of the rows the user
+    is looking for. Returning [p_from 00:00, p_to+1day 00:00) is both correct and
+    index-friendly, where casting the column with __date or TruncDate is neither.
+    """
+    start = datetime.combine(p_from, time.min)
+    end = datetime.combine(p_to + timedelta(days=1), time.min)
+    if settings.USE_TZ:
+        start = timezone.make_aware(start)
+        end = timezone.make_aware(end)
+    return start, end
+
+
+def coalesced_date(model, fields):
+    """
+    COALESCE(...) over `fields` as a DATE, whatever mix of column types they are.
+
+    Datetime columns are TruncDate'd first and output_field is stated explicitly:
+    Coalesce over a DateField and a DateTimeField raises "Expression contains
+    mixed types" otherwise, and paper_submission_date (date) falling back to
+    created_at (datetime) is exactly that mix.
+    """
+    parts = [
+        TruncDate(name) if _is_datetime_field(model, name) else F(name)
+        for name in fields
+    ]
+    return Coalesce(*parts, output_field=models.DateField())
+
+
+def date_expression(model, fields):
+    """The single field name, or the coalesced date expression for several."""
     if not fields:
         raise ValueError("date_expression() needs at least one field")
     if len(fields) == 1:
         return fields[0]
-    return Coalesce(*fields)
+    return coalesced_date(model, fields)
 
 
 def apply_period(qs, fields, p_from, p_to):
     """
     `qs` narrowed to [p_from, p_to] over `fields`, or unchanged for "all".
 
-    Uses .alias() rather than .annotate(): the window is a WHERE clause, and an
-    annotation would join any subsequent .values()/GROUP BY and silently change
-    what an aggregate groups by.
+    Uses .alias() rather than .annotate() for the coalesced case: the window is a
+    WHERE clause, and an annotation would join any subsequent .values()/GROUP BY
+    and silently change what an aggregate groups by.
     """
     if p_from is None:
         return qs
-    expr = date_expression(fields)
-    if isinstance(expr, str):
-        return qs.filter(**{f"{expr}__gte": p_from, f"{expr}__lte": p_to})
+    if len(fields) == 1:
+        name = fields[0]
+        if _is_datetime_field(qs.model, name):
+            start, end = day_bounds(p_from, p_to)
+            return qs.filter(**{f"{name}__gte": start, f"{name}__lt": end})
+        return qs.filter(**{f"{name}__gte": p_from, f"{name}__lte": p_to})
+    expr = coalesced_date(qs.model, fields)
     return qs.alias(_period_date=expr).filter(
         _period_date__gte=p_from, _period_date__lte=p_to,
     )
@@ -135,10 +183,10 @@ def apply_period(qs, fields, p_from, p_to):
 
 def undated_count(qs, fields):
     """How many rows carry no date at all, and so sit outside every window."""
-    expr = date_expression(fields)
-    if isinstance(expr, str):
-        return qs.filter(**{f"{expr}__isnull": True}).count()
-    return qs.alias(_period_date=expr).filter(_period_date__isnull=True).count()
+    if len(fields) == 1:
+        return qs.filter(**{f"{fields[0]}__isnull": True}).count()
+    return (qs.alias(_period_date=coalesced_date(qs.model, fields))
+            .filter(_period_date__isnull=True).count())
 
 
 class PeriodFilterMixin:
@@ -165,7 +213,14 @@ class PeriodFilterMixin:
     period_date_fields = ()
 
     #: Actions the window applies to. List-shaped reads only, by default.
-    period_actions = ("list",)
+    #:
+    #: "ids" is FilterSpecMixin's select-all (accounts/filter_spec.py). It has to
+    #: be here, not because it is convenient, but because it and "list" MUST
+    #: answer about the same rows: the user reads a count from the list and then
+    #: selects that many. Omitted, a select-all taken inside a "Last 30 days"
+    #: view would resolve every row of all time and hand the difference straight
+    #: to a mass update, with the UI still showing the 30-day count.
+    period_actions = ("list", "ids")
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)

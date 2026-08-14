@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Modal from './Modal';
 import { Icon } from '../lib/icons';
 import { useToast } from '../context/ToastContext';
@@ -36,6 +36,16 @@ function autoMap(headers, fields) {
   return map;
 }
 
+// Rough time left, from the rate the batches have actually run at. Deliberately
+// coarse: the point is "seconds or minutes", not a countdown, and a number that
+// twitches every batch reads as less trustworthy than one that does not.
+function fmtEta(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (s < 10) return 'a few seconds left';
+  if (s < 90) return `about ${Math.ceil(s / 5) * 5}s left`;
+  return `about ${Math.ceil(s / 60)} min left`;
+}
+
 /**
  * `onImported` — called once the batches are in, so the table behind the wizard
  * shows what was just imported.
@@ -53,7 +63,26 @@ function autoMap(headers, fields) {
  */
 export default function ImportWizard({ kind, onClose, onImported }) {
   const toast = useToast();
-  const fields = importApi.TARGET_FIELDS[kind] || importApi.TARGET_FIELDS.bookings;
+  /**
+   * The mappable fields, from the server's own importer registry where it has one
+   * (invoices/import_schema/, tickets/import_schema/), else the static list.
+   *
+   * Fetched rather than read straight off TARGET_FIELDS because that list had
+   * drifted behind the importers — 17 of 28 accepted booking columns, 15 of ~40
+   * ticket columns. An absent field cannot be mapped, so its column is skipped,
+   * and a skipped column is indistinguishable from one the file never had.
+   *
+   * The static list is the initial value, so the mapping step is never empty while
+   * the request is in flight and never broken if it fails.
+   */
+  const [fields, setFields] = useState(
+    () => importApi.TARGET_FIELDS[kind] || importApi.TARGET_FIELDS.bookings,
+  );
+  useEffect(() => {
+    let cancelled = false;
+    importApi.fetchTargetFields(kind).then((f) => { if (!cancelled) setFields(f); });
+    return () => { cancelled = true; };
+  }, [kind]);
   const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [parsed, setParsed] = useState(null); // { headers, rows }
@@ -61,6 +90,18 @@ export default function ImportWizard({ kind, onClose, onImported }) {
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
+  /**
+   * Running totals from api/import.run, refreshed after every 500-row batch:
+   * { imported, skipped, errors, sent, total, batch, totalBatches, eta }.
+   *
+   * The import step used to render a fixed 60%-wide bar and the words
+   * "Keep this window open until it finishes" for however long the whole file
+   * took, which on a 20,000-row spreadsheet is dozens of sequential requests.
+   * Nothing on screen changed between the first batch and the last, so a slow
+   * import and a hung one looked identical and there was no way to judge how
+   * long was left.
+   */
+  const [progress, setProgress] = useState(null);
 
   // Takes a File, not a change event: the same handler now serves the browse dialog
   // and a dropped file, which are different events carrying the file in different
@@ -82,6 +123,15 @@ export default function ImportWizard({ kind, onClose, onImported }) {
     }
   }
 
+  // Re-guess the mapping if the field list arrives after the file was picked.
+  // Confined to step 0 so it can never overwrite a mapping the user has edited —
+  // they can only edit it on step 1 — while still making sure the guesses were
+  // made against the FULL list rather than the static fallback.
+  useEffect(() => {
+    if (step !== 0 || !parsed) return;
+    setMapping(autoMap(parsed.headers, fields));
+  }, [fields, parsed, step]);
+
   const mappedCount = useMemo(() => Object.values(mapping).filter((v) => v !== SKIP).length, [mapping]);
 
   function buildRows() {
@@ -97,15 +147,32 @@ export default function ImportWizard({ kind, onClose, onImported }) {
   async function startImport() {
     setStep(3);
     setImporting(true);
+    setProgress(null); // a retry after a failed attempt must not show the old run's counts
+    const startedAt = Date.now();
+    // Held alongside the state so the failure toast can name how many rows were
+    // already written; setProgress is async and cannot be read back here.
+    let last = null;
     try {
       const rows = buildRows();
-      const res = await importApi.run(kind, rows);
+      const res = await importApi.run(kind, rows, (p) => {
+        // ETA from the measured rate rather than a guessed per-batch cost: batch
+        // time varies with the resource and with how much of the file is
+        // duplicates, so only this run's own throughput predicts this run.
+        const eta = p.sent > 0 && p.sent < p.total
+          ? ((Date.now() - startedAt) / p.sent) * (p.total - p.sent)
+          : null;
+        last = { ...p, eta };
+        setProgress(last);
+      });
       setResult(res);
       toast(res.imported + ' ' + kind + ' imported' + (res.skipped ? `, ${res.skipped} skipped` : ''), 'ok');
     } catch (err) {
       setImporting(false);
       setStep(2);
-      toast(err.response?.data?.detail || 'Import failed — check the file and try again', 'er');
+      const wrote = last?.imported
+        ? `Import stopped after ${last.imported} of ${last.total} rows. `
+        : '';
+      toast(wrote + (err.response?.data?.detail || 'Import failed — check the file and try again'), 'er');
       // A throw part-way through a multi-batch import leaves the earlier batches
       // written, so the table behind is stale either way.
       onImported?.();
@@ -164,7 +231,13 @@ export default function ImportWizard({ kind, onClose, onImported }) {
       )}
       {step === 1 && parsed && (
         <>
-          <p style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 13 }}>Map each column from your file to a {kind} field. {mappedCount} of {parsed.headers.length} mapped.</p>
+          <p style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 13 }}>
+            Map each column from your file to a {kind} field. {mappedCount} of {parsed.headers.length} mapped
+            {/* The field count is shown because the previous complaint was that
+                fields were MISSING from this list, and a number is the only way
+                to see at a glance that they are not. */}
+            {' '}· {fields.length} {kind} fields available.
+          </p>
           {parsed.headers.map((h) => (
             <div className="mp" key={h}>
               <div className="mp-s">{h}</div>
@@ -190,8 +263,37 @@ export default function ImportWizard({ kind, onClose, onImported }) {
             <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
               {result.imported} imported{result.skipped ? `, ${result.skipped} skipped` : ''}{result.errors.length ? `, ${result.errors.length} error${result.errors.length === 1 ? '' : 's'}` : ''}.
             </p>
+          ) : progress ? (
+            <>
+              {/* The live count is the headline, because "is it still moving"
+                  is the question this screen exists to answer. It counts rows
+                  actually written, so it can legitimately trail the bar when the
+                  server skips duplicates; the skipped tally below explains the gap. */}
+              <p style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)', lineHeight: 1.3 }}>
+                {progress.imported.toLocaleString()}
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-4)' }}>
+                  {' '}/ {progress.total.toLocaleString()} added
+                </span>
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
+                {progress.skipped ? `${progress.skipped.toLocaleString()} skipped, ` : ''}
+                {progress.errors ? `${progress.errors.toLocaleString()} error${progress.errors === 1 ? '' : 's'}, ` : ''}
+                batch {Math.min(progress.batch + 1, progress.totalBatches)} of {progress.totalBatches}
+              </p>
+            </>
           ) : <p style={{ fontSize: 12, color: 'var(--text-4)' }}>Keep this window open until it finishes.</p>}
-          <div className="pt"><i style={{ width: (importing ? 60 : 100) + '%' }} /></div>
+          {/* Width tracks rows PROCESSED, not rows written: a file that is half
+              duplicates still has half its work done, and a bar that stalled at
+              50% on a successful import would be the same lie as no bar at all. */}
+          <div className="pt">
+            <i style={{ width: (importing ? (progress && progress.total ? Math.round((progress.sent / progress.total) * 100) : 0) : 100) + '%' }} />
+          </div>
+          {importing ? (
+            <p style={{ fontSize: 11.5, color: 'var(--text-4)' }}>
+              {progress?.eta ? fmtEta(progress.eta) : 'Working out how long this will take…'}
+              {' '}Keep this window open until it finishes.
+            </p>
+          ) : null}
         </div>
       )}
     </Modal>

@@ -62,16 +62,6 @@ class User(AbstractUser):
         related_name="assigned_users",
         help_text="Events accessible by this sales user. Ignored for admin.",
     )
-    custom_role = models.ForeignKey(
-        "CustomRole",
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name="users",
-        help_text="The permission set. THIS is what decides module access — see "
-                  "accounts/crm_permissions.py. `role` above is a job-function "
-                  "label and grants nothing on its own.",
-    )
-
     # Set to True by UserWriteSerializer when the request NAMED a role, i.e. when
     # a human picked one on the Add/Edit user form. Not a column: it describes one
     # request, not the row. See _should_derive_role().
@@ -193,6 +183,60 @@ class User(AbstractUser):
             return None
         return list(self.assigned_events.values_list("event_code", flat=True))
 
+    @property
+    def has_all_access(self):
+        """Full access to everything, by account or by team."""
+        # Imported here rather than at module scope: permissions.py pulls in
+        # rest_framework, and models.py is loaded during app registry setup.
+        from .permissions import HP_USERNAME
+        if self.username == HP_USERNAME:
+            return True
+        return bool(self.team_id and self.team and self.team.is_all_access)
+
+    def effective_permissions(self):
+        """
+        {module: {view, create, update, delete}} — the team's grid with this
+        person's overrides applied on top.
+
+        THE resolution, in one place. Every gate in the codebase reads it, so
+        "why can this person do that" has exactly one answer to trace: their team
+        grants it, or they were singled out for it.
+
+        Memoised on the instance because DRF builds the request user once and
+        then asks per view, per object; without this a single list request
+        re-ran both queries for every permission check it made.
+        """
+        cached = getattr(self, "_effective_permissions", None)
+        if cached is not None:
+            return cached
+
+        if self.has_all_access:
+            resolved = {m: {a: True for a in PERM_ACTIONS} for m in CRM_MODULES}
+            self._effective_permissions = resolved
+            return resolved
+
+        resolved = {m: {a: False for a in PERM_ACTIONS} for m in CRM_MODULES}
+
+        if self.team_id:
+            for row in self.team.permissions.all():
+                if row.module in resolved:
+                    resolved[row.module] = {
+                        a: bool(getattr(row, f"can_{a}")) for a in PERM_ACTIONS
+                    }
+
+        # None means "inherit", so only a real True/False is written through.
+        # Testing truthiness here would turn every inherit into a revoke.
+        for row in self.permission_overrides.all():
+            if row.module not in resolved:
+                continue
+            for action in PERM_ACTIONS:
+                override = getattr(row, f"can_{action}")
+                if override is not None:
+                    resolved[row.module][action] = override
+
+        self._effective_permissions = resolved
+        return resolved
+
 
 # ── Team name → role ─────────────────────────────────────────────────────────
 # ORDER IS THE BEHAVIOUR here, not formatting. The FIRST keyword found in the
@@ -275,24 +319,6 @@ class OTPToken(models.Model):
         )
 
 
-class CustomRole(models.Model):
-    """Admin-defined roles. All permissions are managed via RolePermission entries."""
-    name           = models.CharField(max_length=50, unique=True)
-    display_label  = models.CharField(max_length=50)
-    color          = models.CharField(max_length=20, default="#6b7280")
-    description    = models.TextField(blank=True, default="")
-    is_all_access  = models.BooleanField(default=False, help_text="If True, grants full access to all modules.")
-    is_system_role = models.BooleanField(default=False, help_text="Pre-seeded system role — cannot be deleted.")
-    created_at     = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "custom_roles"
-        ordering = ["display_label"]
-
-    def __str__(self):
-        return self.display_label
-
-
 CRM_MODULES = [
     "bookings", "ticket_central", "events", "reports",
     "users", "teams", "performance", "webhooks", "roles",
@@ -302,21 +328,46 @@ CRM_MODULES = [
     "paper_review", "proposal_submission",
 ]
 
-class RolePermission(models.Model):
-    """Per-module CRUD permissions for a CustomRole."""
-    custom_role = models.ForeignKey(
-        CustomRole, on_delete=models.CASCADE, related_name="permissions"
+PERM_ACTIONS = ("view", "create", "update", "delete")
+PERM_FIELDS = tuple(f"can_{a}" for a in PERM_ACTIONS)
+
+
+class UserPermission(models.Model):
+    """
+    One person's DIFFERENCE from their team, per module.
+
+    NOT a second permission set. Each of the four cells is three-state, and the
+    third state is the important one:
+
+        None   inherit whatever the team says, now and after the team changes
+        True   granted to this person on top of the team
+        False  taken away from this person, even though the team has it
+
+    Storing the delta rather than the whole matrix is what makes inheritance
+    real: widen a team's access tomorrow and everyone in it widens with it,
+    except on the exact cells someone was deliberately singled out for. A copy of
+    the effective matrix would silently freeze each person at the day they were
+    edited.
+
+    A row with all four cells None carries no information and is deleted rather
+    than stored — see UserViewSet.set_permissions.
+    """
+    user       = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="permission_overrides"
     )
-    module      = models.CharField(max_length=50)
-    can_view    = models.BooleanField(default=False)
-    can_create  = models.BooleanField(default=False)
-    can_update  = models.BooleanField(default=False)
-    can_delete  = models.BooleanField(default=False)
+    module     = models.CharField(max_length=50)
+    can_view   = models.BooleanField(null=True, default=None)
+    can_create = models.BooleanField(null=True, default=None)
+    can_update = models.BooleanField(null=True, default=None)
+    can_delete = models.BooleanField(null=True, default=None)
 
     class Meta:
-        db_table         = "role_permissions"
-        unique_together  = [("custom_role", "module")]
-        ordering         = ["module"]
+        db_table        = "user_permissions"
+        unique_together = [("user", "module")]
+        ordering        = ["module"]
 
     def __str__(self):
-        return f"{self.custom_role} · {self.module}"
+        return f"{self.user} · {self.module}"
+
+    def is_empty(self):
+        return all(getattr(self, f) is None for f in PERM_FIELDS)

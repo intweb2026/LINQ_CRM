@@ -3,7 +3,17 @@
 // per the caller's role automatically, so `update()` just PATCHes whatever fields
 // are given, and it refuses a patch that mixes the MR and DMD sections (the ticket
 // form sends only the fields that actually changed, for that reason).
-import { assertIdArray, http, fetchAllPages, fetchPage } from './client';
+import { assertIdArray, http, fetchAllPages, fetchPage, mapLimit } from './client';
+
+/**
+ * submit_dmd requests in flight at once.
+ *
+ * There is no batch submit endpoint, so bulkSubmit issues one POST per ticket.
+ * That was Promise.all over a one-page selection; the header checkbox now
+ * selects every matching row, and Ticket Central holds ~35,690 — opening that
+ * many at once locks the tab and buries the API from a single click.
+ */
+const SUBMIT_CONCURRENCY = 6;
 
 // Nothing to remap: the list serializer already names every field the way the
 // table and the form read it. Kept as the single hook for any future rename so
@@ -17,7 +27,11 @@ export const fromApi = toFrontend;
 
 export const list = () => fetchAllPages('tickets/').then((rows) => rows.map(toFrontend));
 
-export const stats = () => http.get('tickets/stats/').then((r) => r.data);
+// `period` is a DASH_PERIODS key and reaches TicketViewSet.stats verbatim, which
+// applies the SAME window as the list. These counts label the tabs directly above
+// the filtered table, so they have to answer the same question the rows do —
+// "Completed 35,690" over eleven visible rows is the defect this avoids.
+export const stats = (period) => http.get('tickets/stats/', { params: { period } }).then((r) => r.data);
 
 // DELETE /api/tickets/clear_all/ — the backend restricts this to the HP account
 // (accounts/permissions.py IsHPAccount) and it also resets the ticket-number
@@ -45,7 +59,7 @@ export function create(payload) {
 }
 export function bulkSubmit(ids) {
   assertIdArray(ids, 'tickets.bulkSubmit');
-  return Promise.all(ids.map((id) => submitToDMD(id).then(() => 1).catch(() => 0)))
+  return mapLimit(ids, SUBMIT_CONCURRENCY, (id) => submitToDMD(id).then(() => 1).catch(() => 0))
     .then((results) => results.reduce((a, b) => a + b, 0));
 }
 

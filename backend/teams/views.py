@@ -1,12 +1,14 @@
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from .models import Team, TeamActivityLog
+from .models import Team, TeamActivityLog, TeamPermission
 from .serializers import TeamSerializer, TeamActivityLogSerializer
 from accounts.permissions import IsAdminRole
 from accounts.crm_permissions import crm_permission
+from teams.models import Team, TeamPermission
 
 
 class TeamViewSet(viewsets.ModelViewSet):
@@ -14,7 +16,9 @@ class TeamViewSet(viewsets.ModelViewSet):
     serializer_class = TeamSerializer
 
     def get_queryset(self):
-        qs = Team.objects.order_by("name")
+        # prefetch: the serializer renders every team's grid, so without this a
+        # board of 7 teams costs 7 extra queries on every list.
+        qs = Team.objects.prefetch_related("permissions").order_by("name")
         show_archived = self.request.query_params.get("archived") == "1"
         if not show_archived:
             qs = qs.filter(is_archived=False)
@@ -218,6 +222,58 @@ class TeamViewSet(viewsets.ModelViewSet):
             notes=f"Team {'archived' if team.is_archived else 'unarchived'}",
         )
         return Response({"is_archived": team.is_archived})
+
+    @action(detail=True, methods=["put"], url_path="permissions",
+            permission_classes=[crm_permission("roles")])
+    def set_permissions(self, request, pk=None):
+        """
+        PUT /api/teams/{id}/permissions/ — replace this team's grid.
+
+        Body: {"permissions": [{"module": "events", "can_view": true, ...}, ...],
+               "is_all_access": false}
+
+        THE TEAM IS THE ROLE, so this is where a whole team's access is decided
+        and everyone in it moves together. Someone who needs to differ gets a
+        delta at /api/users/{id}/permissions/ rather than a team of their own.
+
+        Gated on the `roles` module rather than `teams`: renaming a team and
+        deciding what it may do are different jobs, and only the second is
+        dangerous. Both endpoints that write a grid answer to the same right.
+        """
+        from accounts.views import _clean_permission_rows
+        from accounts.serializers import team_permission_matrix
+
+        team = self.get_object()
+        items = request.data if isinstance(request.data, list) else request.data.get("permissions", [])
+        cleaned, error = _clean_permission_rows(items, allow_null=False)
+        if error:
+            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            if "is_all_access" in request.data:
+                team.is_all_access = bool(request.data["is_all_access"])
+                team.save(update_fields=["is_all_access"])
+            # Replaced wholesale rather than upserted. The payload is the entire
+            # grid, so a module missing from it has been turned off, and an
+            # upsert would leave its old row standing and silently keep granting.
+            team.permissions.all().delete()
+            TeamPermission.objects.bulk_create([
+                TeamPermission(team=team, module=module, **cells)
+                for module, cells in cleaned.items()
+            ])
+
+        TeamActivityLog.objects.create(
+            action_type=TeamActivityLog.ActionType.PERMISSIONS_CHANGED,
+            team=team,
+            moved_by=request.user,
+            notes=f"Permissions updated for '{team.name}'",
+        )
+        team.refresh_from_db()
+        return Response({
+            "id": team.id,
+            "is_all_access": team.is_all_access,
+            "permissions": team_permission_matrix(team),
+        })
 
     @action(detail=True, methods=["get"], url_path="activity")
     def activity(self, request, pk=None):

@@ -7,7 +7,7 @@ a 25-field list.
 """
 from rest_framework import serializers
 
-from events.models import Event
+from events.name_lookup import EventNameMixin
 
 from .access import may_see_mr_fields, may_use_event_code, permitted_event_codes
 from .event_codes import canonical_matches, resolve_paper_event_code
@@ -63,9 +63,13 @@ REQUIRED_FIELDS = [
 ]
 
 
-class PaperReviewSerializer(serializers.ModelSerializer):
+class PaperReviewSerializer(EventNameMixin, serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     updated_by_name = serializers.SerializerMethodField()
+    # get_event_name comes from EventNameMixin. It used to query the catalogue
+    # once per row, which was 500 queries on a 500 row page and 7,080 on a full
+    # table walk; the mixin resolves the whole code to name map once per
+    # response. See events/name_lookup.py.
     event_name      = serializers.SerializerMethodField()
     # The rubric denominator, so the form need not hardcode 45.
     rubric_total    = serializers.SerializerMethodField()
@@ -103,10 +107,6 @@ class PaperReviewSerializer(serializers.ModelSerializer):
     def get_updated_by_name(self, obj):
         u = obj.updated_by
         return (u.get_full_name() or u.username) if u else None
-
-    def get_event_name(self, obj):
-        ev = Event.objects.filter(event_code__iexact=obj.event_code).first()
-        return ev.name if ev else ""
 
     def get_rubric_total(self, obj):
         return sum(CRITERIA_MAX.values())

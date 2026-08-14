@@ -75,7 +75,7 @@ class _Unrestricted:
     is_admin = True
     username = "(unrestricted)"
     role = "admin"
-    custom_role = None
+    has_all_access = True
     assigned_events = None
 
     @property

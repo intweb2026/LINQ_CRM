@@ -19,7 +19,7 @@ from io import StringIO
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from accounts.models import ActionLog, CustomRole, RolePermission
+from accounts.models import ActionLog
 from paper_review.models import CRITERIA, RUBRIC_TOTAL, PaperReview
 from paper_review.tests import _Base, make_event
 
@@ -76,7 +76,7 @@ class DuplicateDetectionTests(_Base):
 
         admin = U.objects.create_user(
             username="dup_admin", password="x", email="dupadmin@example.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         self.assertEqual(
             self.client.get(f"{self.LIST}{a.id}/").data["duplicate_count"], 0,
@@ -107,7 +107,7 @@ class DuplicateDetectionTests(_Base):
 
         admin = U.objects.create_user(
             username="dup_admin2", password="x", email="dupadmin2@example.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         admin_count = self.client.get(
             f"{self.LIST}{a.id}/").data["duplicate_count"]
@@ -176,7 +176,7 @@ class BulkUpdateTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="bulk_mr", password="x", email="bulkmr@example.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event, cls.other_event])
 
     def setUp(self):
@@ -400,7 +400,7 @@ class ExportTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="exp_mr", password="x", email="expmr@example.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event, cls.other_event])
 
     def setUp(self):
@@ -508,7 +508,7 @@ class ExportTests(_Base):
     def test_export_respects_rbac_scope(self):
         scoped = U.objects.create_user(
             username="exp_scoped", password="x", email="expscoped@example.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         scoped.assigned_events.set([self.other_event])       # BIUK only
         self.client.force_authenticate(user=scoped)
         text = self.body(self.client.get(self.EXPORT))
@@ -518,7 +518,7 @@ class ExportTests(_Base):
     def test_export_is_header_only_for_an_unassigned_user(self):
         nobody = U.objects.create_user(
             username="exp_none", password="x", email="expnone@example.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         self.client.force_authenticate(user=nobody)
         text = self.body(self.client.get(self.EXPORT))
         self.assertEqual(len(text.strip().splitlines()), 1, "header only")
@@ -555,7 +555,7 @@ class FilterOptionsTests(_Base):
     def test_options_are_rbac_scoped(self):
         scoped = U.objects.create_user(
             username="opt_scoped", password="x", email="optscoped@example.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         scoped.assigned_events.set([self.other_event])       # BIUK only
         self.client.force_authenticate(user=scoped)
         r = self.client.get(self.OPTIONS)
@@ -587,7 +587,7 @@ class PermittedEventsTests(_Base):
     def test_unassigned_user_sees_none(self):
         nobody = U.objects.create_user(
             username="pe_none", password="x", email="penone@example.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         self.client.force_authenticate(user=nobody)
         self.assertEqual(self.client.get(self.URL).data["count"], 0)
 
@@ -595,7 +595,7 @@ class PermittedEventsTests(_Base):
         make_event("EXTRA - ZZ")
         admin = U.objects.create_user(
             username="pe_admin", password="x", email="peadmin@example.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         r = self.client.get(self.URL)
         self.assertTrue(r.data["unrestricted"])

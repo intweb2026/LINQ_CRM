@@ -18,13 +18,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from accounts.models import CustomRole, RolePermission
+
 from events.models import Event
 from proposal_submission.access import (
     has_full_visibility, may_see_mr_fields, may_use_event_code,
     permitted_event_codes, scope_queryset,
 )
 from proposal_submission.models import ProposalSubmission
+from teams.models import Team, TeamPermission
 
 U = get_user_model()
 LIST = "/api/proposal-submissions/"
@@ -63,32 +64,32 @@ class ScopeBase(APITestCase):
 
         # A role granting the module outright — scope must come from assignments,
         # not from the module grant.
-        cls.role = CustomRole.objects.create(name="Proposals Full")
-        RolePermission.objects.create(
-            custom_role=cls.role, module="proposal_submission",
+        cls.role = Team.objects.create(name="Proposals Full")
+        TeamPermission.objects.create(
+            team=cls.role, module="proposal_submission",
             can_view=True, can_create=True, can_update=True, can_delete=True,
         )
-        cls.all_access_role = CustomRole.objects.create(
+        cls.all_access_role = Team.objects.create(
             name="All Access", is_all_access=True)
 
         cls.admin = U.objects.create_user(
             username="scope_admin", password="x", email="a@x.com",
-            role="admin", custom_role=cls.role)
+            role="admin", team=cls.role)
         cls.hp = U.objects.create_user(
             username="HP", password="x", email="hp@x.com",
-            role="sales", custom_role=cls.role)
+            role="sales", team=cls.role)
         cls.all_access = U.objects.create_user(
             username="scope_allaccess", password="x", email="aa@x.com",
-            role="sales", custom_role=cls.all_access_role)
+            role="sales", team=cls.all_access_role)
         # Market research, assigned to exactly ONE event (BIU).
         cls.mr_biu = U.objects.create_user(
             username="scope_mr_biu", password="x", email="mr@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr_biu.assigned_events.set([cls.biu])
         # Assigned to nothing at all.
         cls.unassigned = U.objects.create_user(
             username="scope_none", password="x", email="n@x.com",
-            role="sales", custom_role=cls.role)
+            role="sales", team=cls.role)
 
     def codes_seen_by(self, user):
         self.client.force_authenticate(user=user)
@@ -102,8 +103,8 @@ class PredicateTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(name="Plain")
-        cls.all_access_role = CustomRole.objects.create(
+        cls.role = Team.objects.create(name="Plain")
+        cls.all_access_role = Team.objects.create(
             name="AA", is_all_access=True)
         cls.admin = U.objects.create_user(
             username="p_admin", password="x", email="1@x.com", role="admin")
@@ -111,13 +112,13 @@ class PredicateTests(TestCase):
             username="HP", password="x", email="2@x.com", role="sales")
         cls.aa = U.objects.create_user(
             username="p_aa", password="x", email="3@x.com", role="sales",
-            custom_role=cls.all_access_role)
+            team=cls.all_access_role)
         cls.plain = U.objects.create_user(
             username="p_plain", password="x", email="4@x.com", role="sales",
-            custom_role=cls.role)
+            team=cls.role)
         cls.mr = U.objects.create_user(
             username="p_mr", password="x", email="5@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
 
     def test_full_visibility_for_the_three_bypasses_only(self):
         for user in (self.admin, self.hp, self.aa):
@@ -174,10 +175,10 @@ class ScopeQuerySetSQLTests(TestCase):
     """
 
     def test_scoped_query_compiles_to_in_not_like(self):
-        role = CustomRole.objects.create(name="PS SQL Role")
+        role = Team.objects.create(name="PS SQL Role")
         user = U.objects.create_user(
             username="ps_sql_user", password="x", email="pssql@x.com",
-            role="sales", custom_role=role)
+            role="sales", team=role)
         biu = make_event("BIU")
         make_event("BIUK - PM")
         user.assigned_events.set([biu])
@@ -204,10 +205,10 @@ class ScopeQuerySetSQLTests(TestCase):
         .none() must be an EmptyQuerySet, not a filter that happens to match
         nothing — the difference is whether a later .filter() could widen it back.
         """
-        role = CustomRole.objects.create(name="PS SQL None")
+        role = Team.objects.create(name="PS SQL None")
         user = U.objects.create_user(
             username="ps_sql_none", password="x", email="pssqlnone@x.com",
-            role="sales", custom_role=role)
+            role="sales", team=role)
         qs = scope_queryset(ProposalSubmission.objects.all(), user)
         self.assertEqual(qs.count(), 0)
         self.assertTrue(qs.query.is_empty())

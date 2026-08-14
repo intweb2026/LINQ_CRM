@@ -10,13 +10,14 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from accounts.models import ActionLog, CustomRole
+from accounts.models import ActionLog
 from proposal_submission.importer import (
     excel_serial_to_date, map_headers, parse_import_date,
 )
 from proposal_submission.models import ProposalSubmission
 from proposal_submission.serializers import business_today
 from proposal_submission.tests import _Base, make_event
+from teams.models import Team
 
 U = get_user_model()
 
@@ -153,10 +154,10 @@ class EventCodeNormalizationTests(_Base):
                 self.assertEqual(entry["event_code"], "AFS - JS")
 
     def admin_full_access(self):
-        role = CustomRole.objects.create(name="C2 Admin", is_all_access=True)
+        role = Team.objects.create(name="C2 Admin", is_all_access=True)
         return U.objects.create_user(
             username="c2_admin", password="x", email="c2admin@example.com",
-            role="admin", custom_role=role)
+            role="admin", team=role)
 
     def test_biu_matches_biu_gs_pm_but_never_biuk_in_the_importer(self):
         """
@@ -200,7 +201,7 @@ class ImportBase(_Base):
         super().setUpTestData()
         cls.mr_user = U.objects.create_user(
             username="imp_mr", password="x", email="impmr@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr_user.assigned_events.set([cls.event, cls.other_event])
 
     def row(self, **over):
@@ -645,7 +646,7 @@ class DuplicateAnnotationTests(_Base):
         """Documented consequence: a duplicate outside scope shows as 0."""
         scoped_user = U.objects.create_user(
             username="dup_scoped", password="x", email="ds@x.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         scoped_user.assigned_events.set([self.other_event])   # BIUK only
         ProposalSubmission.objects.create(
             event_code="BIUK - PM", speaker_name="Solo", email="solo@example.com")
@@ -695,7 +696,7 @@ class MRWritePathTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="c_mr", password="x", email="cmr@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event])
         cls.row = ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Has Notes", email="hn@x.com",
@@ -717,7 +718,7 @@ class MRWritePathTests(_Base):
     def test_c1_admin_can_clear_an_mr_field_too(self):
         admin = U.objects.create_user(
             username="c_admin", password="x", email="ca@x.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         r = self.client.patch(f"{self.LIST}{self.row.id}/",
                               {"slot_recommendation_mr": ""}, format="json")
@@ -774,7 +775,7 @@ class ExportTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="e_mr", password="x", email="emr@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event, cls.other_event])
         ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Alpha", email="al@x.com",
@@ -839,7 +840,7 @@ class ExportTests(_Base):
     def test_export_respects_rbac_scope(self):
         scoped = U.objects.create_user(
             username="e_scoped", password="x", email="es@x.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         scoped.assigned_events.set([self.other_event])       # BIUK only
         self.client.force_authenticate(user=scoped)
         text = self.body(self.client.get(self.EXPORT))
@@ -849,7 +850,7 @@ class ExportTests(_Base):
     def test_export_is_empty_for_an_unassigned_user(self):
         nobody = U.objects.create_user(
             username="e_none", password="x", email="en@x.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         self.client.force_authenticate(user=nobody)
         text = self.body(self.client.get(self.EXPORT))
         self.assertEqual(len(text.strip().splitlines()), 1, "header only")
@@ -896,7 +897,7 @@ class FilterOptionsTests(_Base):
     def test_options_are_rbac_scoped(self):
         scoped = U.objects.create_user(
             username="f_scoped", password="x", email="fs@x.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         scoped.assigned_events.set([self.other_event])       # BIUK only
         self.client.force_authenticate(user=scoped)
         r = self.client.get(self.OPTIONS)
@@ -925,7 +926,7 @@ class PermittedEventsTests(_Base):
     def test_unassigned_user_sees_none(self):
         nobody = U.objects.create_user(
             username="g_none", password="x", email="gn@x.com",
-            role="sales", custom_role=self.role)
+            role="sales", team=self.role)
         self.client.force_authenticate(user=nobody)
         r = self.client.get(self.URL)
         self.assertEqual(r.data["count"], 0)
@@ -934,7 +935,7 @@ class PermittedEventsTests(_Base):
         make_event("EXTRA - ZZ")
         admin = U.objects.create_user(
             username="g_admin", password="x", email="ga@x.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         r = self.client.get(self.URL)
         self.assertTrue(r.data["unrestricted"])
@@ -984,7 +985,7 @@ class MRQueryLeakTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="g2_mr", password="x", email="g2@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event])
         ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Secret", email="s@x.com",

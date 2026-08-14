@@ -94,17 +94,21 @@ const bookings = await load("api/bookings.js", patchClientImport);
 const tickets = await load("api/tickets.js", patchClientImport);
 const webhooks = await load("api/webhooks.js", patchClientImport);
 
-// api/roles.js also reads ALL_MODULES from lib/constants. Everything is loaded
-// flattened into one temp directory, so that relative import needs redirecting
-// the same way './client' does.
+// The admin modules read ALL_MODULES from lib/constants, and api/users.js reads
+// the matrix helpers from api/teams.js — the team is the role, so the user's
+// delta is worked out against the team's grid. Everything is loaded flattened
+// into one temp directory, so both relative imports need redirecting the same
+// way './client' does. ORDER MATTERS: teams.js has to exist on disk before
+// users.js is rewritten to point at it.
 const constantsMod = await load("lib/constants.js");
 const constantsPath = join(dir, "lib_constants.mjs").replace(/\\/g, "/");
 const patchAdminImports = (s) =>
   patchClientImport(s).replace(/from ['"]\.\.\/lib\/constants['"]/g, `from "file://${constantsPath}"`);
 const { ALL_MODULES } = constantsMod;
-const roles = await load("api/roles.js", patchAdminImports);
-const users = await load("api/users.js", patchAdminImports);
 const teams = await load("api/teams.js", patchAdminImports);
+const teamsPath = join(dir, "api_teams.mjs").replace(/\\/g, "/");
+const users = await load("api/users.js", (s) =>
+  patchAdminImports(s).replace(/from ['"]\.\/teams['"]/g, `from "file://${teamsPath}"`));
 const roleFromTeam = await load("lib/roleFromTeam.js");
 // api/companies.js was loaded here until the Companies tab was removed. The
 // import outlived the file, so `node wire_probe.mjs` died with ENOENT before a
@@ -256,6 +260,137 @@ check("count() issues exactly one GET", countReqs.length === 1, countReqs.length
 check("count() asks for a single row", countReqs[0]?.params?.page_size === 1,
   JSON.stringify(countReqs[0]?.params));
 results.literals.delegates_count_params = countReqs[0]?.params ?? null;
+
+// ── 5b. Select all, and the batching every bulk surface now needs ───────────
+// The header checkbox used to tick one page. On a filter matching 35,690
+// tickets that selected 50, and every bulk action ran against those 50 and
+// reported success — because 50 rows really were updated. Two things have to
+// hold for the fix, and neither is visible from the browser:
+//
+//   1. The select-all request must narrow by the SAME terms as the list it
+//      replaces, and must not be paged. A paged select-all IS the original bug.
+//   2. Every id collection that leaves this frontend must be batched to what the
+//      endpoint accepts. bulk_update and both bulk_delete actions cap at 1000
+//      and answer 400 past it, which the user reads as the action being broken.
+const { fetchAllIds, chunk, mapLimit, fetchPage } = clientMod;
+for (const [name, fn] of [
+  ["client.fetchAllIds", fetchAllIds], ["client.chunk", chunk], ["client.mapLimit", mapLimit],
+]) {
+  check(`export exists: ${name}`, typeof fn === "function", typeof fn);
+}
+
+captured.length = 0;
+await fetchAllIds("delegates", { filterSpec: specJson, search: "ada" });
+const idsReq = captured[captured.length - 1];
+results.literals.select_all_request = { url: idsReq.url, params: idsReq.params };
+
+check("select-all asks {resource}/ids/", idsReq.url === "delegates/ids/", idsReq.url);
+check("select-all sends the filter_spec raw, not pre-encoded",
+  !String(idsReq.params.filter_spec ?? "").includes("%"),
+  String(idsReq.params.filter_spec ?? "").slice(0, 40));
+// THE regression check. A select-all carrying page/page_size is a select-page
+// wearing a different name, which is precisely what shipped.
+check("select-all sends no page or page_size",
+  !("page" in idsReq.params) && !("page_size" in idsReq.params),
+  Object.keys(idsReq.params).join(","));
+
+captured.length = 0;
+await fetchPage("delegates", { page: 1, pageSize: 50, filterSpec: specJson, search: "ada" });
+const pageReq = captured[captured.length - 1];
+const narrowing = (p) => JSON.stringify({
+  filter_spec: p.filter_spec ?? null, search: p.search ?? null,
+});
+// If these two ever disagree, select-all resolves rows the table is not showing
+// and hands them to a mass update — worse than the bug it replaced, because it
+// over-selects invisibly rather than under-selecting visibly.
+check("select-all narrows by exactly the same terms as the page it replaces",
+  narrowing(pageReq.params) === narrowing(idsReq.params),
+  `${narrowing(pageReq.params)} vs ${narrowing(idsReq.params)}`);
+
+const batched = chunk(Array.from({ length: 2500 }, (_, i) => i + 1), 1000);
+check("chunk splits at the cap and keeps the remainder",
+  batched.length === 3 && batched.map((b) => b.length).join(",") === "1000,1000,500",
+  batched.map((b) => b.length).join(","));
+check("chunk loses and duplicates nothing",
+  new Set(batched.flat()).size === 2500, new Set(batched.flat()).size);
+
+let inFlight = 0, peak = 0;
+const ordered = await mapLimit(Array.from({ length: 20 }, (_, i) => i), 4, async (n) => {
+  inFlight += 1; peak = Math.max(peak, inFlight);
+  await new Promise((r) => setTimeout(r, 1));
+  inFlight -= 1;
+  return n * 2;
+});
+check("mapLimit never exceeds its limit in flight", peak <= 4, `peak ${peak}`);
+check("mapLimit returns results in input order",
+  ordered.every((v, i) => v === i * 2), JSON.stringify(ordered.slice(0, 5)));
+
+captured.length = 0;
+await bookings.bulkRemove(Array.from({ length: 2500 }, (_, i) => i + 1));
+const deletePosts = captured.filter(
+  (c) => c.verb === "POST" && c.url === "delegates/bulk_delete/");
+check("bulkRemove batches at the endpoint's 1000-id cap",
+  deletePosts.length === 3 && deletePosts.every((p) => p.body.ids.length <= 1000),
+  deletePosts.map((p) => p.body.ids.length).join(","));
+check("bulkRemove sends every id exactly once across its batches",
+  new Set(deletePosts.flatMap((p) => p.body.ids)).size === 2500,
+  new Set(deletePosts.flatMap((p) => p.body.ids)).size);
+
+// ── 5c. The merged plan the mass-update modal renders ───────────────────────
+// With a selection past 1000 the preview is several requests, and every number
+// on screen is a fold of their plans. Getting that fold wrong misreports the
+// blast radius of a write to tens of thousands of rows, so it is asserted here
+// rather than trusted to read correctly.
+const bulkHook = await load("hooks/useBulkUpdate.js", (s) =>
+  s.replace(/from ['"]\.\.\/api\/client['"]/g, `from "file://${clientPath}"`)
+    .replace(/^import \{ useToast \}.*$/m, "const useToast = () => () => {};"));
+const { mergePlans } = bulkHook;
+check("export exists: useBulkUpdate.mergePlans", typeof mergePlans === "function",
+  typeof mergePlans);
+
+const PLAN_A = {
+  requested: 1000, permitted: 1000, no_op: 40, distribution: { Paid: 600, Pending: 400 },
+  plan_hash: "aaa", side_effects: ["delegate_count set to 0"],
+  collateral: { count: 5, sample: [{ id: 1, label: "x", parent: "INV-1" }], hidden_count: 2, overflow: 0 },
+};
+const PLAN_B = {
+  requested: 300, permitted: 250, no_op: 10, distribution: { Paid: 100, Cancelled: 200 },
+  plan_hash: "bbb", side_effects: ["delegate_count set to 0"],
+  collateral: { count: 3, sample: [], hidden_count: 0, overflow: 1 },
+};
+const merged = mergePlans([PLAN_A, PLAN_B]);
+results.literals.merged_plan = merged;
+
+check("merged plan sums requested across batches", merged.requested === 1300, merged.requested);
+check("merged plan sums permitted, so rows the caller cannot edit stay visible",
+  merged.permitted === 1250, merged.permitted);
+check("merged plan sums no_op", merged.no_op === 50, merged.no_op);
+check("merged plan adds distribution buckets rather than overwriting them",
+  merged.distribution.Paid === 700 && merged.distribution.Pending === 400
+  && merged.distribution.Cancelled === 200, JSON.stringify(merged.distribution));
+check("merged plan reports side effects once, not once per batch",
+  merged.side_effects.length === 1, JSON.stringify(merged.side_effects));
+// Collateral is per batch and counts rows in OTHER batches of the same
+// selection, so the sum is an upper bound. The flag is what makes the modal say
+// "up to" instead of presenting an inflated number as a count.
+check("merged collateral is flagged as batched",
+  merged.collateral.batched === true && merged.collateral.count === 8,
+  JSON.stringify(merged.collateral));
+check("multi-batch merge carries no single plan_hash",
+  merged.plan_hash === null, JSON.stringify(merged.plan_hash));
+
+const single = mergePlans([PLAN_A]);
+check("a single batch keeps its plan_hash and is not flagged batched",
+  single.plan_hash === "aaa" && single.collateral.batched === false,
+  `${single.plan_hash} ${single.collateral.batched}`);
+
+// A value-less preview has no no_op, and absent must stay absent — the modal
+// tells "not asked yet" from "none of them", and a 0 would read as the latter.
+const valueless = mergePlans([
+  { requested: 10, permitted: 10, distribution: { Paid: 10 }, collateral: {} },
+]);
+check("merged plan omits no_op when the batches did",
+  !("no_op" in valueless), Object.keys(valueless).join(","));
 
 
 // ── 6. server.mapRow must read the RESOLVED field, not its raw twin ──────────
@@ -515,38 +650,34 @@ for (const [name, mod, url] of [
     wipe.verb === "DELETE" && wipe.url === url, `${wipe.verb} ${wipe.url}`);
 }
 
-// ── 10. Roles: the permission grid's field names ────────────────────────────
-// THE BUG THIS COVERS. The UI holds the grid as {view, create, update, delete}
-// and api/roles.js spread it into the request as-is, while
-// CustomRoleViewSet.set_permissions reads can_view / can_create / can_update /
-// can_delete and DEFAULTS EVERY MISSING KEY TO FALSE. So creating or editing a
-// role returned 200, toasted "Role created", and stored a fully denied
-// permission set. Nothing in the response said otherwise; the role simply came
-// back with nothing ticked and everyone holding it saw No Access everywhere.
+// ── 10. Team permissions: the grid every member inherits ────────────────────
+// THE BUG THIS COVERS, which outlived the model it was found in. The UI holds a
+// grid as {view, create, update, delete} and it used to be spread into the
+// request as-is, while the endpoint reads can_view / can_create / can_update /
+// can_delete and DEFAULTS EVERY MISSING KEY TO FALSE. So saving a permission
+// set returned 200, toasted success, and stored a fully denied grid.
 //
 // A same-shaped payload cannot be spot-checked by eye — `view: true` and
 // `can_view: true` look equally correct in a request log — so the names are
 // pinned here and the captured body is replayed at the real endpoint by
-// tests_wire_probe.py.
+// tests_wire_probe.py. The grid now belongs to a TEAM, and the stakes went up
+// with it: one wrong save is every member of that team, not one person.
 const fullGrid = {};
 ALL_MODULES.forEach((m) => { fullGrid[m] = { view: true, create: true, update: true, delete: true }; });
 
 captured.length = 0;
-await roles.save({
-  id: 7, name: "regional_manager", display_label: "Regional Manager",
-  color: "#009CBC", description: "d", permissions: fullGrid,
-});
-const rolePut = captured.find((c) => c.verb === "PUT");
-const permRows = rolePut?.body?.permissions ?? [];
-results.literals.role_permissions_body = rolePut?.body ?? null;
+await teams.savePermissions(7, fullGrid, { isAllAccess: false });
+const teamPut = captured.find((c) => c.verb === "PUT");
+const permRows = teamPut?.body?.permissions ?? [];
+results.literals.team_permissions_body = teamPut?.body ?? null;
 
-check("role permissions PUT goes to the role's permissions action",
-  rolePut?.url === "roles/7/permissions/", `${rolePut?.verb} ${rolePut?.url}`);
-check("role permissions use the backend's can_* field names",
+check("team permissions PUT goes to the team's permissions action",
+  teamPut?.url === "teams/7/permissions/", `${teamPut?.verb} ${teamPut?.url}`);
+check("team permissions use the backend's can_* field names",
   permRows.length > 0 && permRows.every((p) => ["can_view", "can_create", "can_update", "can_delete"]
     .every((k) => typeof p[k] === "boolean")),
   JSON.stringify(permRows[0]));
-check("role permissions do NOT send the UI's bare view/create/update/delete keys",
+check("team permissions do NOT send the UI's bare view/create/update/delete keys",
   permRows.every((p) => !("view" in p) && !("create" in p) && !("update" in p) && !("delete" in p)),
   JSON.stringify(permRows[0]));
 check("every registered module is sent, so none is left at its old value",
@@ -556,40 +687,72 @@ check("every registered module is sent, so none is left at its old value",
 check("a ticked box arrives as true, not dropped",
   permRows.every((p) => p.can_view && p.can_create && p.can_update && p.can_delete),
   JSON.stringify(permRows.find((p) => !p.can_view) ?? "all true"));
+check("is_all_access travels with the grid",
+  teamPut?.body?.is_all_access === false, JSON.stringify(teamPut?.body?.is_all_access));
 
 // An unticked grid must send explicit falses rather than omitting the keys —
 // revoking a permission is a real operation and has to travel.
 captured.length = 0;
 const emptyGrid = {};
 ALL_MODULES.forEach((m) => { emptyGrid[m] = { view: false, create: false, update: false, delete: false }; });
-await roles.save({ id: 7, display_label: "Regional Manager", permissions: emptyGrid });
+await teams.savePermissions(7, emptyGrid);
 const revoked = captured.find((c) => c.verb === "PUT").body.permissions;
 check("revoking sends explicit false, it does not omit the key",
   revoked.every((p) => p.can_view === false && p.can_delete === false),
   JSON.stringify(revoked[0]));
 
-// The create path derives the unique `name` key from the label. Trailing
-// separators would survive into it and an all-punctuation label would derive an
-// empty name, which the backend rejects with an error naming a field the form
-// does not show.
-captured.length = 0;
-await roles.save({ display_label: "  Ops (EU) ", color: "#111", description: "", permissions: null });
-const rolePost = captured.find((c) => c.verb === "POST");
-check("new role posts to roles/", rolePost?.url === "roles/", `${rolePost?.verb} ${rolePost?.url}`);
-check("derived role name is a clean slug with no trailing separators",
-  rolePost?.body?.name === "ops_eu", JSON.stringify(rolePost?.body?.name));
-check("new role carries the label the user typed, trimmed",
-  rolePost?.body?.display_label === "  Ops (EU) ", JSON.stringify(rolePost?.body?.display_label));
+// ── 11. User permissions: the DELTA, and its third state ────────────────────
+// The form works in effective terms and api/users.js derives the delta against
+// the team. null is the default and it means INHERIT: a cell that agrees with
+// the team must send null, not the value they happen to share, or the person is
+// frozen at today's answer and the next widening of their team passes them by.
+//
+// bool(null) is false on the server, so a null that leaked through as `false`
+// would read as a REVOKE. That is the failure this section exists to catch: it
+// looks like agreement and behaves like a denial.
+const teamMatrix = {};
+ALL_MODULES.forEach((m) => { teamMatrix[m] = { view: true, create: false, update: false, delete: false }; });
 
-// ── 11. Users: the create/edit body ────────────────────────────────────────
+const desired = {};
+ALL_MODULES.forEach((m) => { desired[m] = { ...teamMatrix[m] }; });
+desired.reports = { view: true, create: true, update: false, delete: false };   // grant
+desired.bookings = { view: false, create: false, update: false, delete: false }; // revoke
+
+captured.length = 0;
+await users.savePermissions(5, desired, teamMatrix);
+const userPut = captured[captured.length - 1];
+const deltas = userPut.body.permissions;
+results.literals.user_permissions_body = userPut.body;
+const byModule = Object.fromEntries(deltas.map((d) => [d.module, d]));
+
+check("user permissions PUT goes to the user's permissions action",
+  userPut.verb === "PUT" && userPut.url === "users/5/permissions/",
+  `${userPut.verb} ${userPut.url}`);
+check("a cell matching the team is sent as null, so it keeps inheriting",
+  byModule.events.can_view === null && byModule.events.can_create === null,
+  JSON.stringify(byModule.events));
+check("an extra grant is sent as true",
+  byModule.reports.can_create === true, JSON.stringify(byModule.reports));
+check("a revoke is sent as false, not as an omission",
+  byModule.bookings.can_view === false, JSON.stringify(byModule.bookings));
+check("an agreeing cell inside an overridden module still inherits",
+  byModule.reports.can_view === null, JSON.stringify(byModule.reports));
+check("every module is present, so a cleared exception is actually cleared",
+  deltas.length === ALL_MODULES.length, `${deltas.length} of ${ALL_MODULES.length}`);
+check("no user permission cell is undefined — null is the inherit signal",
+  deltas.every((d) => ["can_view", "can_create", "can_update", "can_delete"]
+    .every((k) => d[k] === null || typeof d[k] === "boolean")),
+  JSON.stringify(deltas[0]));
+
+// ── 11b. Users: the create/edit body ───────────────────────────────────────
 // `is_lead` is the frontend's name and `is_team_lead` is the column; sending the
-// former means the checkbox is accepted and discarded. `custom_role_id` is the
-// field that actually grants access — a create that drops it makes an account
-// that can see nothing, which reads as "the new user is broken", not "the form is".
+// former means the checkbox is accepted and discarded. `team_id` is the field
+// that now grants access — a create that drops it makes an account that can see
+// nothing, which reads as "the new user is broken", not "the form is".
 captured.length = 0;
 await users.create({
   username: "ada", email: "ada@iq-hub.com", first_name: "Ada", last_name: "Lovelace",
-  role: "sales", status: "active", team_id: 3, custom_role_id: 4, is_lead: true,
+  role: "sales", status: "active", team_id: 3, is_lead: true,
   password: "hunter2hunter2",
 });
 const userPost = captured[captured.length - 1];
@@ -598,11 +761,14 @@ check("new user posts to users/", userPost.verb === "POST" && userPost.url === "
   `${userPost.verb} ${userPost.url}`);
 check("user create sends is_team_lead, not the UI's is_lead",
   userPost.body.is_team_lead === true && !("is_lead" in userPost.body), JSON.stringify(userPost.body));
-check("user create carries custom_role_id — the field that grants module access",
-  userPost.body.custom_role_id === 4, JSON.stringify(userPost.body.custom_role_id));
-check("user create carries team_id and password",
-  userPost.body.team_id === 3 && userPost.body.password === "hunter2hunter2",
-  JSON.stringify({ t: userPost.body.team_id, p: !!userPost.body.password }));
+check("user create carries the team that grants access",
+  userPost.body.team_id === 3, JSON.stringify(userPost.body.team_id));
+check("user create carries the password when one was typed",
+  userPost.body.password === "hunter2hunter2", String(!!userPost.body.password));
+// There is no permission set to pick any more; sending one would be writing to a
+// column that no longer exists, and DRF ignores unknown keys silently.
+check("user create does NOT send a permission set — access comes from the team",
+  !("custom_role_id" in userPost.body), Object.keys(userPost.body).join(","));
 
 // A blank password box means "leave it alone", never "set it to empty".
 captured.length = 0;
@@ -619,13 +785,13 @@ check("user edit patches only the keys it was given",
   userPatch.url === "users/5/" && Object.keys(userPatch.body).join(",") === "status",
   `${userPatch.url} ${JSON.stringify(userPatch.body)}`);
 
-// null is meaningful on both of these — it unassigns — so it must survive the
-// "only send what was given" filter rather than being treated as absent.
+// null is meaningful — it unassigns — so it must survive the "only send what was
+// given" filter rather than being treated as absent.
 captured.length = 0;
-await users.update(5, { team_id: null, custom_role_id: null });
+await users.update(5, { team_id: null });
 const unassign = captured[captured.length - 1].body;
-check("unassigning a team or permission set sends null, not nothing",
-  unassign.team_id === null && unassign.custom_role_id === null, JSON.stringify(unassign));
+check("unassigning a team sends null, not nothing",
+  unassign.team_id === null, JSON.stringify(unassign));
 
 // The endpoint flips the status; an empty body is the whole request. It used to
 // be rejected with 400 for not naming a status, on a button called "Deactivate".

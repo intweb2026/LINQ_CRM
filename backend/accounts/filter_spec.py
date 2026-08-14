@@ -218,6 +218,10 @@ class FilterSpecMixin:
     filter_spec_fields = {}
     filter_spec_max_criteria = 20
 
+    #: Ceiling on one select-all. See the `ids` action for why it is a refusal
+    #: rather than a truncation.
+    select_all_max = 100_000
+
     # ── Schema ────────────────────────────────────────────────────────────────
     @action(detail=False, methods=["get"], url_path="filter_schema")
     def filter_schema(self, request):
@@ -246,6 +250,70 @@ class FilterSpecMixin:
             "max_criteria": self.filter_spec_max_criteria,
             "match_modes": ["all"],
         })
+
+    # ── Select all ────────────────────────────────────────────────────────────
+    @action(detail=False, methods=["get"], url_path="ids")
+    def ids(self, request):
+        """
+        GET {resource}/ids/ — every primary key the CURRENT filter matches.
+
+        What the table's select-all checkbox is built on. It used to tick one
+        page, so on a filter matching 35,690 tickets "select all" reached the 50
+        rows on screen and a mass update silently touched 0.1% of what the user
+        had asked for.
+
+        SAME FILTER AS THE LIST, BY CONSTRUCTION
+        The one thing that must never drift here is which rows this answers with:
+        a select-all that resolves a wider set than the table shows hands bulk
+        actions rows the user never saw. So this calls the very same
+        filter_queryset(get_queryset()) pair the list endpoint does — RBAC
+        scoping, DjangoFilterBackend, SearchFilter, the period window and the
+        filter_spec, in that order — rather than re-deriving any of it. A
+        criterion the list understands is a criterion this understands, for free.
+
+        The period window is the one that needed a change: PeriodFilterMixin
+        applies only to the actions in `period_actions`, which was ("list",)
+        alone, so without adding this one a select-all inside a "Last 30 days"
+        view would have quietly returned every row of all time.
+
+        REFUSAL, NOT TRUNCATION
+        Past select_all_max this answers 400 rather than returning the first N.
+        A truncated select-all is indistinguishable from a complete one at the
+        call site — the UI would report "all 100,000 selected" and the remainder
+        would go silently unedited, which is the same class of bug as the
+        one-page selection this replaces, just less visible.
+
+        Read-only: no write, no transaction, and ORDER BY is dropped because the
+        caller builds a Set out of the answer and sorting every matching row to
+        feed it is pure cost.
+        """
+        qs = self.filter_queryset(self.get_queryset()).order_by()
+
+        # Counted before the rows are materialised: the cap exists to bound
+        # memory, and a check performed after pulling 5,000,000 ids into a list
+        # would be enforcing it too late to matter.
+        total = qs.count()
+        if total > self.select_all_max:
+            return Response(
+                {
+                    "detail": (
+                        f"That filter matches {total:,} records, more than the "
+                        f"{self.select_all_max:,} that can be selected at once. "
+                        f"Narrow the filter and try again."
+                    ),
+                    "count": total,
+                    "max": self.select_all_max,
+                },
+                status=400,
+            )
+
+        # dict.fromkeys, not set(): a filter that joins can repeat a row, and the
+        # duplicate would inflate every count the user is shown ("13,264 of
+        # 13,264 selected" over 12,900 distinct rows). Order is preserved so the
+        # answer is stable between identical requests, which is what makes the
+        # response diffable when one of these is ever in a bug report.
+        matched = list(dict.fromkeys(qs.values_list("pk", flat=True)))
+        return Response({"ids": matched, "count": len(matched), "max": self.select_all_max})
 
     # ── Registry access (overridable for per-request choices) ─────────────────
     def get_filter_spec_fields(self):

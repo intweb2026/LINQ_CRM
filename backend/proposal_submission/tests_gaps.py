@@ -132,7 +132,7 @@ class MRFieldVisibilityTests(_Base):
         U = get_user_model()
         cls.mr_user = U.objects.create_user(
             username="mr_user", password="x", email="mr@example.com",
-            custom_role=cls.role, role="market_research",
+            team=cls.role, role="market_research",
         )
         # MR-field visibility and ROW scope are independent: the market_research
         # role unlocks the MR columns, it does not widen which rows are visible.
@@ -141,7 +141,7 @@ class MRFieldVisibilityTests(_Base):
         cls.mr_user.assigned_events.set([cls.event, cls.other_event])
         cls.admin_user = U.objects.create_user(
             username="admin_user", password="x", email="ad@example.com",
-            custom_role=cls.role, role="admin",
+            team=cls.role, role="admin",
         )
         cls.row = ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Held Notes",
@@ -423,7 +423,7 @@ class DuplicateActionTests(_Base):
         U = get_user_model()
         cls.dup_user = U.objects.create_user(
             username="dup_admin", password="x", email="dup@x.com",
-            role="admin", custom_role=cls.role,
+            role="admin", team=cls.role,
         )
         cls.source = ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Original Speaker",

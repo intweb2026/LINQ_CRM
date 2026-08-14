@@ -50,6 +50,7 @@ from paper_review.event_codes import (
 )
 from paper_review.models import PaperReview
 from paper_review.tests import _Base, make_event
+from teams.models import Team
 
 # The five spacing/case variants A1 requires, each expected to resolve to the
 # one canonical spelling stored in the catalogue: "AFS - JS".
@@ -124,7 +125,6 @@ class SpacingResolutionTests(TestCase):
         """
         from rest_framework.test import APIRequestFactory
 
-        from accounts.models import CustomRole
         from django.contrib.auth import get_user_model
 
         from paper_review.serializers import PaperReviewSerializer
@@ -132,7 +132,7 @@ class SpacingResolutionTests(TestCase):
         U = get_user_model()
         admin = U.objects.create_user(
             username="ec_admin", password="x", email="ec_admin@example.com",
-            role="admin", custom_role=CustomRole.objects.create(
+            role="admin", team=Team.objects.create(
                 name="EC Admin", is_all_access=True),
         )
         request = APIRequestFactory().post("/api/paper-reviews/")

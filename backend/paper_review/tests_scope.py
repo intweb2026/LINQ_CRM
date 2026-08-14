@@ -17,13 +17,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APITestCase
 
-from accounts.models import CustomRole, RolePermission
+
 from events.models import Event
 from paper_review.access import (
     has_full_visibility, may_see_mr_fields, may_use_event_code,
     permitted_event_codes, scope_queryset,
 )
 from paper_review.models import PaperReview
+from teams.models import Team, TeamPermission
 
 U = get_user_model()
 LIST = "/api/paper-reviews/"
@@ -69,32 +70,32 @@ class ScopeBase(APITestCase):
 
         # A role granting the module outright — scope must come from
         # assignments, not from the module grant.
-        cls.role = CustomRole.objects.create(name="Reviews Full")
-        RolePermission.objects.create(
-            custom_role=cls.role, module="paper_review",
+        cls.role = Team.objects.create(name="Reviews Full")
+        TeamPermission.objects.create(
+            team=cls.role, module="paper_review",
             can_view=True, can_create=True, can_update=True, can_delete=True,
         )
-        cls.all_access_role = CustomRole.objects.create(
+        cls.all_access_role = Team.objects.create(
             name="All Access PR", is_all_access=True)
 
         cls.admin = U.objects.create_user(
             username="pr_scope_admin", password="x", email="a@x.com",
-            role="admin", custom_role=cls.role)
+            role="admin", team=cls.role)
         cls.hp = U.objects.create_user(
             username="HP", password="x", email="hp@x.com",
-            role="sales", custom_role=cls.role)
+            role="sales", team=cls.role)
         cls.all_access = U.objects.create_user(
             username="pr_scope_allaccess", password="x", email="aa@x.com",
-            role="sales", custom_role=cls.all_access_role)
+            role="sales", team=cls.all_access_role)
         # Market research, assigned to exactly ONE event (BIU).
         cls.mr_biu = U.objects.create_user(
             username="pr_scope_mr_biu", password="x", email="mr@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr_biu.assigned_events.set([cls.biu])
         # Assigned to nothing at all.
         cls.unassigned = U.objects.create_user(
             username="pr_scope_none", password="x", email="n@x.com",
-            role="sales", custom_role=cls.role)
+            role="sales", team=cls.role)
 
     def codes_seen_by(self, user):
         self.client.force_authenticate(user=user)
@@ -108,8 +109,8 @@ class PredicateTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.role = CustomRole.objects.create(name="Plain PR")
-        cls.all_access_role = CustomRole.objects.create(
+        cls.role = Team.objects.create(name="Plain PR")
+        cls.all_access_role = Team.objects.create(
             name="AA PR", is_all_access=True)
         cls.admin = U.objects.create_user(
             username="pr_p_admin", password="x", email="1@x.com", role="admin")
@@ -117,13 +118,13 @@ class PredicateTests(TestCase):
             username="HP", password="x", email="2@x.com", role="sales")
         cls.aa = U.objects.create_user(
             username="pr_p_aa", password="x", email="3@x.com", role="sales",
-            custom_role=cls.all_access_role)
+            team=cls.all_access_role)
         cls.plain = U.objects.create_user(
             username="pr_p_plain", password="x", email="4@x.com", role="sales",
-            custom_role=cls.role)
+            team=cls.role)
         cls.mr = U.objects.create_user(
             username="pr_p_mr", password="x", email="5@x.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
 
     def test_full_visibility_for_the_three_bypasses_only(self):
         for user in (self.admin, self.hp, self.aa):
@@ -177,10 +178,10 @@ class ScopeQuerySetSQLTests(TestCase):
     """
 
     def test_scoped_query_compiles_to_in_not_like(self):
-        role = CustomRole.objects.create(name="SQL Role")
+        role = Team.objects.create(name="SQL Role")
         user = U.objects.create_user(
             username="pr_sql_user", password="x", email="sql@x.com",
-            role="sales", custom_role=role)
+            role="sales", team=role)
         biu = make_event("BIU")
         make_event("BIUK - PM")
         user.assigned_events.set([biu])

@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
+from accounts.period_filter import PeriodFilterMixin
 from accounts.permissions import RBACMixin, IsAdminRole
 from accounts.crm_permissions import crm_permission, has_module_action
 from book_event.models import BookEvent
@@ -65,8 +66,16 @@ def _append_reference(current, note):
     return f"{current} / {note}"
 
 
-class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelViewSet):
+class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
+                          RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+
+    # ?period= presets, over the same date the Dashboard's monthly chart is keyed
+    # on: request_date, falling back to invoice_date. Coalesced rather than
+    # request_date alone because 85 of 2,230 invoices carry only an invoice_date,
+    # and a window that dropped them would put a different number under the same
+    # button on two screens. See accounts/period_filter.py.
+    period_date_fields = ("invoice__request_date", "invoice__invoice_date")
 
     # ── Compound filter spec ──────────────────────────────────────────────────
     # The five person-level fields are RESOLVED: the table shows the delegate
@@ -159,6 +168,15 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
                 "event_code", "edition",
                 # positional, assigned per invoice rather than edited
                 "delegate_number",
+                # PARTIALLY derived, which is worse than fully derived here.
+                # save() forces it to 0 on a Cancelled delegate and restores 1 on
+                # the transition off Cancelled (models.py:72-87), so a batch
+                # write would stick on some rows and be silently reverted on the
+                # Cancelled ones — after a preview that promised all of them.
+                # It moves as a SIDE EFFECT of delegate_payment_status instead,
+                # which is declared. The invoice's own delegate_count has no such
+                # save() logic and IS wired, in the parent group below.
+                "delegate_count",
             ),
             # The delegate_* overrides are bare CharFields with no choices of
             # their own (models.py:107-111), so each list is sourced from the
@@ -177,7 +195,6 @@ class BookDelegateViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.
                 "delegate_paid_or_free":   "Paid / Free (override)",
                 "delegate_payment_date":   "Payment Date (override)",
                 "company_name_raw":        "Company (raw)",
-                "delegate_count":          "Counts Towards Headcount",
                 "add_ons":                 "Add-ons",
             },
         ),

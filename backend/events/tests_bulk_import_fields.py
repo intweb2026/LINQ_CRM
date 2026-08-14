@@ -22,9 +22,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.models import CustomRole
+
 from events.models import Event
 from events.views import EventViewSet
+from teams.models import Team
 
 User = get_user_model()
 
@@ -82,13 +83,13 @@ VERBATIM_KEYS = [
 class EventBulkImportFieldTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.all_access = CustomRole.objects.create(
-            name="ev_import_admin", display_label="Ev Import Admin", is_all_access=True,
+        cls.all_access = Team.objects.create(
+            name="ev_import_admin", is_all_access=True,
         )
         cls.user = User.objects.create_user(
             username="ev_import", password="x", role="admin", email="evimp@iq-hub.com",
         )
-        cls.user.custom_role = cls.all_access
+        cls.user.team = cls.all_access
         cls.user.save()
 
     def setUp(self):

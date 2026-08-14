@@ -13,7 +13,7 @@ import ReportsPage from './pages/ReportsPage';
 import EventPerformancePage from './pages/EventPerformancePage';
 import GoogleSyncPage from './pages/GoogleSyncPage';
 import UsersPage from './pages/UsersPage';
-import RolesPage from './pages/RolesPage';
+import TeamPermissionsPage from './pages/TeamPermissionsPage';
 import TeamsManagementPage from './pages/TeamsManagementPage';
 import WebhookLogsPage from './pages/WebhookLogsPage';
 import PaperReviewPage from './pages/PaperReviewPage';
@@ -74,7 +74,7 @@ export default function App() {
                 <Route path="reports/:tab" element={<ReportsPage />} />
                 <Route path="performance" element={<EventPerformancePage />} />
                 <Route path="users" element={<UsersPage />} />
-                <Route path="roles" element={<RolesPage />} />
+                <Route path="roles" element={<TeamPermissionsPage />} />
                 <Route path="teams" element={<TeamsManagementPage />} />
                 <Route path="webhooks" element={<WebhookLogsPage />} />
                 <Route path="googlesync" element={<GoogleSyncPage />} />

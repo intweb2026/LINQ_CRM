@@ -10,9 +10,10 @@ from datetime import date
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
-from accounts.models import ActionLog, CustomRole, RolePermission
+from accounts.models import ActionLog
 from events.models import Event
 from proposal_submission.models import ProposalSubmission
+from teams.models import Team, TeamPermission
 
 User = None  # bound in setUpTestData via get_user_model
 
@@ -39,14 +40,14 @@ class _Base(APITestCase):
         cls.other_event = make_event("BIUK - PM", "EV Charging UK 2026")
 
         # A role with full proposal_submission rights.
-        cls.role = CustomRole.objects.create(name="Proposals Full")
-        RolePermission.objects.create(
-            custom_role=cls.role, module="proposal_submission",
+        cls.role = Team.objects.create(name="Proposals Full")
+        TeamPermission.objects.create(
+            team=cls.role, module="proposal_submission",
             can_view=True, can_create=True, can_update=True, can_delete=True,
         )
         cls.user = U.objects.create_user(
             username="prop_user", password="x", email="p@example.com",
-            custom_role=cls.role,
+            team=cls.role,
         )
         # cls.user is a SCOPED user on purpose — not admin, not all-access, not
         # market_research — so the rest of the suite exercises the ordinary path.
@@ -55,14 +56,14 @@ class _Base(APITestCase):
         cls.user.assigned_events.set([cls.event, cls.other_event])
 
         # A role with no proposal_submission grant at all.
-        cls.blind_role = CustomRole.objects.create(name="No Proposals")
-        RolePermission.objects.create(
-            custom_role=cls.blind_role, module="proposal_submission",
+        cls.blind_role = Team.objects.create(name="No Proposals")
+        TeamPermission.objects.create(
+            team=cls.blind_role, module="proposal_submission",
             can_view=False, can_create=False, can_update=False, can_delete=False,
         )
         cls.blind_user = U.objects.create_user(
             username="blind_user", password="x", email="b@example.com",
-            custom_role=cls.blind_role,
+            team=cls.blind_role,
         )
 
     def payload(self, **over):

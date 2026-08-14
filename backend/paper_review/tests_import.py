@@ -16,7 +16,7 @@ from django.core import mail
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 
-from accounts.models import ActionLog, CustomRole
+from accounts.models import ActionLog
 from paper_review.importer import (
     FIELD_TO_LABEL, ZOHO_HEADERS, computed_score, map_headers,
 )
@@ -613,7 +613,7 @@ class MRImportGuardTests(ImportBase):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="imp_mr", password="x", email="impmr@example.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event])
 
     def test_whole_file_refusal_naming_the_column(self):

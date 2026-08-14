@@ -24,7 +24,7 @@ class MRFieldLeakTests(_Base):
         super().setUpTestData()
         cls.mr = U.objects.create_user(
             username="gaps_mr", password="x", email="gapsmr@example.com",
-            role="market_research", custom_role=cls.role)
+            role="market_research", team=cls.role)
         cls.mr.assigned_events.set([cls.event])
         cls.row = PaperReview.objects.create(
             event_code=cls.event.event_code, speaker_name="Has Notes",
@@ -156,7 +156,7 @@ class MRFieldLeakTests(_Base):
     def test_admin_can_write_and_clear_it_too(self):
         admin = U.objects.create_user(
             username="gaps_admin", password="x", email="gapsadmin@example.com",
-            role="admin", custom_role=self.role)
+            role="admin", team=self.role)
         self.client.force_authenticate(user=admin)
         r = self.client.patch(f"{self.LIST}{self.row.id}/",
                               {"internal_footnotes": ""}, format="json")
