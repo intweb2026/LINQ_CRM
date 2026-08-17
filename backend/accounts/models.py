@@ -178,10 +178,43 @@ class User(AbstractUser):
         return self.role == self.Role.SALES
 
     def assigned_event_codes(self):
-        """Returns list of event_codes or None (admin = unrestricted)."""
+        """
+        The event codes this user may see, or None for an admin, meaning
+        unrestricted.
+
+        Reads BOTH of the ways an event can belong to somebody, because there are
+        two of them and their names are one character apart. `assigned_events` is
+        the M2M declared above, whose reverse accessor on Event is
+        `assigned_users`. `Event.sales_executive` is a separate FK, whose reverse
+        accessor on this model is the near-identical `assigned_events_list`.
+
+        Only the M2M used to be read here, and on the current database it is
+        empty on all 217 events while sales_executive is set on most of them. So
+        this returned [] for every one of the 42 non-admin accounts, and
+        RBACMixin.rbac_filter turns an empty list into `qs.none()`; the Bookings
+        page was empty for everybody who is not an admin, including the sales
+        people looking at their own invoices.
+
+        The Events module has always resolved ownership the other way, as
+        `Q(assigned_users=user) | Q(sales_executive=user)` in events/views.py, and
+        that is the set the New Booking event dropdown offers. Returning the same
+        set here is what makes the events a person can file a booking against and
+        the bookings they can then see be one list rather than two.
+        """
         if self.is_admin:
             return None
-        return list(self.assigned_events.values_list("event_code", flat=True))
+        # Imported here, not at module scope: events.models imports this model.
+        from django.db.models import Q
+        from events.models import Event
+        return list(
+            Event.objects
+            .filter(Q(assigned_users=self) | Q(sales_executive=self))
+            # A blank code would scope to `event_code = ''`, which is every row
+            # that never got one rather than no rows at all.
+            .exclude(event_code="")
+            .values_list("event_code", flat=True)
+            .distinct()
+        )
 
     @property
     def has_all_access(self):

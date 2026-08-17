@@ -367,11 +367,36 @@ class DashboardAggregateTestCase(TestCase):
         self.assertEqual(get(self.admin, "all").data["outstanding"]["pending"], 2)
 
     def test_outstanding_is_still_rbac_scoped(self):
-        """All-time is not the same as unscoped."""
+        """
+        All-time is not the same as unscoped.
+
+        This used to assert that the rep saw 0 until `assigned_events` was
+        populated, which pinned the second half of defect 1 in this module's
+        header. Attribution was moved onto the event catalogue and the SCOPE was
+        left on the M2M, so the dashboard credited the rep with bookings it then
+        refused to let them see. `assigned_events` is empty on all 45 accounts and
+        `assigned_users` on all 217 events, so that read as an empty Bookings page
+        for every non-admin. Ownership through the catalogue now scopes as well as
+        attributes; see accounts/models.py assigned_event_codes.
+        """
         self.make_booking("INV-1", "Delegate", self.today, status="Pending")
-        self.assertEqual(get(self.rep).data["outstanding"]["pending"], 0)
-        self.rep.assigned_events.add(self.event)
+
+        # Owning nothing still shows nothing, which is what this test is for.
+        stranger = User.objects.create_user(
+            username="rep.two", password="x", role=User.Role.SALES,
+            first_name="Rep", last_name="Two", email="rep.two@iq-hub.com",
+            team=self.sales_team,
+        )
+        self.assertEqual(get(stranger).data["outstanding"]["pending"], 0)
+
+        # The catalogue names the rep on TST, and that is the only way ownership
+        # is expressed here, so the worklist is theirs with no M2M row at all.
+        self.assertFalse(self.rep.assigned_events.exists())
         self.assertEqual(get(self.rep).data["outstanding"]["pending"], 1)
+
+        # The M2M still grants it to somebody the catalogue does not name.
+        stranger.assigned_events.add(self.event)
+        self.assertEqual(get(stranger).data["outstanding"]["pending"], 1)
 
     def test_undated_bookings_are_reported_and_kept_out_of_windows(self):
         """

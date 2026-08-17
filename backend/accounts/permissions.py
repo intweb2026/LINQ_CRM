@@ -85,7 +85,7 @@ class RBACMixin:
     """
     permission_classes = [IsSalesOrAdminOrReadOnly]
 
-    def rbac_filter(self, qs, event_code_field="event_code"):
+    def rbac_filter(self, qs, event_code_field="event_code", owner_path=None):
         user = self.request.user
         if user.is_admin:
             return qs
@@ -95,24 +95,41 @@ class RBACMixin:
         codes = user.assigned_event_codes() or []
 
         # Build event_code OR clause (used as either primary or secondary filter).
+        #
+        # iexact per code, not icontains, and both halves of that matter. The
+        # stored codes disagree with the catalogue on CASE — `Feb2027_BIZ-PM`
+        # against the catalogue's `FEB2027_BIZ-PM` — so an exact match drops 9
+        # delegate rows out of the list of the person who sold them, which is why
+        # this is not a plain `__in`. And a SUBSTRING match over-grants, because
+        # `SFU - AD` is contained in `BSFU - AD`: whoever owns the first event
+        # would be handed every booking on the second. That was harmless only for
+        # as long as assigned_event_codes() returned nothing for everybody.
         ec_query = Q()
         for code in codes:
-            ec_query |= Q(**{f"{event_code_field}__icontains": code})
+            ec_query |= Q(**{f"{event_code_field}__iexact": code})
 
-        # For models with a sales_executive FK, allow access if the user is the
-        # assigned executive OR the event is in their assigned events.
-        # This keeps the invoice retrieve consistent with the delegate list view,
-        # which is filtered by event_code only (BookDelegate has no sales_executive).
-        if hasattr(qs.model, "sales_executive"):
-            combined = Q(sales_executive=user)
+        # You can see a row on an event you hold, OR one you personally sold.
+        #
+        # `owner_path` is how the row reaches its sales executive. BookEvent holds
+        # the FK itself; BookDelegate reaches it through its invoice, and used to
+        # get no ownership clause at all because this looked only for a field on
+        # the model. That left the two halves of one module disagreeing: a person
+        # could open an invoice they sold and find none of the delegates on it.
+        if owner_path is None and hasattr(qs.model, "sales_executive"):
+            owner_path = "sales_executive"
+
+        if owner_path:
+            combined = Q(**{owner_path: user})
             if ec_query:
                 combined |= ec_query
             return qs.filter(combined)
 
-        # For models without sales_executive, use event_code only.
+        # No ownership path and no events: scoped to nothing, never to everything.
         if not ec_query:
             return qs.none()
         return qs.filter(ec_query)
 
     def rbac_filter_invoice(self, qs):
-        return self.rbac_filter(qs, event_code_field="event_code")
+        """Scope a model that hangs off an invoice rather than holding the
+        sales executive itself, which today means BookDelegate."""
+        return self.rbac_filter(qs, owner_path="invoice__sales_executive")

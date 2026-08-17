@@ -241,6 +241,12 @@ class ModuleListSyncTests(TestCase):
         A sidebar entry whose `mod` the backend does not recognise is gated on a
         permission that can never be granted, so its page is unreachable for
         every role. `mod: null` marks an entry that is not module-gated.
+
+        This one carries more weight now than when it was written. The sidebar
+        HIDES what a user cannot view rather than showing it padlocked, so an
+        unknown `mod` no longer presents as a locked row somebody can report — the
+        entry would simply be absent for every non-admin, and nobody would think
+        to look for a menu item they had never seen. See NavVisibilityTests.
         """
         self._frontend_present()
         self.assertTrue(self.NAV.exists(), f"missing {self.NAV}")
@@ -248,3 +254,76 @@ class ModuleListSyncTests(TestCase):
         mods = set(re.findall(r"""mod:\s*["']([a-z_]+)["']""", src))
         unknown = sorted(mods - set(CRM_MODULES))
         self.assertEqual(unknown, [], f"nav.js references unknown modules: {unknown}")
+
+
+class NavVisibilityTests(TestCase):
+    """
+    A module the user cannot view is ABSENT from the navigation, not displayed
+    greyed out behind a padlock.
+
+    THE BEHAVIOUR THIS REPLACED
+    Sidebar.jsx rendered two lists per group: the items the role could open, and
+    then every item it could not, each as a disabled row with a lock icon and a
+    toast reading "You do not have access to X". So a Sales session listed Ticket
+    Central, Paper Review, Proposal Submission, Users, Permissions, Teams
+    Management, Webhooks and Google Sync — the entire product — as rows that did
+    nothing. The menu answered "what exists" when the only useful question it can
+    answer is "where can I go".
+
+    Asserted against the SOURCE because this tree has no JavaScript test runner,
+    which is the same approach as ModuleListSyncTests above and
+    tests_event_picker_sources.py. The page-level guards are unaffected and are
+    tested for real elsewhere: hiding the menu row is not the access control, it
+    is what the access control looks like.
+    """
+
+    SIDEBAR = FRONTEND / "components" / "Sidebar.jsx"
+    PALETTE = FRONTEND / "components" / "CommandPalette.jsx"
+
+    def _read(self, path):
+        if not FRONTEND.exists():
+            self.skipTest("frontend/src not present in this checkout")
+        self.assertTrue(path.exists(), f"missing {path}")
+        return path.read_text(encoding="utf-8")
+
+    def test_the_sidebar_renders_no_locked_rows(self):
+        src = self._read(self.SIDEBAR)
+        for marker in ("rail-lock", "rail-item locked", "No access"):
+            self.assertNotIn(
+                marker, src,
+                f"Sidebar.jsx still renders {marker!r}. A module the user cannot "
+                f"view belongs out of the rail, not in it behind a padlock.",
+            )
+
+    def test_the_sidebar_gates_items_on_can_view(self):
+        """
+        The filter itself, so removing the locked rows cannot be 'fixed' later by
+        dropping the check and showing everything to everybody.
+        """
+        src = self._read(self.SIDEBAR)
+        self.assertRegex(
+            src, r"g\.items\.filter\(\(i\) => !i\.mod \|\| canView\(i\.mod\)\)",
+            "Sidebar.jsx no longer filters group items on canView",
+        )
+
+    def test_an_empty_group_takes_its_heading_with_it(self):
+        """
+        Otherwise a role with no Admin rights still reads the word "Admin" over a
+        gap, which is the same disclosure in smaller type.
+        """
+        src = self._read(self.SIDEBAR)
+        self.assertRegex(
+            src, r"if \(!vis\.length\) return null",
+            "Sidebar.jsx renders a group heading with no visible items under it",
+        )
+
+    def test_the_command_palette_hides_the_same_pages(self):
+        """
+        The other NAV consumer. Hiding a row in the rail while leaving it
+        one keystroke away in the palette would not be hiding it at all.
+        """
+        src = self._read(self.PALETTE)
+        self.assertRegex(
+            src, r"if \(i\.mod && !canView\(i\.mod\)\) return",
+            "CommandPalette.jsx no longer filters nav entries on canView",
+        )
