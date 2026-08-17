@@ -19,9 +19,9 @@ tests that import them from here keep working unchanged.
 """
 from accounts.import_common import (
     CREATE, CREATE_WITH_WARNING, ERROR, MAX_ROWS,
-    as_int, as_text, build_header_mapper, clean_header, column_errors,
-    excel_serial_to_date, normalise_row, parse_import_date, plan_hash,
-    public_plan, summarise,
+    absolute_url, as_int, as_text, as_url, build_header_mapper, clean_header,
+    column_errors, excel_serial_to_date, normalise_row, parse_import_date,
+    plain_text_cell, plan_hash, public_plan, summarise, unwrap_anchor,
 )
 from webhooks.event_code_normalization import resolve_with_spacing_tolerance
 
@@ -38,6 +38,7 @@ __all__ = [
     "excel_serial_to_date", "parse_import_date", "map_headers",
     "normalise_row", "file_has_mr_content", "classify_rows",
     "plan_hash", "summarise", "public_plan",
+    "unwrap_anchor", "absolute_url", "as_url", "plain_text_cell",
 ]
 
 # ── Header mapping ───────────────────────────────────────────────────────────
@@ -94,10 +95,15 @@ FIELD_TO_LABEL = {
 MR_COLUMNS = ("slot_recommendation_mr", "internal_footnotes_mr")
 
 REQUIRED = ("event_code", "speaker_name", "email")
-# Descriptive now rather than enforcing: over-length is checked generically
-# against the model by column_errors() in classify_rows, which reads the same 500
-# off URLField.max_length. Kept because they are in __all__ and name, in one
-# place, which columns are URLs.
+# The columns that hold a LINK rather than text, so classify_rows knows which
+# ones to run through as_url — an anchor-wrapped cell collapses to the address
+# inside it, and a scheme-less one gains https://, so what gets stored is
+# something a browser can navigate to. Every other column takes plain_text_cell
+# instead, which unwraps the same markup but keeps the words.
+#
+# Over-length is NOT checked here: column_errors() reads the same 500 off
+# URLField.max_length, and it runs after the unwrapping, so a long address is
+# judged as the address rather than as address-plus-tags.
 URL_FIELDS = ("linkedin_speaker", "linkedin_company")
 MAX_URL_LEN = 500
 
@@ -154,6 +160,31 @@ def classify_rows(rows, mapping, user, existing_pairs):
             for f in MODEL_FIELDS
             if f not in ("submission_date", "qc_score", "linkedin_followers")
         }
+
+        # ── cells that arrived as an anchor tag ───────────────────────────────
+        # Zoho writes several columns as HTML, so a LinkedIn cell can arrive as
+        # `<a href="https://…">Eli Jasso</a>` and an email column as a mailto:
+        # anchor. Stored as-is that markup is not a link and not a readable
+        # value; unwrapped here, the URL columns hold a navigable address and the
+        # text columns hold words. See accounts/import_common.py for the rules
+        # and for why only http/https survive.
+        #
+        # BEFORE everything below, not after. The required-field check would
+        # otherwise pass on a cell holding nothing but an empty `<a>`, and
+        # column_errors would measure a 40-character URL as the 120 characters of
+        # tags around it.
+        for field in text_fields:
+            if field in URL_FIELDS:
+                url, url_error = as_url(values.get(field))
+                text_fields[field] = url
+                if url_error:
+                    raw = _as_text(values.get(field))
+                    errors.append({
+                        "field": FIELD_TO_LABEL[field], "problem": url_error,
+                        "value": raw[:80] + "…" if len(raw) > 80 else raw,
+                    })
+            else:
+                text_fields[field] = plain_text_cell(text_fields[field])
 
         for field in REQUIRED:
             if not text_fields.get(field):

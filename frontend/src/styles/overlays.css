@@ -224,6 +224,39 @@ table.gt th.num,table.gt td.num{text-align:right}
 .fd-lnk-go{flex-shrink:0;display:grid;place-items:center;width:35px;height:35px;border:1px solid var(--border-s);border-radius:var(--r-md);background:var(--surface);color:var(--t-600);box-shadow:var(--sh-xs)}
 .fd-lnk-go:hover{border-color:var(--t-400);background:var(--t-50)}
 .fd-lnk-go[aria-disabled=true]{color:var(--text-4);pointer-events:none;background:var(--surface-2)}
+/* Rich text field, for the values Zoho exports as HTML; see lib/richText.js.
+   Header row carries the note and the Formatted / HTML switch. */
+.rt{display:flex;flex-direction:column;gap:6px}
+.rt-b{display:flex;align-items:center;gap:8px}
+.rt-n{flex:1;min-width:0;font-size:10.5px;color:var(--text-4)}
+.rt-sw{display:flex;gap:2px;padding:2px;background:var(--n-50);border:1px solid var(--border);border-radius:var(--r-sm);flex-shrink:0}
+.rt-sw button{height:21px;padding:0 9px;border:none;background:none;border-radius:var(--r-xs);font-size:10.5px;font-weight:650;color:var(--text-3);cursor:pointer;transition:background .13s,color .13s}
+.rt-sw button:hover{color:var(--text)}
+.rt-sw button.on{background:var(--surface);color:var(--t-600);box-shadow:var(--sh-xs)}
+.rt-e{padding:11px 12px;font-size:12.5px;line-height:1.55;color:var(--text);background:var(--surface);border:1px solid var(--border-s);border-radius:var(--r-md);box-shadow:var(--sh-xs);overflow-y:auto;transition:border-color .14s,box-shadow .14s}
+.rt-e:hover{border-color:var(--n-300)}
+.rt-e:focus{outline:none;border-color:var(--t-400);box-shadow:0 0 0 3px var(--t-100)}
+.rt-e:empty::before{content:attr(data-ph);color:var(--text-4)}
+/* Typography for the stored markup. Zoho wraps every list item in a paragraph
+   and hangs a margin on it, and those inline styles are dropped on the way in
+   because they also carry Word's fonts and colours, so the spacing is set here
+   instead of trusting whatever the spreadsheet happened to hold. */
+.rt-e>:first-child{margin-top:0}
+.rt-e>:last-child,.rt-e p:last-child,.rt-e li:last-child{margin-bottom:0}
+.rt-e p{margin:0 0 8px}
+.rt-e ul,.rt-e ol{margin:0 0 8px;padding-left:19px}
+.rt-e li{margin-bottom:4px}
+.rt-e li>p{margin:0}
+.rt-e h1,.rt-e h2,.rt-e h3,.rt-e h4,.rt-e h5,.rt-e h6{font-size:13px;font-weight:750;letter-spacing:-.012em;margin:0 0 6px}
+.rt-e b,.rt-e strong{font-weight:700;color:var(--text)}
+.rt-e hr{border:none;border-top:1px solid var(--border);margin:10px 0}
+.rt-e blockquote{margin:0 0 8px;padding-left:11px;border-left:2px solid var(--border-s);color:var(--text-2)}
+.rt-e code{font-family:var(--mono);font-size:11.5px}
+.rt-e pre{font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;margin:0 0 8px;overflow-x:auto}
+.rt-e a{color:var(--t-600);text-decoration:underline}
+.rt-e table{border-collapse:collapse;margin:0 0 8px;max-width:100%}
+.rt-e th,.rt-e td{border:1px solid var(--border);padding:4px 7px;text-align:left}
+.rt-s{height:auto;padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.5;resize:vertical}
 
 /* wizard */
 .wz{display:flex;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none}

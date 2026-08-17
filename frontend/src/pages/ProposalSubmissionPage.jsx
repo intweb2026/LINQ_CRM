@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react';
-import { PageHead } from '../components/UI';
+import { ExtLink, PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Dot, Who } from '../components/Badge';
 import { fdate, nf } from '../lib/helpers';
+import { htmlToText } from '../lib/richText';
 import {
   PARTICIPATION_TYPES, QC_GRADES, QC_GRADE_TONE, SPEAKER_SLOT_STATUSES, SPEAKER_SLOT_TONE,
   SPONSORSHIP_STATUSES, SPONSORSHIP_TONE, REVENUE_POSSIBILITY, REVENUE_TONE,
@@ -28,6 +29,22 @@ import DateRangeFilter from '../components/DateRangeFilter';
  * state; anything added that does has to move back inside, under useMemo. Same
  * reasoning as REVIEW_COLS in PaperReviewPage.
  */
+/**
+ * One line of an HTML-stored prose column.
+ *
+ * agenda_addition arrives from Zoho as markup, so the raw value in a cell this
+ * narrow read `<p><b>FROM INVISIBLE LOSSES TO SMART…` and was cut off inside the
+ * first tag. The words are what belongs on one line; the formatting itself is in
+ * the edit modal, on RichTextField. A value that is nothing but markup reduces to
+ * no words at all, and reads as empty rather than as a stray fragment.
+ */
+const proseCell = (v) => {
+  const text = htmlToText(v);
+  return text
+    ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{text}</span>
+    : <span className="dim">—</span>;
+};
+
 const PROPOSAL_COLS = [
   /* event_code and company_name carry NO `opts`. Those dropdowns were
      built by scanning the loaded rows, which under server paging means
@@ -41,15 +58,19 @@ const PROPOSAL_COLS = [
   { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
   { key: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
   { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
-  { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-  { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+  /* ExtLink rather than a hand-rolled <a>: it resolves the href (an anchor-wrapped
+     or scheme-less cell is otherwise a link to nowhere), refuses to linkify text
+     that is not an address, opens in its own tab with no handle back to this one,
+     and stops the click reaching the row's own open-the-record handler. */
+  { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
+  { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
   { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
   { key: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
   { key: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
   { key: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
   { key: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
   { key: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
-  { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+  { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: proseCell },
   { key: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
   { key: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
   { key: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },

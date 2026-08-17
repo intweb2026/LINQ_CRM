@@ -35,6 +35,7 @@ import hashlib
 import json
 import re
 from datetime import date, datetime, timedelta
+from html import unescape
 
 # Per-call row cap. The browser chunks anything larger, because
 # DATA_UPLOAD_MAX_MEMORY_SIZE sits at Django's 2.5 MB default and an uncapped
@@ -275,6 +276,153 @@ def as_bool(value):
     if text in ("no", "n", "false", "f", "0", "-"):
         return False, None
     return False, f"{value!r} is not a yes/no value"
+
+
+# ── Cells that arrived as an anchor tag ──────────────────────────────────────
+# Zoho writes some columns as HTML rather than as a bare value, so a LinkedIn
+# cell reaches an import as
+#     <a href="https://www.linkedin.com/in/eli-jasso" target="_blank">Eli</a>
+# rather than as the address on its own. Stored verbatim that is not a link at
+# all, on three counts. The grid renders href="&lt;a href=..." and the click goes
+# nowhere; the markup eats the 500-character column, so a genuinely short URL can
+# report as over-length; and a CSV export writes the tags back out, so the next
+# import inherits them. The address inside the tag is the value the column was
+# always meant to hold, so that is what gets stored, and everything downstream
+# then treats the column exactly as it treats a hand-typed URL.
+#
+# ONLY http AND https SURVIVE. These cells come from an uploaded spreadsheet and
+# the frontend renders the stored value straight into an href, so a
+# `javascript:` address extracted here would sit one click from running in the
+# CRM's own origin. frontend/src/lib/helpers.js:extUrl applies the same rule at
+# render time. Both places keep it on purpose; the frontend cannot trust what is
+# already in the database, and the database should not be storing what the
+# frontend will refuse to render.
+_ANCHOR_TAG = re.compile(r"<a\b", re.IGNORECASE)
+_ANCHOR_HREF = re.compile(
+    r"""<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""",
+    re.IGNORECASE,
+)
+_ANY_TAG = re.compile(r"<[^>]*>")
+_HAS_SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*:", re.IGNORECASE)
+_WEB_SCHEME = re.compile(r"^https?:", re.IGNORECASE)
+_MAIL_OR_TEL = re.compile(r"^(?:mailto|tel):", re.IGNORECASE)
+_HOSTLIKE = re.compile(r"^[\w-]+(?:\.[\w-]+)+$")
+
+
+def unwrap_anchor(value):
+    """
+    (href, visible_text) for a cell written as anchor markup.
+
+    `href` is None when the cell is not markup at all, which is the ordinary
+    case; it is "" when there is an anchor carrying no usable href, such as
+    `<a name="x">text</a>`. That three-way answer is what lets a caller tell
+    "this was meant to be a link and the address is missing" apart from "this was
+    never a link", and treat only the first as a row error.
+
+    `visible_text` is the cell with every tag removed and HTML entities decoded,
+    so `&amp;` in a tracking parameter comes back as `&`.
+    """
+    text = as_text(value)
+    if not _ANCHOR_TAG.search(text):
+        return None, text
+    match = _ANCHOR_HREF.search(text)
+    href = ""
+    if match:
+        # Exactly one group matches, whichever quoting style the tag used.
+        href = unescape(next(g for g in match.groups() if g is not None)).strip()
+    visible = " ".join(unescape(_ANY_TAG.sub(" ", text)).split())
+    return href, visible
+
+
+def absolute_url(value):
+    """
+    An http/https address a browser can actually navigate to, or None when the
+    text is not a web address.
+
+    A value with no scheme ("linkedin.com/in/x") is a RELATIVE path, so a browser
+    resolves it against the CRM's own origin and the link reloads the CRM instead
+    of going anywhere; it gets https:// only when what precedes the first slash
+    plausibly names a host, so "N/A" and free-text notes come back None rather
+    than becoming https://<prose>.
+
+    Narrower than the frontend's extUrl, which also passes mailto: and tel: —
+    those are legitimate to RENDER from a free-text column, but the two columns
+    this guards are URLField, where Django's own URLValidator would reject them.
+    """
+    text = as_text(value)
+    if not text or text == "—":
+        return None
+    if _HAS_SCHEME.match(text):
+        return text if _WEB_SCHEME.match(text) else None
+    if text.startswith("//"):
+        return "https:" + text
+    host = re.split(r"[/?#]", text, maxsplit=1)[0]
+    return "https://" + text if _HOSTLIKE.match(host) else None
+
+
+def as_url(value):
+    """
+    (url, error|None) for a column that stores a link.
+
+    Anchor markup collapses to its address. Text that is already a URL passes
+    through, gaining a scheme if it plausibly needs one.
+
+    Text that is not a link at all is returned AS TYPED with no error, because
+    "N/A" or "not on LinkedIn" in a LinkedIn column is a person answering the
+    question, not a broken row, and failing the whole row over it would discard
+    twenty good columns to police one. It renders as plain text rather than as a
+    dead link — see ExtLink in frontend/src/components/UI.jsx. An anchor tag is
+    the one case that DOES error: markup is unambiguously an attempt at a link,
+    so an address that cannot be used is a real defect in the cell rather than a
+    human writing prose.
+    """
+    raw = as_text(value)
+    href, text = unwrap_anchor(raw)
+    was_markup = href is not None
+
+    candidate = (href or text) if was_markup else raw
+    if not candidate:
+        if was_markup:
+            return "", "is an empty link tag, carrying no address at all"
+        return "", None
+
+    resolved = absolute_url(candidate)
+    if resolved is not None:
+        return resolved, None
+    if was_markup:
+        return "", (f"the address inside the link tag, {candidate!r}, is not an "
+                    f"http or https address")
+    return raw, None
+
+
+def plain_text_cell(value):
+    """
+    A cell for a column that stores TEXT, with any anchor markup unwrapped.
+
+    The address is kept alongside the visible text rather than thrown away, so a
+    remark reading `<a href="https://x.com/deck">the deck</a>` imports as
+    "the deck, https://x.com/deck" and the link is still there to follow. It is
+    dropped only when it adds nothing: an address the visible text already
+    contains, which is the shape Zoho writes most often, or a mailto:/tel: whose
+    own address is the text, which is how an email column arrives.
+
+    A cell with NO anchor in it comes back untouched, tags and all. That is a
+    deliberate limit, not an oversight. Stripping every `<...>` from every text
+    column would also eat the angle brackets people actually type — "<not stated>"
+    in a remarks column is a value, not markup — and an anchor is the only shape
+    with a demonstrated problem, because it is the only one whose contents the
+    frontend is asked to navigate to. Widen this only against a real file that
+    needs it.
+    """
+    href, text = unwrap_anchor(value)
+    if href is None:
+        return text
+    bare = _MAIL_OR_TEL.sub("", href)
+    if not text:
+        return bare or href
+    if bare and bare not in text:
+        return f"{text}, {bare}"
+    return text
 
 
 def normalise_row(raw_row, mapping):

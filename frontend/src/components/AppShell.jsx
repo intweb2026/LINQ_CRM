@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -80,7 +80,17 @@ export default function AppShell() {
         onBurger={() => setMobileOpen((v) => !v)}
         onOpenPalette={() => setPaletteOpen(true)}
       />
-      <main id="main"><Outlet /></main>
+      {/* The route pages are lazy (see App.jsx), so the boundary belongs HERE
+          rather than around <AppShell/> in the router. Above the shell, the
+          fallback would replace the sidebar and topbar too, so every navigation
+          to a not-yet-fetched chunk would blank the whole frame and rebuild it.
+          Inside, only the content area waits, and the chrome the user is
+          navigating with stays put.
+
+          The fallback is empty on purpose: a chunk already in the browser cache
+          resolves within a frame, and a spinner that appears and vanishes on
+          every navigation reads as the app being slower than it is. */}
+      <main id="main"><Suspense fallback={null}><Outlet /></Suspense></main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );

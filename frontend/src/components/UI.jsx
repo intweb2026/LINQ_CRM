@@ -1,24 +1,33 @@
 import { Icon } from '../lib/icons';
-import { extUrl, nf } from '../lib/helpers';
+import { cellText, extUrl, nf } from '../lib/helpers';
 
 /**
  * A stored URL rendered as a link that actually goes there.
  *
- * Three things are deliberate. `href` carries the resolved absolute URL, so
+ * Four things are deliberate. `href` carries the resolved absolute URL, so
  * ctrl/cmd-click, middle-click and the context menu's "open link in new tab" all
  * work — an href of "#" with a preventDefault handler (what this replaced) makes
- * every one of those reopen the CRM instead. The click is stopped from bubbling
- * because these links sit inside table rows whose own onClick opens a record, and
- * a plain click on the link must follow the link, not do both. And text that isn't
- * a URL renders as text rather than as a dead link.
+ * every one of those reopen the CRM instead. `target="_blank"` with
+ * `rel="noopener noreferrer"` opens it as its own page, with no handle back to
+ * this tab. The click is stopped from bubbling because these links sit inside
+ * table rows whose own onClick opens a record, and a plain click on the link must
+ * follow the link, not do both. And text that isn't a URL renders as text rather
+ * than as a dead link.
+ *
+ * The visible label is the value with any tag markup stripped, so a cell that was
+ * imported as `<a href="…">Eli Jasso</a>` reads as "Eli Jasso" rather than
+ * spelling its own HTML out in the grid.
  */
-export function ExtLink({ value, className = 'lnk', children }) {
+export function ExtLink({ value, className = 'lnk', style, children }) {
   const url = extUrl(value);
-  if (!url) return value ? <span>{children ?? value}</span> : <span className="dim">—</span>;
+  const label = children ?? cellText(value);
+  // `style` rides on both branches so a column's sizing holds whether the cell
+  // turned out to be a link or plain text.
+  if (!url) return value ? <span style={style}>{label}</span> : <span className="dim">—</span>;
   return (
-    <a className={className} href={url} target="_blank" rel="noopener noreferrer" title={url}
-      onClick={(e) => e.stopPropagation()}>
-      {children ?? value}
+    <a className={className} style={style} href={url} target="_blank" rel="noopener noreferrer"
+      title={url} onClick={(e) => e.stopPropagation()}>
+      {label}
     </a>
   );
 }

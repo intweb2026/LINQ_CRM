@@ -61,22 +61,59 @@ export function uniq(a) {
   return Array.from(new Set(a)).filter((v) => v != null && v !== '').sort();
 }
 
+// Zoho writes some export columns as HTML, so a value can arrive — and, for
+// anything imported before the importer started unwrapping it, can already be
+// STORED — as `<a href="https://…" target="_blank">Eli Jasso</a>` rather than as
+// the address alone. Put straight in an href that markup is a dead link, and put
+// straight in a cell it renders as visible tag soup. The two helpers below read
+// the address and the words back out of it, so a row that predates
+// accounts/import_common.py:unwrap_anchor still renders as a working link.
+const ANCHOR_HREF = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
+const ANY_TAG = /<[^>]*>/g;
+const ENTITY = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", nbsp: ' ' };
+const unesc = (s) => s.replace(/&(#39|amp|lt|gt|quot|apos|nbsp);/g, (m, k) => ENTITY[k] ?? m);
+
+const stripTags = (s) => unesc(s.replace(ANY_TAG, ' ')).split(/\s+/).filter(Boolean).join(' ');
+
+/**
+ * A stored cell as visible text, with anchor markup unwrapped to the words
+ * inside it.
+ *
+ * Narrow on purpose, matching accounts/import_common.py:plain_text_cell — a cell
+ * with no anchor in it comes back verbatim rather than through the tag stripper,
+ * because "<not stated>" typed into a column is a value, and a blanket stripper
+ * would render it as nothing at all.
+ */
+export function cellText(v) {
+  if (v == null) return '';
+  const s = String(v);
+  return s.includes('<a') ? stripTags(s) || s.trim() : s;
+}
+
 /**
  * A stored link turned into something a browser can actually navigate to, or
  * null when the text isn't a link at all.
  *
- * Rendering the raw value in an href is not safe on two counts, both of which
+ * Rendering the raw value in an href is not safe on three counts, all of which
  * this data hits. A value with no scheme ("google.com" — one such row in
  * tickets.link_url today) is a RELATIVE path, so the browser resolves it against
  * the CRM's own origin: clicking it, or "open link in new tab", reloads the CRM
- * instead of going anywhere. And these values arrive from imported spreadsheets,
- * so a `javascript:` payload in a cell would otherwise be one click from running
- * in the app's origin. Scheme-less text gets https:// only when it plausibly
- * names a host; everything else comes back null and is rendered as plain text.
+ * instead of going anywhere. A value that is anchor markup makes the whole tag
+ * the href, which goes nowhere at all. And these values arrive from imported
+ * spreadsheets, so a `javascript:` payload in a cell — or inside the href of one
+ * of those anchors — would otherwise be one click from running in the app's
+ * origin. Scheme-less text gets https:// only when it plausibly names a host;
+ * everything else comes back null and is rendered as plain text.
  */
 export function extUrl(v) {
   if (v == null) return null;
-  const s = String(v).trim();
+  let s = String(v).trim();
+  if (s.includes('<a')) {
+    const m = ANCHOR_HREF.exec(s);
+    // An anchor with no href at all falls through to its own visible text,
+    // which is usually the address written out.
+    s = (m ? unesc(m[1] ?? m[2] ?? m[3]) : stripTags(s)).trim();
+  }
   if (!s || s === '—') return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
     // Absolute already — allow only the schemes a CRM link should ever use.

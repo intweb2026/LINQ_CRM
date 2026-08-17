@@ -89,11 +89,6 @@ export default function WebhookKeys() {
               </tbody>
             </table>
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.5 }}>
-            The test URL carries the key in plain text. It is recorded in server access logs and in the
-            browser history of anyone who opens it, so share it privately, and regenerate the key once
-            the test is finished.
-          </div>
         </div>
       ) : (
         <EmptyState icon="key" title="No API Keys Found" body="Generate a key to let the event website submit bookings into this CRM."

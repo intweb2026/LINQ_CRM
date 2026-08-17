@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Modal from '../../components/Modal';
 import Select from '../../components/Select';
+import RichTextField from '../../components/RichTextField';
 import { Icon } from '../../lib/icons';
 import {
   PARTICIPATION_TYPES, QC_GRADES, SPEAKER_SLOT_STATUSES, SPONSORSHIP_STATUSES, REVENUE_POSSIBILITY,
@@ -152,7 +153,18 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="edit" size={13} />Agenda addition</div>
         <div className="fg">
-          <div className="fd full"><textarea className="in" style={{ minHeight: 160 }} placeholder="Session outline, talking points, tags…" value={form.agenda_addition} onChange={set('agenda_addition')} /></div>
+          {/* Not a textarea. Zoho exports this field as HTML and the importer
+              stores it as it arrived, so a textarea showed the reader
+              `<p><b>TITLE</b><br /></p><ul><li>…` instead of a title and three
+              bullets. RichTextField renders the formatting and still edits it. */}
+          {/* gridColumn, as every other wide field in this form sets it. `full`
+              alone is a no-op here: the class is defined as `.dg .full`, so
+              inside .fg it left the only field in the section sitting in the
+              left half of a 1,560px modal. */}
+          <div className="fd full" style={{ gridColumn: '1/-1' }}>
+            <RichTextField value={form.agenda_addition} onChange={setSel('agenda_addition')}
+              minHeight={200} placeholder="Session outline, talking points, tags…" />
+          </div>
         </div>
       </div>
     </Modal>

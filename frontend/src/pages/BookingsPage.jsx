@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PageHead, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
@@ -57,9 +57,14 @@ import * as bookingsApi from '../api/bookings';
  * FILTER value list, which is a read operation.
  *
  * A FACTORY, not a constant, because the Transfer column carries a callback and is
- * omitted entirely for a caller who cannot transfer. DataTable expects callers to
- * rebuild cols each render and keys off the column keys rather than array identity
- * (DataTable.jsx:383), so this costs nothing.
+ * omitted entirely for a caller who cannot transfer.
+ *
+ * CALL IT ONCE PER SET OF ARGUMENTS, NOT ONCE PER RENDER. This used to say that
+ * rebuilding each render cost nothing, because DataTable keyed off the column keys
+ * rather than the array identity. That stopped being true when its Row became a
+ * React.memo component: the memo uses a shallow prop comparison, so a fresh array
+ * every render is a changed prop on every row, and the memo never hits. The call
+ * site memoises on `canTransfer` for that reason.
  */
 const bkCols = ({ onTransfer } = {}) => [
   { key: 'payment_status', label: 'Payment Status', group: 'id', serverField: 'payment_status',
@@ -203,6 +208,31 @@ export default function BookingsPage() {
   // Paper Review and Proposal Submission use as well. Same behaviour, one copy.
   const bulk = useBulkUpdate(bookingsApi.RESOURCE, refresh);
 
+  // A transfer rewrites the booking it leaves AND creates one on the target event,
+  // so it takes both rights — the same pair the endpoint enforces
+  // (BookDelegateViewSet.transfer). Without them the column is not rendered at all,
+  // rather than offering a button that can only answer 403.
+  const canTransfer = can('update', 'bookings') && can('create', 'bookings');
+  /**
+   * Memoised on `canTransfer` alone, which is the only thing bkCols actually
+   * varies on — setTransferRow is a setState function and React guarantees its
+   * identity for the life of the component.
+   *
+   * Rebuilt every render, as this was, `cols` is a new prop identity each time and
+   * DataTable's memoised Row never hits, so every loaded delegate re-renders on
+   * every state change. This table is infinite-scroll over the largest table in
+   * the CRM, so the cost grows the further the user scrolls — which is what
+   * "it gets stuck once I've seen all the entries" describes.
+   *
+   * ABOVE the canView guard below, with every other hook. A hook after an early
+   * return is called on some renders and not others, which breaks the order React
+   * relies on; eslint's rules-of-hooks catches it, and it did.
+   */
+  const cols = useMemo(
+    () => bkCols({ onTransfer: canTransfer ? (row) => setTransferRow({ row, dirty: false }) : null }),
+    [canTransfer],
+  );
+
   if (!canView('bookings')) return <NoAccessPage module="Bookings" />;
 
   const TABS = [
@@ -213,15 +243,6 @@ export default function BookingsPage() {
 
   // The tab is a real server-side criterion, not a client narrowing of one page.
   const serverCriteria = tab ? [{ field: 'payment_status', op: 'is', value: tab }] : null;
-
-  // A transfer rewrites the booking it leaves AND creates one on the target event,
-  // so it takes both rights — the same pair the endpoint enforces
-  // (BookDelegateViewSet.transfer). Without them the column is not rendered at all,
-  // rather than offering a button that can only answer 403.
-  const canTransfer = can('update', 'bookings') && can('create', 'bookings');
-  // {row, dirty} either way: a row straight from the table cannot have unsaved
-  // edits, so the flag is only ever true when the edit modal raised it.
-  const cols = bkCols({ onTransfer: canTransfer ? (row) => setTransferRow({ row, dirty: false }) : null });
 
   async function openInvoice(row) {
     try {

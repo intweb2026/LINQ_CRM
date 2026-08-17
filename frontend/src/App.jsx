@@ -1,3 +1,4 @@
+import { lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SessionProvider, useSession } from './context/SessionContext';
 import { ToastProvider } from './context/ToastContext';
@@ -5,19 +6,37 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import AppShell from './components/AppShell';
 import { homeFor } from './lib/nav';
 import LoginPage from './pages/LoginPage';
-import DashboardPage from './pages/DashboardPage';
-import BookingsPage from './pages/BookingsPage';
-import TicketCentralPage from './pages/TicketCentralPage';
-import EventsPage from './pages/EventsPage';
-import ReportsPage from './pages/ReportsPage';
-import EventPerformancePage from './pages/EventPerformancePage';
-import GoogleSyncPage from './pages/GoogleSyncPage';
-import UsersPage from './pages/UsersPage';
-import TeamPermissionsPage from './pages/TeamPermissionsPage';
-import TeamsManagementPage from './pages/TeamsManagementPage';
-import WebhookLogsPage from './pages/WebhookLogsPage';
-import PaperReviewPage from './pages/PaperReviewPage';
-import ProposalSubmissionPage from './pages/ProposalSubmissionPage';
+
+/**
+ * EVERY PAGE IS SPLIT OUT OF THE MAIN BUNDLE.
+ *
+ * These were static imports, so webpack emitted the entire application as ONE
+ * chunk: 898 KB of JavaScript, which the browser had to download, parse and
+ * execute in full before it could render anything at all. A user who only ever
+ * opens Bookings still paid for the import wizard, the report builder, the
+ * webhook log viewer and every modal in the app, on every cold load.
+ *
+ * lazy() makes each route its own chunk, fetched when it is first visited and
+ * cached from then on. The initial download becomes the shell — router,
+ * providers, AppShell, LoginPage — plus one page.
+ *
+ * LoginPage stays a STATIC import on purpose. It is the first thing an
+ * unauthenticated visitor sees, so splitting it would add a round trip to
+ * precisely the render that has nothing else to wait for.
+ */
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const BookingsPage = lazy(() => import('./pages/BookingsPage'));
+const TicketCentralPage = lazy(() => import('./pages/TicketCentralPage'));
+const EventsPage = lazy(() => import('./pages/EventsPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const EventPerformancePage = lazy(() => import('./pages/EventPerformancePage'));
+const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
+const TeamsManagementPage = lazy(() => import('./pages/TeamsManagementPage'));
+const WebhookLogsPage = lazy(() => import('./pages/WebhookLogsPage'));
+const PaperReviewPage = lazy(() => import('./pages/PaperReviewPage'));
+const ProposalSubmissionPage = lazy(() => import('./pages/ProposalSubmissionPage'));
 
 function RequireAuth({ children }) {
   const { user, permsLoaded } = useSession();
@@ -60,6 +79,11 @@ export default function App() {
           <ConfirmProvider>
             <Routes>
               <Route path="/login" element={<LoginRoute />} />
+              {/* The Suspense boundary these lazy pages need is INSIDE AppShell,
+                  around its <Outlet/>, not here. Wrapping <AppShell/> would put
+                  the sidebar and topbar behind the fallback too, so every
+                  navigation to a not-yet-fetched chunk would blank the whole
+                  frame. See components/AppShell.jsx. */}
               <Route path="/" element={<RequireAuth><AppShell /></RequireAuth>}>
                 <Route index element={<HomeRedirect />} />
                 <Route path="dashboard" element={<DashboardPage />} />

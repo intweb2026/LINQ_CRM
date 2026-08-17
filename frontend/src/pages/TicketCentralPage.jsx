@@ -82,6 +82,10 @@ const tkCols = () => [
   { key: 'status', serverField: 'status', serverOrdering: 'status', label: 'Status', group: 'rec', cell: (v) => <TkBadge value={v} />, opts: () => Object.keys(TK_STATUS) },
 ];
 
+// Evaluated ONCE. See the note on the `cols` prop below for why the identity of
+// this array, not merely its contents, is what matters.
+const TK_COLS = tkCols();
+
 const HIDDEN_DEFAULT = ['competitor_event_name', 'organizer', 'event_month_year', 'event_location', 'relationship', 'actual_count_lx2'];
 
 export default function TicketCentralPage() {
@@ -167,7 +171,14 @@ export default function TicketCentralPage() {
         defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}
-        cols={tkCols()}
+        // TK_COLS, not tkCols(). The call returned a fresh array on every render,
+        // so `cols` was a new prop identity each time and DataTable's memoised Row
+        // never hit — every loaded ticket re-rendered on every state change, and
+        // this table accumulates pages as you scroll 42,912 of them. tkCols takes
+        // no arguments and closes over nothing in the component, so the result is
+        // a constant; it stays a factory only because the module already exported
+        // it that way.
+        cols={TK_COLS}
         // The Priority column declares editOpts. DataTable now renders an in-cell
         // editor only where the page says the viewer may write, so this has to be
         // passed explicitly or the column goes read-only.
