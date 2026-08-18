@@ -35,7 +35,7 @@ export default function ReportsOverview() {
                       const tn = mb.conv >= 70 ? 'var(--green)' : mb.conv >= 50 ? 'var(--t-500)' : 'var(--amber)';
                       return (
                         <tr key={mb.user_id}>
-                          <td><Who name={mb.name} /></td><td><RoleBadge value={mb.role} /></td>
+                          <td><Who name={mb.name} avatar={false} /></td><td><RoleBadge value={mb.role} /></td>
                           <td className="num" style={{ fontWeight: 650 }}>{nf(mb.bookings)}</td>
                           <td className="num" style={{ color: 'var(--green)', fontWeight: 650 }}>{nf(mb.paid)}</td>
                           <td className="num"><span className="cv"><span>{mb.conv}%</span><span className="cv-b"><i style={{ width: mb.conv + '%', background: tn }} /></span></span></td>

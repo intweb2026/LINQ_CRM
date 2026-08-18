@@ -194,7 +194,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
   return (
     <div className="tw">
       <div className="tsc" style={{ maxHeight: 420 }}>
-        <table className="dt">
+        <table className="dt dt-form dt-grid">
           {/* Remove FIRST, then the row number, then the fields.
               The row is ~25 columns wide and this container scrolls horizontally, so
               a trash button in the last column sat off-screen: deleting one of
@@ -205,6 +205,11 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
               only be in view until the first sideways scroll. The row number takes
               pin1 when there is no remove column, so the pinned pair is never a
               40px gap with scrolled content showing through. */}
+          <colgroup>
+            {onRemove ? <col style={{ width: 44 }} /> : null}
+            <col style={{ width: onRemove ? 32 : 44 }} />
+            {COLS.map((c) => <col key={c.key} style={{ width: c.width }} />)}
+          </colgroup>
           <thead>
             <tr>
               {onRemove ? <th className="pin1" /> : null}

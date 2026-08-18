@@ -1,11 +1,14 @@
 """
 google_sync/views.py
 ─────────────────────
-GET  /api/google-sync/logs/         — paginated sync history (admin only)
-GET  /api/google-sync/logs/{id}/    — single log detail
-GET  /api/google-sync/status/       — live dashboard summary
-POST /api/google-sync/run/          — trigger manual sync
-POST /api/google-sync/retry/{id}/   — retry a failed sync
+GET  /api/google-sync/logs/            — paginated sync history (admin only)
+GET  /api/google-sync/logs/{id}/       — single log detail
+GET  /api/google-sync/status/          — live dashboard summary
+POST /api/google-sync/run/             — trigger manual sync
+POST /api/google-sync/retry/{id}/      — retry a failed sync
+GET  /api/google-sync/catalog/         — modules and columns a target may pick
+     /api/google-sync/targets/         — CRUD for user-defined pushes
+POST /api/google-sync/targets/{id}/run/ — run one target now
 """
 import logging
 from django.db.models import Q
@@ -16,8 +19,9 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
 from book_event.models import SyncLog
-from .models import GoogleSheetSyncLog
-from .serializers import GoogleSheetSyncLogSerializer
+from sync import catalog
+from .models import GoogleSheetSyncLog, SheetSyncTarget
+from .serializers import GoogleSheetSyncLogSerializer, SheetSyncTargetSerializer
 from .services import SyncOrchestrator
 
 logger = logging.getLogger("book_event")
@@ -155,3 +159,77 @@ class GoogleSyncRetryView(APIView):
             else status.HTTP_500_INTERNAL_SERVER_ERROR
         )
         return Response(GoogleSheetSyncLogSerializer(log).data, status=resp_status)
+
+
+class SyncCatalogView(APIView):
+    """
+    GET /api/google-sync/catalog/
+
+    Every module a target may be pointed at, with its selectable columns. The
+    picker is drawn from this, so it cannot offer a column the runner would
+    reject.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        return Response({"modules": catalog.list_modules()})
+
+
+class SheetSyncTargetViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for user-defined pushes, plus POST {id}/run/ to run one now.
+    """
+    serializer_class   = SheetSyncTargetSerializer
+    permission_classes = [IsAdminRole]
+
+    def get_queryset(self):
+        qs = SheetSyncTarget.objects.select_related("created_by").all()
+
+        module = self.request.query_params.get("module")
+        if module:
+            qs = qs.filter(module=module)
+
+        enabled = self.request.query_params.get("is_enabled")
+        if enabled in ("true", "false"):
+            qs = qs.filter(is_enabled=enabled == "true")
+
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(name__icontains=search) | Q(tab_name__icontains=search)
+            )
+
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def run(self, request, pk=None):
+        target = self.get_object()
+
+        if not target.is_enabled:
+            return Response(
+                {"error": "This target is disabled. Enable it before running."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            log = SyncOrchestrator.run_target(
+                target,
+                triggered_by=request.user.username,
+                trigger_source=GoogleSheetSyncLog.TriggerSource.ADMIN_MANUAL,
+            )
+        except RuntimeError as exc:
+            # Another sync holds the lock.
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        payload = {
+            "log":    GoogleSheetSyncLogSerializer(log).data,
+            "target": SheetSyncTargetSerializer(target).data,
+        }
+        resp_status = (
+            status.HTTP_200_OK if log.status == "success"
+            else status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+        return Response(payload, status=resp_status)

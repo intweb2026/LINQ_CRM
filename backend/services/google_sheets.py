@@ -6,6 +6,23 @@ from googleapiclient.discovery import build
 
 logger = logging.getLogger('book_event')
 
+
+def extract_spreadsheet_id(url_or_id):
+    """
+    Pull the spreadsheet id out of whatever a person pasted.
+
+    A full sheet URL, a URL with a ?usp= or #gid= tail, or a bare id all work,
+    because the id is what a user has least reason to be able to find on their
+    own and the URL is what their address bar hands them.
+    """
+    raw = (url_or_id or "").strip()
+    if "/" not in raw:
+        return raw.split("?")[0].split("#")[0]
+
+    parts = [p for p in raw.split("/") if p]
+    candidate = parts[parts.index("d") + 1] if "d" in parts else parts[0]
+    return candidate.split("?")[0].split("#")[0]
+
 class GoogleSheetsService:
     def __init__(self, spreadsheet_id=None):
         """
@@ -21,16 +38,9 @@ class GoogleSheetsService:
             scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
 
-        raw_id = spreadsheet_id or settings.GOOGLE_SHEET_ID
-        if "/" in raw_id:
-            parts = [p for p in raw_id.split("/") if p]
-            if "d" in parts:
-                idx = parts.index("d")
-                self.spreadsheet_id = parts[idx+1]
-            else:
-                self.spreadsheet_id = parts[0]
-        else:
-            self.spreadsheet_id = raw_id
+        self.spreadsheet_id = extract_spreadsheet_id(
+            spreadsheet_id or settings.GOOGLE_SHEET_ID
+        )
 
         self.service = build("sheets", "v4", credentials=self.creds)
 
@@ -47,14 +57,27 @@ class GoogleSheetsService:
             return []
 
     def clear_sheet(self, sheet_name):
-        """Wipe all data from a sheet."""
+        """
+        Wipe every value in the tab.
+
+        The range is the tab name alone rather than "A:Z", because a bounded
+        range clears only the columns it names. Six of the nine mirrored modules
+        are wider than 26 columns, so a tab written wide and then written narrow
+        would keep stale values, and stale headers, everywhere past column Z.
+
+        Failure re-raises. The caller is always about to write a replacement over
+        the top, and doing that into a tab that was not cleared produces a sheet
+        of new rows followed by leftover old ones, which is worse than no run at
+        all because nothing about it looks wrong.
+        """
         try:
             self.service.spreadsheets().values().clear(
                 spreadsheetId=self.spreadsheet_id,
-                range=f"{sheet_name}!A:Z"
+                range=sheet_name,
             ).execute()
         except Exception as e:
             logger.error(f"Error clearing sheet {sheet_name}: {e}")
+            raise
 
     def replace_data(self, sheet_name, headers, rows):
         """Wipe and refill the entire sheet."""

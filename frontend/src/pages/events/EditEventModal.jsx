@@ -76,7 +76,9 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
               {ownerChip('Sales', ev.sales_lead)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
             </div>
           </div>
-          <button className="dr-x" aria-label="Close" style={{ marginLeft: 8 }} onClick={onClose}><Icon name="x" size={15} /></button>
+          {/* See the identical fix/comment in bookings/EditBookingModal.jsx — same
+              header shape, same top-vs-center misalignment. */}
+          <button className="dr-x" aria-label="Close" style={{ marginLeft: 8, alignSelf: 'center' }} onClick={onClose}><Icon name="x" size={15} /></button>
         </div>
       }
       footJustify="space-between"

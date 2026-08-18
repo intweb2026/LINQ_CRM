@@ -4,6 +4,7 @@ google_sync/models.py
 Per-run audit log for every Google Sheets sync operation.
 One row = one sync run (or one sheet within a full sync).
 """
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -11,10 +12,11 @@ from django.utils import timezone
 class GoogleSheetSyncLog(models.Model):
 
     class SyncType(models.TextChoices):
-        BOOKINGS   = "bookings",   "Bookings"
-        EVENTS     = "events",     "Events"
-        FULL_SYNC  = "full_sync",  "Full Sync"
-        CRM_MIRROR = "crm_mirror", "CRM Mirror"
+        BOOKINGS     = "bookings",     "Bookings"
+        EVENTS       = "events",       "Events"
+        FULL_SYNC    = "full_sync",    "Full Sync"
+        CRM_MIRROR   = "crm_mirror",   "CRM Mirror"
+        SHEET_TARGET = "sheet_target", "Sheet Target"
 
     class Status(models.TextChoices):
         PENDING        = "pending",        "Pending"
@@ -86,3 +88,83 @@ class GoogleSheetSyncLog(models.Model):
         if self.duration_seconds < 60:
             return f"{self.duration_seconds:.1f}s"
         return f"{self.duration_seconds / 60:.1f}m"
+
+
+class SheetSyncTarget(models.Model):
+    """
+    One user-defined push: this module's columns, into that tab of that sheet.
+
+    Where CRM_MODULES in sync/crm_mirror.py is the fixed nightly mirror of the
+    whole CRM, a target is the narrow case — somebody wants three columns of
+    bookings in a spreadsheet of their own, and wants to say so from the Google
+    Sync page rather than by having the code changed.
+
+    A run is a full replace of the tab, which is why (spreadsheet_id, tab_name)
+    is unique: two targets writing one tab would each wipe the other's rows on
+    alternate runs, and the tab would show whichever ran last with no sign that
+    anything was lost.
+    """
+
+    class Status(models.TextChoices):
+        NEVER   = "never",   "Never run"
+        SUCCESS = "success", "Success"
+        FAILED  = "failed",  "Failed"
+
+    name = models.CharField(max_length=200, help_text="What this push is for.")
+
+    # ── Destination ───────────────────────────────────────────────────────────
+    spreadsheet_id = models.CharField(
+        max_length=200,
+        help_text="Google spreadsheet id. A pasted sheet URL is reduced to its id on save.",
+    )
+    tab_name = models.CharField(
+        max_length=200,
+        help_text="Tab to write. Created on the first run if it does not exist.",
+    )
+
+    # ── Selection ─────────────────────────────────────────────────────────────
+    module = models.CharField(
+        max_length=50, db_index=True,
+        help_text="Catalogue key, see sync/catalog.py. e.g. 'bookings'.",
+    )
+    columns = models.JSONField(
+        default=list,
+        help_text='Column keys, in sheet order. e.g. ["delegate_name", "delegate_email"].',
+    )
+
+    is_enabled = models.BooleanField(default=True, db_index=True)
+
+    # ── Last run ──────────────────────────────────────────────────────────────
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_status    = models.CharField(max_length=20, choices=Status.choices,
+                                      default=Status.NEVER, db_index=True)
+    last_error     = models.TextField(blank=True, default="")
+    records_synced = models.PositiveIntegerField(default=0)
+
+    # ── Audit ─────────────────────────────────────────────────────────────────
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sheet_sync_targets",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "google_sheet_sync_targets"
+        ordering = ["-created_at"]
+        verbose_name = "Sheet sync target"
+        verbose_name_plural = "Sheet sync targets"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["spreadsheet_id", "tab_name"],
+                name="one_target_per_tab",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["module"], name="gs_target_module_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.module} → {self.tab_name})"

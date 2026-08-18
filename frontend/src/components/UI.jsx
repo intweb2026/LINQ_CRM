@@ -32,15 +32,29 @@ export function ExtLink({ value, className = 'lnk', style, children }) {
   );
 }
 
-export function PageHead({ title, sub, actions }) {
+/**
+ * The page's action row — nothing else.
+ *
+ * It renders NEITHER a title nor a description, and both omissions are the
+ * point. The title repeated the topbar breadcrumb (Topbar.jsx / AppShell.jsx),
+ * which already names the current page, so it was the same word twice in a
+ * row at two sizes. The description was a sentence of prose per page that
+ * every daily user had long since stopped reading, costing a whole row above
+ * the content on every screen. Callers still pass `title` — it documents which
+ * header this is at the call site and costs nothing — it is simply not drawn.
+ *
+ * A page whose actions belong beside a tab strip should NOT use this at all;
+ * it should pass them to Tabs' own `actions` slot so both share one row (see
+ * BookingsPage / TicketCentralPage). This is for pages with no tab strip,
+ * where the actions genuinely need a row of their own.
+ */
+export function PageHead({ actions }) {
+  if (!actions) return null;
   return (
     <div className="ph">
       <div className="ph-row">
-        <div>
-          <h1>{title}</h1>
-          {sub ? <p>{sub}</p> : null}
-        </div>
-        {actions ? <div className="ph-act">{actions}</div> : null}
+        <div />
+        <div className="ph-act">{actions}</div>
       </div>
     </div>
   );

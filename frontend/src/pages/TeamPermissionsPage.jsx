@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { PageHead } from '../components/UI';
 import { Av } from '../components/Badge';
 import { CRM_MODULES } from '../lib/constants';
 import * as teamsApi from '../api/teams';
@@ -46,10 +45,8 @@ export default function TeamPermissionsPage() {
 
   return (
     <>
-      <PageHead
-        title="Teams & permissions"
-        sub="A team is a role. Everyone in it inherits its grid; open a team to change what it opens, or a person to give them an exception."
-      />
+      {/* No PageHead: with the title duplicating the breadcrumb and the
+          description removed, nothing was left in it — the team cards lead. */}
       <div className="cg" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(270px,1fr))' }}>
         {TEAMS.map((t) => {
           const modsOn = CRM_MODULES.filter((mo) => (t.permissions[mo.k] || {}).view);

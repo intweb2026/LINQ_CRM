@@ -38,7 +38,10 @@ export default function EventsPage() {
 
   return (
     <>
-      <PageHead title="Events" sub="The catalogue with edition history and every team ownership column. Open an event for its edition breakdown and growth."
+      {/* No tab strip on this page, so the actions keep a row of their own —
+          but the title and description are gone, so that row now sits directly
+          under the breadcrumb instead of below a block of prose. */}
+      <PageHead title="Events"
         actions={<>
           {can('create', 'events') ? <>
             <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
@@ -93,13 +96,13 @@ export default function EventsPage() {
           { key: 'web_bookings_enabled', label: 'Web Bookings Enabled', group: 'web', opts: () => ['Yes', 'No'] },
           { key: 'vr1_status', label: 'VR1 Sent Status', group: 'web', opts: () => uniq(EVENTS.map((e) => e.vr1_status)) },
           { key: 'sales_team', label: 'Sales Team', group: 'own', opts: () => uniq(EVENTS.map((e) => e.sales_team)) },
-          { key: 'sales_lead', label: 'Sales Team Leader', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'speaker_team', label: 'Speaker Sales', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'tele_team', label: 'Telemarketing', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'mr_senior', label: 'Market Research Sr.', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'mr_junior', label: 'Market Research Jr.', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'spex_lead', label: 'SpEx Lead', group: 'own', cell: (v) => <Who name={v} /> },
-          { key: 'event_mgmt', label: 'Event Management', group: 'own', cell: (v) => <Who name={v} /> },
+          { key: 'sales_lead', label: 'Sales Team Leader', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'speaker_team', label: 'Speaker Sales', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'tele_team', label: 'Telemarketing', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'mr_senior', label: 'Market Research Sr.', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'mr_junior', label: 'Market Research Jr.', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'spex_lead', label: 'SpEx Lead', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'event_mgmt', label: 'Event Management', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
           { key: 'email_marketing', label: 'Email Marketing Campaign', group: 'meta', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
           { key: 'email_marketing_name', label: 'Name for Email Marketing', group: 'meta' },
           { key: 'branding_name', label: 'Name for Branding', group: 'meta' },

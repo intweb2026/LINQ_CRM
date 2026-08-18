@@ -18,7 +18,7 @@ export default function ReportsLogs() {
       {SYNC_LOGS.length ? (
         <div className="tw">
           <div className="tsc" style={{ maxHeight: 520 }}>
-            <table className="dt">
+            <table className="dt dt-form">
               <thead><tr><th>Status</th><th>Source</th><th className="num">Read</th><th className="num">Written</th><th className="num">Duration</th><th>Started</th><th>Message</th></tr></thead>
               <tbody>
                 {SYNC_LOGS.map((l) => (

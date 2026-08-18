@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import GoogleSheetSyncLog
+from .models import GoogleSheetSyncLog, SheetSyncTarget
 
 
 @admin.register(GoogleSheetSyncLog)
@@ -43,3 +43,22 @@ class GoogleSheetSyncLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+
+@admin.register(SheetSyncTarget)
+class SheetSyncTargetAdmin(admin.ModelAdmin):
+    list_display  = [
+        "name", "module", "tab_name", "column_count",
+        "is_enabled", "last_status", "records_synced", "last_synced_at",
+    ]
+    list_filter   = ["is_enabled", "module", "last_status"]
+    search_fields = ["name", "tab_name", "spreadsheet_id"]
+    readonly_fields = [
+        "last_synced_at", "last_status", "last_error", "records_synced",
+        "created_by", "created_at", "updated_at",
+    ]
+    ordering = ["-created_at"]
+
+    def column_count(self, obj):
+        return len(obj.columns or [])
+    column_count.short_description = "Columns"

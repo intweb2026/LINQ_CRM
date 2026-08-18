@@ -12,7 +12,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from book_event.models import SyncLog
-from .models import GoogleSheetSyncLog
+from .models import GoogleSheetSyncLog, SheetSyncTarget
 
 logger = logging.getLogger("book_event")
 
@@ -48,6 +48,108 @@ class SyncOrchestrator:
             return cls._execute(sync_type, full, triggered_by, trigger_source)
         finally:
             cache.delete(SYNC_LOCK_KEY)
+
+    @classmethod
+    def run_target(
+        cls,
+        target: SheetSyncTarget,
+        triggered_by: str = "",
+        trigger_source: str = GoogleSheetSyncLog.TriggerSource.SYSTEM,
+    ) -> GoogleSheetSyncLog:
+        """
+        Run one user-defined target under the same lock as every other sync.
+
+        Sharing the lock matters because a target and the CRM mirror can be
+        pointed at the same spreadsheet, and the Sheets API is the scarce thing
+        here, not the database.
+        """
+        if not cache.add(SYNC_LOCK_KEY, "true", SYNC_LOCK_TTL):
+            raise RuntimeError(
+                "A sync is already in progress. Please wait for it to complete "
+                "before starting another."
+            )
+        try:
+            return cls._execute_sheet_target(target, triggered_by, trigger_source)
+        finally:
+            cache.delete(SYNC_LOCK_KEY)
+
+    @classmethod
+    def _execute_sheet_target(cls, target, triggered_by, trigger_source):
+        """
+        Full-replace one tab with one module's selected columns.
+
+        Always a full replace, so sync_mode is FULL. A target names a set of
+        columns rather than a set of rows, so there is nothing for an
+        incremental pass to carry forward.
+        """
+        from services.google_sheets import GoogleSheetsService
+        from sync.catalog import build_rows
+
+        log = GoogleSheetSyncLog.objects.create(
+            sync_type=GoogleSheetSyncLog.SyncType.SHEET_TARGET,
+            sheet_name=target.tab_name,
+            status=GoogleSheetSyncLog.Status.RUNNING,
+            sync_mode=GoogleSheetSyncLog.SyncMode.FULL,
+            triggered_by=triggered_by,
+            trigger_source=trigger_source,
+            started_at=timezone.now(),
+        )
+
+        start = time.time()
+        summary = {
+            "target":         target.name,
+            "module":         target.module,
+            "columns":        list(target.columns),
+            "spreadsheet_id": target.spreadsheet_id,
+            "tab":            target.tab_name,
+        }
+
+        try:
+            headers, rows = build_rows(target.module, target.columns)
+            service = GoogleSheetsService(spreadsheet_id=target.spreadsheet_id)
+            service.ensure_tabs([target.tab_name])
+            count = service.replace_data_chunked(target.tab_name, headers, rows)
+        except Exception as exc:
+            err = str(exc)
+            logger.error(
+                "Sheet target [%s] failed: %s", target.name, err, exc_info=True
+            )
+            log.status           = GoogleSheetSyncLog.Status.FAILED
+            log.completed_at     = timezone.now()
+            log.duration_seconds = round(time.time() - start, 2)
+            log.error_message    = err
+            log.sync_summary     = summary
+            log.save()
+
+            target.last_status = SheetSyncTarget.Status.FAILED
+            target.last_error  = err
+            target.save(update_fields=["last_status", "last_error", "updated_at"])
+            return log
+
+        summary["headers"] = headers
+        log.status            = GoogleSheetSyncLog.Status.SUCCESS
+        log.completed_at      = timezone.now()
+        log.duration_seconds  = round(time.time() - start, 2)
+        log.records_processed = count
+        log.error_message     = ""
+        log.sync_summary      = summary
+        log.last_synced_at    = timezone.now()
+        log.save()
+
+        target.last_status     = SheetSyncTarget.Status.SUCCESS
+        target.last_error      = ""
+        target.last_synced_at  = timezone.now()
+        target.records_synced  = count
+        target.save(update_fields=[
+            "last_status", "last_error", "last_synced_at", "records_synced",
+            "updated_at",
+        ])
+
+        logger.info(
+            "Sheet target [%s] wrote %d rows x %d cols to %s in %.2fs",
+            target.name, count, len(headers), target.tab_name, log.duration_seconds,
+        )
+        return log
 
     @classmethod
     def _execute(cls, sync_type, full, triggered_by, trigger_source):

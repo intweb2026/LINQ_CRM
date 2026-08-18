@@ -54,7 +54,7 @@ export default function UsersPage() {
 
   return (
     <>
-      <PageHead title="Users" sub="Access, team assignment and per-user event coverage."
+      <PageHead title="Users"
         actions={can('create', 'users') ? <>
           <button className="btn btn-s" onClick={() => setInviteOpen(true)}><Icon name="mail" size={15} />Invite</button>
           <button className="btn btn-p" onClick={() => setFormUser(null)}><Icon name="plus" size={15} />Add user</button>
@@ -62,7 +62,7 @@ export default function UsersPage() {
       <DataTable
         rows={USERS} noun="users" pageSize={50} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
         cols={[
-          { key: 'name', label: 'User', cls: 'st', cell: (v, r) => <Who name={v} sub={r.username} size="md" mono /> },
+          { key: 'name', label: 'User', cls: 'st', cell: (v, r) => <Who name={v} sub={r.username} mono avatar={false} /> },
           { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} />, opts: () => TEAM_ROLES },
           { key: 'team_id', label: 'Team', cell: (v) => teamName(v), opts: () => TEAMS.map((t) => t.name) },
           { key: 'is_lead', label: 'Lead', cell: (v) => (v ? <span className="bg bg-amber"><i />Lead</span> : <span className="dim">—</span>) },

@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHead, Tabs } from '../components/UI';
+import { Tabs } from '../components/UI';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import ReportsOverview from './reports/Overview';
@@ -25,7 +25,8 @@ export default function ReportsPage() {
 
   return (
     <>
-      <PageHead title="Reports" sub="Sales, SpEx and Speaker pipelines side by side, plus the Google Sheets integration that feeds them." />
+      {/* No PageHead: the title repeated the breadcrumb and the description was
+          the only other thing in it, so the tabs lead the page. */}
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/reports/' + id)} />
       {tab === 'overview' && <ReportsOverview />}
       {tab === 'growth' && <ReportsGrowth />}

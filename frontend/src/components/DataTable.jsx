@@ -13,6 +13,42 @@ import { apiErrorMessage, fetchAllIds, fetchPage } from '../api/client';
 const PAGE_SIZE_DEFAULT = 50;
 
 /**
+ * A column's pixel width for the fixed-layout grid (table.dt-grid in
+ * components.css) — derived once from the column's own declared metadata,
+ * never from data, so it cannot shift as rows load or the table scrolls. The
+ * table used to size every column with plain browser auto-layout, which reads
+ * whatever happens to be in the DOM at that moment; that is exactly why widths
+ * looked arbitrary from column to column and page to page. `col.width` lets a
+ * caller state an exact width outright; everything else falls back to a
+ * deterministic size keyed to the column's own label length and type, which
+ * is what keeps a short column like "Ref" narrow and "Delegate Company" wide
+ * without every page having to hand-tune pixel numbers itself.
+ */
+function colWidth(col) {
+  if (col.width) return col.width;
+  /**
+   * Every width is measured from the LABEL, including numeric columns.
+   *
+   * `col.num` used to short-circuit to a flat 90px before the label was
+   * considered at all, which is why the wide numeric headers collided: at 90px
+   * the cell leaves ~62px for text once the sort control and filter funnel are
+   * subtracted, and "New Contacts Created" needs 147px, so it ran straight over
+   * the top of the column beside it. Numbers are still the NARROWEST columns
+   * (their values are a few glyphs), but a column can never be narrower than
+   * the header naming it.
+   *
+   * 8px/char + 60px of chrome is measured, not guessed: the 9.5px uppercase
+   * 700-weight header face with .07em tracking renders at 7.4–8.5px per
+   * character, and the sort padding (16px) + funnel button (26px) + sort
+   * chevron (15px) come to ~57px.
+   */
+  const label = col.label.length * 8 + 60;
+  if (col.num) return Math.max(96, Math.min(200, label));
+  if (col.cls === 'st') return 220;
+  return Math.max(130, Math.min(240, label));
+}
+
+/**
  * Ceiling on the one-request reload a background refresh uses in infinite mode
  * (see liveReload). config/pagination.py caps page_size at 500, so a user who has
  * scrolled past that many rows cannot have the whole span refreshed in a single
@@ -266,6 +302,10 @@ function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemov
   return (
     <th className={(col.num ? 'num ' : '') + (active ? 'act' : '')}>
       <div className="th-w">
+        {/* Balances the filter funnel on the right so the label lands on the
+            column's true centre — the same axis the value below it sits on.
+            See .th-sp in components.css. */}
+        <span className="th-sp" aria-hidden="true" />
         {canSort ? (
           <button
             type="button"
@@ -1130,7 +1170,11 @@ export default function DataTable({
       ) : pageRows.length ? (
         <div className="tw">
           <div className="tsc" ref={scrollBoxRef}>
-            <table className="dt">
+            <table className="dt dt-grid">
+              <colgroup>
+                {select ? <col style={{ width: 40 }} /> : null}
+                {activeCols.map((c) => <col key={c.key} style={{ width: colWidth(c) }} />)}
+              </colgroup>
               <thead>
                 <tr>
                   {select ? (
@@ -1152,7 +1196,18 @@ export default function DataTable({
                         : `Selects all ${nf(total)} matching ${noun}, not just this page`} /></th>
                   ) : null}
                   {activeCols.map((c) => {
-                    if (c.sortable === false) return <th key={c.key} className={c.num ? 'num' : ''}>{c.label}</th>;
+                    // Wrapped in the same .th-w/.th-sort structure as every
+                    // other header rather than a bare <th>. The base rule sets
+                    // th padding to 0 because .th-sort supplies it, so a bare
+                    // <th> put its label flush at 0px while its cells sat at
+                    // 12px — the identical off-by-a-padding bug .dt-form had.
+                    if (c.sortable === false) {
+                      return (
+                        <th key={c.key} className={c.num ? 'num' : ''}>
+                          <div className="th-w"><span className="th-sort th-nosort">{c.label}</span></div>
+                        </th>
+                      );
+                    }
                     const cond = conds.find((cd) => cd.key === c.key);
                     // In server mode a column is sortable only if the backend has
                     // an ordering term for it. Sorting locally would reorder the

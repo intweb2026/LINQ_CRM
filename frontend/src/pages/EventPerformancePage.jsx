@@ -53,7 +53,7 @@ export default function EventPerformancePage() {
 
   return (
     <>
-      <PageHead title="Event Performance" sub="Active-edition tracker — rep coverage, follow-ups, mailshots and notes for every event with an owner."
+      <PageHead title="Event Performance"
         actions={<button className="btn btn-p" onClick={() => toast('Pick an event row to log activity against it', 'nf')}><Icon name="plus" size={15} />Log activity</button>} />
       <DataTable
         rows={rows} noun="events" pageSize={50} defaultSort={{ key: 'offset', dir: 'asc' }} searchPlaceholder="Search event…"

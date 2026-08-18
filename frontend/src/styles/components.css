@@ -1,11 +1,11 @@
 
 #main{margin-left:var(--rail-w);margin-top:var(--top-h);min-height:calc(100vh - var(--top-h));padding:20px 22px 56px;transition:margin-left .22s var(--ease)}
 
-/* ═══ PAGE HEAD ═══ */
-.ph{margin-bottom:17px}
-.ph-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.ph h1{font-size:24px;font-weight:800;color:var(--text);letter-spacing:-.038em;line-height:1.16}
-.ph p{font-size:12.5px;color:var(--text-3);margin-top:4px;max-width:640px;line-height:1.5}
+/* ═══ PAGE HEAD ═══
+   An action row and nothing else — no title (the breadcrumb names the page)
+   and no description. `.ph p` went with the descriptions themselves. */
+.ph{margin-bottom:14px}
+.ph-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .ph-act{display:flex;align-items:center;gap:7px;flex-shrink:0}
 
 /* ═══ BUTTONS ═══ */
@@ -13,6 +13,13 @@
 .btn svg{width:15px;height:15px;flex-shrink:0;stroke-width:2.05}
 .btn-p{background:var(--t-500);color:#fff;box-shadow:0 1px 2px rgba(0,129,157,.2)}
 .btn-p:hover{background:var(--t-600);color:#fff;text-decoration:none;box-shadow:0 2px 7px rgba(0,129,157,.3);transform:translateY(-.5px)}
+/* The ONE place --t-600 is a background rather than text. In light mode it
+   darkens the button on hover, which is the right direction on white; in dark
+   mode --t-600 is now the light rung (see base.css), so inheriting it would
+   turn the hover pale and strand the white label on it. Dark hover brightens
+   instead — the correct direction against a dark ground — using the ramp's
+   next step up from the button's resting --t-500. */
+html[data-theme=dark] .btn-p:hover{background:var(--t-400)}
 .btn-p:active{transform:none}
 .btn-s{background:var(--surface);color:var(--text-2);border-color:var(--border-s);box-shadow:var(--sh-xs)}
 .btn-s:hover{background:var(--n-50);border-color:var(--n-300);color:var(--text)}
@@ -31,7 +38,10 @@
 /* ═══ INPUTS ═══ */
 .fd{display:flex;flex-direction:column;gap:5px}
 .fd-l{font-size:11px;font-weight:650;color:var(--text-3)}
-.fd-l .req{color:var(--red);margin-left:2px}
+/* Not scoped to .fd-l — DelegateTable's column headers mark required fields
+   with the same span outside any .fd-l, and rendered grey (inherited) there
+   instead of red is the same "required" marker silently losing its meaning. */
+.req{color:var(--red);margin-left:2px}
 .in{height:35px;padding:0 10px;font-size:12.5px;background:var(--surface);border:1px solid var(--border-s);border-radius:var(--r-md);transition:border-color .14s,box-shadow .14s;color:var(--text);width:100%;box-shadow:var(--sh-xs)}
 .in:hover{border-color:var(--n-300)}
 .in:focus{outline:none;border-color:var(--t-400);box-shadow:0 0 0 3px var(--t-100)}
@@ -62,7 +72,17 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .av-stk{display:flex;align-items:center}
 .av-stk .av{margin-left:-4px;box-shadow:0 0 0 2px var(--surface)}
 .av-stk .av:first-child{margin-left:0}
-.who{display:flex;align-items:center;gap:8px;min-width:0}
+/* inline-flex, not flex: a `who` sitting bare in a table cell was a normal
+   in-flow block child of that <td>, and a block with width:auto fills its
+   containing block regardless of content — so it ignored the cell's
+   text-align. inline-flex keeps the same internal layout (avatar+name row,
+   unchanged) but makes the box inline-level, so it sizes to its own content
+   and participates in the parent's text-align like any other cell content —
+   the correct default whether that alignment is left, right or center. Every
+   existing use inside a flex row (card headers, avatar stacks) is unaffected
+   — flex ITEMS size to their content regardless of their own inner display
+   type. */
+.who{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%}
 .who-t{min-width:0;display:flex;flex-direction:column;line-height:1.3}
 .who-n{font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .who-s{font-size:10.5px;color:var(--text-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -226,7 +246,37 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .tw{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-sm);border:1px solid var(--border);overflow:hidden}
 .tsc{overflow:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 300px)}
 table.dt{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
-table.dt thead th{position:sticky;top:0;background:var(--surface-2);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);text-align:left;padding:0;border-bottom:1px solid var(--border);white-space:nowrap;z-index:3}
+/* .dt-grid: every column carries an explicit pixel width via a <colgroup> (see
+   DataTable.jsx / DelegateTable.jsx), and table-layout:fixed makes those widths
+   the ONLY input to layout — browser auto-sizing (the default for a bare
+   table.dt, still used by the few small ad-hoc tables with no column config)
+   recomputes column widths from whatever rows happen to be in the DOM, which is
+   exactly why widths drifted between pages and could shift as more rows loaded
+   on scroll. Fixed + declared widths makes every column's width a constant,
+   decided once, independent of data — the "Excel-style" grid this exists for. */
+table.dt-grid{table-layout:fixed}
+/* ── The alignment rule ───────────────────────────────────────────────────
+   Header and cell are BOTH centred, as one rule for every table in the CRM,
+   so a value always sits on the same axis as the label naming it.
+   Centring was tried once before against AUTO-SIZED columns and read as
+   scattered — correctly, because a column's centre was wherever that page's
+   content happened to put it, so no two columns shared a rhythm. It works now
+   because .dt-grid gives every column a declared, constant width: the centre
+   of a column is a fixed position that does not move as rows load, as the
+   table scrolls, or between pages.
+   The alternative, left-aligning, anchors on the cell edge instead — which is
+   stable too, but leaves a short value (a dash, a "0", a 2-digit estimate)
+   hard against the edge of a column sized for a much longer header, which is
+   the "not aligned to anything" reading this exists to remove. */
+table.dt thead th{position:sticky;top:0;background:var(--surface-2);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);text-align:center;padding:0;border-bottom:1px solid var(--border);white-space:nowrap;z-index:3}
+/* .dt-form: an editable grid with no sort/filter controls (DelegateTable), so
+   its <th> is bare label text with none of the .th-sort/.th-flt wrapper that
+   gives the SORTABLE tables their 12px left padding. Left at the base rule's
+   padding:0, that text sat flush against the cell edge while every <td> below
+   it was indented 12px (table.dt tbody td) — every header a fixed 12px left
+   of the value underneath it. 9px 12px matches .th-sort's own left padding, so
+   a .dt-form header lines up with its cell exactly like a sortable one does. */
+table.dt-form thead th{padding:9px 12px;overflow:hidden;text-overflow:ellipsis}
 table.dt thead th.act{color:var(--t-600);background:var(--t-50)}
 .th-flt{all:unset;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-sizing:border-box;padding:9px 12px}
 .th-flt:hover{color:var(--text-2);background:var(--n-50)}
@@ -235,12 +285,36 @@ table.dt thead th.act{color:var(--t-600);background:var(--t-50)}
 table.dt thead th.act .th-flt svg{opacity:1;color:var(--t-600)}
 /* Header holds TWO controls: the label sorts, the funnel filters. One button
    cannot both sort and open a popover, which is why sorting was unreachable. */
-.th-w{display:flex;align-items:center;gap:2px}
-.th-sort{all:unset;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-sizing:border-box;padding:9px 4px 9px 12px;flex:1;min-width:0}
+.th-w{display:flex;align-items:center;gap:2px;justify-content:center}
+/* Counterweight for the filter funnel.
+   The funnel is a real 26px flex item on the RIGHT of every header, so a label
+   centred in the space left over sits 13px left of the column's true centre —
+   and the value below it, centred in a plain <td>, sits on the true centre. A
+   half-funnel of disagreement between every header and its own column is
+   exactly the kind of near-miss that reads as sloppy. An equal 26px item on
+   the left makes the leftover space symmetric, so the label's centre and the
+   cell's centre are the same axis. Empty and aria-hidden: it is a spacer, not
+   content, and nothing should announce it. */
+.th-sp{flex:0 0 26px}
+.th-sort{all:unset;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;box-sizing:border-box;padding:9px 4px;flex:1;min-width:0}
+/* THE GUARD. A <th> is white-space:nowrap, and in a fixed-layout grid a cell
+   cannot grow to fit its text — so a label longer than its column does not
+   wrap or clip, it OVERFLOWS, and paints straight over the header beside it.
+   That is what turned "Actual Number / New Contacts Created / Mined Count"
+   into a run of overlapping words. colWidth() sizes columns so this should
+   not arise, but sizing is a heuristic over a label whose exact rendered
+   width depends on the glyphs in it, and a heuristic is not a guarantee.
+   min-width:0 lets the flex item shrink below its content (it will not, by
+   default), and the ellipsis makes the overflow degrade to "Actual Numb…"
+   INSIDE its own column instead of spilling out of it. */
+.th-sort>span{overflow:hidden;text-overflow:ellipsis;min-width:0}
 .th-sort:hover{color:var(--text-2);background:var(--n-50)}
 .th-sort svg{flex-shrink:0;color:var(--t-600)}
 .th-sort.on{color:var(--t-600)}
-.th-nosort{cursor:default}
+/* Holds its label as its OWN text rather than in a child span, so the
+   .th-sort>span guard above cannot reach it — it needs the same clipping
+   applied directly. */
+.th-nosort{cursor:default;overflow:hidden;text-overflow:ellipsis;display:inline-block;white-space:nowrap}
 .th-nosort:hover{background:none;color:inherit}
 .th-flt-btn{all:unset;display:grid;place-items:center;cursor:pointer;box-sizing:border-box;padding:9px 12px 9px 4px}
 .th-flt-btn svg{opacity:.3;transition:opacity .12s}
@@ -252,8 +326,15 @@ table.dt thead th.act .th-flt svg{opacity:1;color:var(--t-600)}
 .fc-local .k{opacity:.85}
 table.dt thead tr.grp th{background:var(--n-50);font-size:9px;letter-spacing:.09em;padding:6px 12px;border-bottom:1px solid var(--border);color:var(--text-3);text-align:center;top:0}
 table.dt thead tr.grp+tr th{top:26px}
-table.dt th.num,table.dt td.num{text-align:right}
-table.dt tbody td{padding:0 12px;height:44px;border-bottom:1px solid var(--n-50);vertical-align:middle;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--text-2)}
+/* .num carries no alignment of its own any more — it inherits the centring
+   below like every other cell. It used to right-align, which is the correct
+   default for a column read as a stack of magnitudes, but these are mostly
+   counts of 0–2 digits under a much longer header ("Actual Number", "Web
+   Bookings"), so right-aligning pinned them to the far edge of their column
+   while the header read from the other end. The class stays: it still marks
+   a column as numeric for colWidth() and remains the hook if a genuinely
+   place-value column ever needs its old behaviour back. */
+table.dt tbody td{padding:0 12px;height:44px;border-bottom:1px solid var(--n-50);vertical-align:middle;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);text-align:center}
 table.dt tbody tr{transition:background .1s}
 table.dt tbody tr:hover{background:var(--t-50)}
 table.dt tbody tr.sel{background:var(--t-50)}

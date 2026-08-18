@@ -37,10 +37,23 @@ export function Av({ name, size = 'md' }) {
   );
 }
 
-export function Who({ name, sub, size = 'sm', mono = false }) {
+/**
+ * A person cell: name, with an optional second line under it.
+ *
+ * `avatar` is off in LISTING TABLES and on everywhere else, and the split is
+ * deliberate rather than per-taste. A table row is already dense and is read
+ * by scanning a column of names, so a coloured initials disc on every row is
+ * decoration competing with the text beside it. In a card header, a drawer,
+ * or an overlapping avatar stack the disc is the visual anchor — it is what
+ * you recognise before you read anything — so it stays there.
+ *
+ * Defaulting to `true` keeps every existing caller rendering exactly as it
+ * did; the table call sites opt out explicitly with `avatar={false}`.
+ */
+export function Who({ name, sub, size = 'sm', mono = false, avatar = true }) {
   return (
     <span className="who">
-      <Av name={name} size={size} />
+      {avatar ? <Av name={name} size={size} /> : null}
       <span className="who-t">
         <span className="who-n">{name}</span>
         {sub ? <span className={'who-s' + (mono ? ' mono' : '')}>{sub}</span> : null}

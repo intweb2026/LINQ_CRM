@@ -126,7 +126,7 @@ export default function TransferBookingModal({ row, dirty = false, onClose, onTr
       <div className="fs">
         <div className="fs-t"><Icon name="refresh" size={13} />What this does</div>
         <div className="tw">
-          <table className="dt">
+          <table className="dt dt-form">
             <thead>
               <tr><th>Booking</th><th>Event</th><th>Payment Status</th></tr>
             </thead>

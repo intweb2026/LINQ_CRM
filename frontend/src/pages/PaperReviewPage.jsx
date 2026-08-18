@@ -47,7 +47,9 @@ const REVIEW_COLS = [
     cell: (v) => ((v || 0) > 0
       ? <span className="tg bg-amber" title={`${v} other review${v === 1 ? '' : 's'} with this speaker's email on this event, within your assigned events`}>{v}</span>
       : <span className="dim">—</span>) },
-  { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
+  // Name only — Company Name is the very next column, so repeating it under
+  // the speaker's name said the same thing twice.
+  { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
   { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
   { key: 'email', serverOrdering: 'email', label: 'Email Address of the Speaker', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
   { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn Profile of Speaker', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },

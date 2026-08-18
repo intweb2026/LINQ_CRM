@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHead, Tabs } from '../components/UI';
+import { Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Av, StatusBadge, Dot, Who } from '../components/Badge';
@@ -84,7 +84,9 @@ const bkCols = ({ onTransfer } = {}) => [
   { key: 'request_date', label: 'Request Date', group: 'id', serverField: 'request_date', serverOrdering: '_sort_request_date', cell: (v) => fdate(v) },
   { key: 'invoice_date', label: 'Invoice Date', group: 'id', serverField: 'invoice_date', serverOrdering: '_sort_date', cell: (v) => fdate(v) },
   { key: 'invoice_number', label: 'Invoice Number', group: 'id', serverField: 'invoice_number', serverOrdering: '_sort_invoice', cell: (v) => <span className="mono lnk">{v}</span> },
-  { key: 'name', label: 'Name', group: 'del', serverOrdering: '_sort_name', cls: 'st', cell: (v, r) => <Who name={v} sub={r.company_name} /> },
+  // Name only — the company had been repeated here as a sub-line directly
+  // beside the Delegate Company column that already holds it.
+  { key: 'name', label: 'Name', group: 'del', serverOrdering: '_sort_name', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
   { key: 'company_name', label: 'Delegate Company', group: 'del', serverField: 'company_name' },
   { key: 'email', label: 'Delegate Email', group: 'del', serverField: 'email', serverOrdering: 'email', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
   { key: 'phone_number', label: 'Direct Line', group: 'del', serverField: 'phone_number', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
@@ -123,7 +125,7 @@ const bkCols = ({ onTransfer } = {}) => [
   { key: 'added_time', label: 'Added Time', group: 'audit', serverOrdering: 'created_at',
     cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
   { key: 'modified_time', label: 'Modified Time', group: 'audit', cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
-  { key: 'owner', label: 'Sales Executive', group: 'team', cell: (v) => <Who name={v} /> },
+  { key: 'owner', label: 'Sales Executive', group: 'team', cell: (v) => <Who name={v} avatar={false} /> },
   // ONE attendance column, backed by `attendance`. There were two: this one, and a
   // "Attendance - IN?" Yes/No column with no backend field behind it at all — it
   // read 'No' for all 14.8k rows because api/bookings.js hardcoded it. The
@@ -258,23 +260,25 @@ export default function BookingsPage() {
 
   return (
     <>
-      <PageHead title="Bookings"
-        actions={<>
-          {can('create', 'bookings') ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button> : null}
-          {can('create', 'bookings') ? <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New booking</button> : null}
-          {/* HP only — the gate lives inside ClearAllButton, which renders nothing
-              for anyone else, and mirrors IsHPAccount on the endpoint. It used to be
-              an inline `user?.username === 'HP'` here, which is the copy every other
-              module would have had to repeat. */}
-          <ClearAllButton noun="bookings" count={counts?.total}
-            onClear={bookingsApi.clearAll} onCleared={refresh}
-            extra="Every invoice, delegate, webhook log and historical-registry row is destroyed with it." />
-        </>} />
-
+      {/* Import/New booking/Clear All ride on the SAME row as the tabs rather
+          than a header row of their own above it — a row that, with the page
+          title gone (see PageHead), had nothing on its left and was pure
+          whitespace. Tabs and actions now share one horizontal line. */}
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/bookings' + (id ? '/' + id : ''))}
         actions={<>
           <span className="tabs-upd">Updated {rel(lastUpdated)}</span>
           <button className="btn btn-g btn-ic btn-sm" title="Refresh bookings" onClick={refresh}><Icon name="refresh" size={14} /></button>
+          <div className="ph-act">
+            {can('create', 'bookings') ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button> : null}
+            {can('create', 'bookings') ? <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New booking</button> : null}
+            {/* HP only — the gate lives inside ClearAllButton, which renders nothing
+                for anyone else, and mirrors IsHPAccount on the endpoint. It used to be
+                an inline `user?.username === 'HP'` here, which is the copy every other
+                module would have had to repeat. */}
+            <ClearAllButton noun="bookings" count={counts?.total}
+              onClear={bookingsApi.clearAll} onCleared={refresh}
+              extra="Every invoice, delegate, webhook log and historical-registry row is destroyed with it." />
+          </div>
         </>}
       />
 

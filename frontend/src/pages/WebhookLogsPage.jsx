@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PageHead, Tabs } from '../components/UI';
+import { Tabs } from '../components/UI';
 import { useSession } from '../context/SessionContext';
 import NoAccessPage from './NoAccessPage';
 import WebhookLogs from './webhooks/Logs';
@@ -15,7 +15,8 @@ export default function WebhookLogsPage() {
 
   return (
     <>
-      <PageHead title="Webhooks" sub="Inbound delivery logs from the booking websites, and the API keys that authenticate them." />
+      {/* No PageHead — see ReportsPage: title duplicated the breadcrumb and the
+          description was all that remained. */}
       <Tabs list={TABS} active={tab} onPick={setTab} />
       {tab === '' ? <WebhookLogs /> : <WebhookKeys />}
     </>

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ExtLink, PageHead, Tabs } from '../components/UI';
+import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { TkBadge, PriBadge, Who } from '../components/Badge';
@@ -20,7 +20,7 @@ import ClearAllButton from '../components/ClearAllButton';
 import DateRangeFilter from '../components/DateRangeFilter';
 
 const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim">—</span> : null);
-const person = (v) => dim(v) || <Who name={v} />;
+const person = (v) => dim(v) || <Who name={v} avatar={false} />;
 const num = (v) => dim(v) || nf(v);
 const day = (v) => dim(v) || fdate(v);
 
@@ -139,8 +139,12 @@ export default function TicketCentralPage() {
 
   return (
     <>
-      <PageHead title="Ticket Central" sub="Market Research raises tickets, Data Mining works the queue. Open a ticket to edit it and move it through the workflow."
-        actions={<>
+      {/* Actions ride on the tab row — see BookingsPage for the reasoning. The
+          page title duplicated the breadcrumb and the description sat in a row
+          of its own above the tabs; both are gone, so the tabs start directly
+          under the breadcrumb. */}
+      <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))}
+        actions={<div className="ph-act">
           {user.role === 'admin' ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Smart import</button> : null}
           {isMR && can('create', 'ticket_central') ? <button className="btn btn-p" onClick={() => setFormTicket('NEW')}><Icon name="plus" size={15} />New ticket</button> : null}
           {/* HP only — ClearAllButton renders nothing for anyone else, mirroring
@@ -149,9 +153,8 @@ export default function TicketCentralPage() {
           <ClearAllButton noun="tickets" count={S.total}
             onClear={ticketsApi.clearAll} onCleared={refresh}
             extra="The ticket-number sequences are reset with it, so the next ticket raised numbers from the start again." />
-        </>} />
-
-      <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))} />
+        </div>}
+      />
 
       <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
         count={S.total} noun="tickets" note="by Added Time" />

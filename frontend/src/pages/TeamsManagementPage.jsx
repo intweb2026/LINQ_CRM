@@ -159,7 +159,7 @@ export default function TeamsManagementPage() {
 
   return (
     <>
-      <PageHead title="Teams" sub="Drag a person between columns to reassign them. Assign a lead or archive a team from its menu."
+      <PageHead title="Teams"
         actions={can('create', 'teams') ? <>
           <button className="btn btn-s" onClick={() => toast('Roster exported', 'ok')}><Icon name="download" size={15} />Export roster</button>
           <button className="btn btn-p" onClick={() => setFormTeam(null)}><Icon name="plus" size={15} />Create team</button>

@@ -39,10 +39,28 @@ html[data-theme=dark]{
   --cyan:#38BDF8;--cyan-bg:rgba(56,189,248,.13);--cyan-tx:#7DD3FC;
   --slate:#94A3B8;--slate-bg:rgba(148,163,184,.13);--slate-tx:#CBD5E1;
   --t-50:rgba(0,156,188,.14);--t-100:rgba(0,156,188,.22);--t-200:#1BA6C1;
+  /* The teal ramp above stops at --t-200, so --t-600 and --t-700 kept their
+     LIGHT-theme values — #00819D and #00657C, teals mixed to sit on white.
+     Painted on #161B22 they measure 3.8:1 and 2.6:1, and they are not
+     incidental: --t-600 is every link, event code, invoice number and the
+     active tab; --t-700 is the filter chips, active buttons and the selected
+     rail badge. They are the deepest rungs of the brand ramp on a background
+     that needs the lightest, so dark mode takes the mirror-image rungs from
+     the same ramp — 8.1:1 and 10.6:1, same hue, no new colour. */
+  --t-600:#54BFD4;--t-700:#8FD6E4;
   --canvas:#0D1117;--surface:#161B22;--surface-2:#1A2029;
   --border:#2C3541;--border-s:#3A4553;
-  --text:#E3E7EC;--text-2:#A8B1BD;--text-3:#8B95A3;--text-4:#66717F;
-  --rail:#11161D;--rail-bd:#232B35;--rail-tx:#A8B1BD;--rail-dim:#66717F;
+  /* Each tone moves up one rung of the neutral ramp; the four-step hierarchy
+     is unchanged, it just starts higher. --text-4 was the real problem at
+     3.3:1 — and it is not decoration, it carries the table headers (9.5px),
+     every "—" empty cell, input placeholders and the breadcrumb, so the
+     smallest text in the app had the weakest contrast. --text-2 carries the
+     table VALUES, which is the data itself. All four now clear AA:
+     13.9 / 10.6 / 8.0 / 5.7 against the table surface. */
+  --text:#E3E7EC;--text-2:#C4CBD4;--text-3:#A8B1BD;--text-4:#8B95A3;
+  /* --rail-dim is the sidebar's section labels (PIPELINE, ADMIN…) at 9px; it
+     was 3.7:1 on the rail. Same rung shift, now 6.0:1. */
+  --rail:#11161D;--rail-bd:#232B35;--rail-tx:#A8B1BD;--rail-dim:#8B95A3;
   --sh-xs:0 1px 2px rgba(0,0,0,.3);
   --sh-sm:0 1px 3px rgba(0,0,0,.35);
   --sh-md:0 4px 10px -2px rgba(0,0,0,.4);
@@ -92,8 +110,9 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 .rail-lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail-bdg{font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:var(--r-full);background:var(--n-75);color:var(--text-3);flex-shrink:0}
 .rail-item.on .rail-bdg{background:var(--t-100);color:var(--t-700)}
-/* .rail-lock and .rail-item.locked are gone with the padlock rows themselves —
-   a module the user cannot view is absent from the rail now. See Sidebar.jsx. */
+.rail-lock{width:13px;height:13px;color:var(--n-300);flex-shrink:0}
+.rail-item.locked{opacity:.42;cursor:not-allowed}
+.rail-item.locked:hover{background:none;color:var(--rail-tx)}
 .rail-foot{padding:9px;border-top:1px solid var(--rail-bd);flex-shrink:0}
 .rail-user{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-md);cursor:pointer;transition:background .13s;width:100%;border:none;background:none;text-align:left}
 .rail-user:hover{background:var(--n-50)}
@@ -106,7 +125,7 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 /* collapsed rail */
 body.rail-min{--rail-w:62px}
 body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,
-body.rail-min .rail-utx,body.rail-min .rail-out{display:none}
+body.rail-min .rail-utx,body.rail-min .rail-out,body.rail-min .rail-lock{display:none}
 body.rail-min .rail-head{justify-content:center;padding:13px 0}
 body.rail-min .rail-mark{width:100%;justify-content:center}
 body.rail-min .rail-mark .lg-light,body.rail-min .rail-mark .lg-dark{display:none}
@@ -131,7 +150,10 @@ html[data-theme=dark] .rail-tip::before{border-right-color:var(--n-100)}
 .top-burger svg{width:18px;height:18px}
 .top-crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-4);min-width:0}
 .top-crumb .cur{color:var(--text);font-weight:650}
-.top-crumb .sp{color:var(--n-200);font-size:11px}
+/* --text-4, not --n-200: n-200 is the BORDER rung of the neutral ramp, and a
+   border tone used as type is invisible by construction — in dark it measured
+   1.8:1, so the "›" between "Pipeline" and the page name was a smudge. */
+.top-crumb .sp{color:var(--text-4);font-size:11px}
 .top-sp{flex:1}
 .top-search{display:flex;align-items:center;gap:8px;height:33px;padding:0 11px;background:var(--n-50);border:1px solid transparent;border-radius:var(--r-md);cursor:pointer;transition:all .15s;width:min(330px,34vw)}
 .top-search:hover{background:var(--surface);border-color:var(--border-s);box-shadow:var(--sh-xs)}

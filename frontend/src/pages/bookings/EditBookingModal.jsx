@@ -137,7 +137,11 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
               {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
             </div>
           </div>
-          <button className="dr-x" aria-label="Close" style={{ marginLeft: 8 }} onClick={onClose}><Icon name="x" size={15} /></button>
+          {/* `.md-h` top-aligns its children (right, for a header whose title+sub
+              stack tall), but this header's content row centers ITSELF instead —
+              so without alignSelf the button anchored to the row's top edge while
+              the avatar/badges sat centered a few px below it. */}
+          <button className="dr-x" aria-label="Close" style={{ marginLeft: 8, alignSelf: 'center' }} onClick={onClose}><Icon name="x" size={15} /></button>
         </div>
       }
       footJustify="space-between"

@@ -102,7 +102,7 @@ export const PERM_ACTIONS = ['view', 'create', 'update', 'delete'];
 export const PAGE_SIZE = 50;
 export const ALL_MODULES = CRM_MODULES.map((m) => m.k);
 
-export const GSYNC_TYPE_LABEL = { bookings: 'Bookings', events: 'Events', full_sync: 'Full Sync', crm_mirror: 'CRM Data Sheet' };
+export const GSYNC_TYPE_LABEL = { bookings: 'Bookings', events: 'Events', full_sync: 'Full Sync', crm_mirror: 'CRM Data Sheet', sheet_target: 'Sheet Push' };
 export const GSYNC_TRIGGER_LABEL = { admin_manual: 'Manual', scheduler: 'Scheduler', system: 'System' };
 export const GSYNC_STATUS_TONE = { pending: 'neutral', running: 'amber', success: 'green', failed: 'red', partial_success: 'amber' };
 

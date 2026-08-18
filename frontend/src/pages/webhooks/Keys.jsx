@@ -65,7 +65,7 @@ export default function WebhookKeys() {
       {WH_KEYS.length ? (
         <div className="tw">
           <div className="tsc">
-            <table className="dt">
+            <table className="dt dt-form">
               <thead><tr><th>Name</th><th>Event</th><th>Key</th><th className="num">Calls</th><th>Last used</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {WH_KEYS.map((k) => (

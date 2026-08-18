@@ -393,7 +393,7 @@ export default function DashboardPage() {
                           const tn = mb.conv >= 70 ? 'var(--green)' : mb.conv >= 50 ? 'var(--t-500)' : 'var(--amber)';
                           return (
                             <tr key={mb.user_id}>
-                              <td><Who name={mb.name} sub={mb.is_lead ? 'Team lead' : ''} /></td>
+                              <td><Who name={mb.name} sub={mb.is_lead ? 'Team lead' : ''} avatar={false} /></td>
                               <td><RoleBadge value={mb.role} /></td>
                               <td className="num" style={{ fontWeight: 650, color: 'var(--text)' }}>{nf(mb.bookings)}</td>
                               <td className="num" style={{ color: 'var(--green)', fontWeight: 650 }}>{nf(mb.paid)}</td>

@@ -8,9 +8,11 @@ import * as eventsApi from '../api/events';
 import * as usersApi from '../api/users';
 import { useFetch } from '../hooks/useFetch';
 import { useSession } from '../context/SessionContext';
+import { useToast } from '../context/ToastContext';
 
 export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   const { canView } = useSession();
+  const toast = useToast();
   const nav = useNavigate();
   const loc = useLocation();
   const home = homeFor(canView);
@@ -24,15 +26,10 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   // The bookings badge is a COUNT — one row off the paginator, not every page of
   // ~35k delegates length-filtered in the browser. This component mounts in the
   // app shell, so the old version re-ran that walk on every route change.
-  //
-  // Each one is skipped unless its own item is rendered. Now that a module the user
-  // cannot view is absent from the rail, an ungated fetch would be four requests
-  // per mount asking for counts to put on rows that are not there, each answered
-  // 403 by the very permission that hid the row.
-  const { data: pendingBookings } = useFetch(bookingsApi.countPending, [], { initialData: 0, immediate: canView('bookings') });
-  const { data: ticketStats } = useFetch(ticketsApi.stats, [], { initialData: {}, immediate: canView('ticket_central') });
-  const { data: events } = useFetch(eventsApi.list, [], { initialData: [], immediate: canView('events') });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [], immediate: canView('users') });
+  const { data: pendingBookings } = useFetch(bookingsApi.countPending, [], { initialData: 0 });
+  const { data: ticketStats } = useFetch(ticketsApi.stats, [], { initialData: {} });
+  const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
+  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
   const badges = {
     bookings: pendingBookings || 0,
     tickets: (ticketStats || {}).mr_submitted || 0,
@@ -55,17 +52,9 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
       </div>
       <div className="rail-nav">
         {NAV.map((g) => {
-          // A module the user cannot view is ABSENT, not shown greyed out behind a
-          // padlock. The lock rendering this replaced listed every page in the
-          // product to everybody, so a Sales user read eight rows they could never
-          // open and a toast telling them so on each click — the sidebar answered
-          // "what exists" when the only useful question is "where can I go". The
-          // page guards are untouched: typing the URL still lands on NoAccessPage,
-          // so this is the menu getting quieter, not the permission getting weaker.
           const vis = g.items.filter((i) => !i.mod || canView(i.mod));
-          // The heading goes with them. An "Admin" label standing over nothing is
-          // the same disclosure in smaller type.
-          if (!vis.length) return null;
+          const locked = g.items.filter((i) => i.mod && !canView(i.mod));
+          if (!vis.length && !locked.length) return null;
           return (
             <div className="rail-group" key={g.g}>
               <div className="rail-glabel">{g.g}</div>
@@ -80,6 +69,14 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
                   </button>
                 );
               })}
+              {locked.map((i) => (
+                <button key={i.id} className="rail-item locked" title="No access" onClick={() => toast('You do not have access to ' + i.l, 'wn')}>
+                  <span className="rail-ic"><Icon name={i.ic} size={17} /></span>
+                  <span className="rail-lb">{i.l}</span>
+                  <span className="rail-lock"><Icon name="lock" size={13} /></span>
+                  <span className="rail-tip">{i.l} — no access</span>
+                </button>
+              ))}
             </div>
           );
         })}

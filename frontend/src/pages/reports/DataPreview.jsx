@@ -28,7 +28,7 @@ export default function ReportsDataPreview() {
       </div>
       <div className="tw">
         <div className="tsc">
-          <table className="dt">
+          <table className="dt dt-form">
             <thead><tr><th>Invoice</th><th>Event</th><th>Name</th><th>Status</th><th>Requested</th></tr></thead>
             <tbody>
               {BOOKINGS.slice(0, 12).map((b) => (

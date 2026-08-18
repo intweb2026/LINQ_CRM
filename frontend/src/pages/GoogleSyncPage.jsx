@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { EmptyState, PageHead, Tabs } from '../components/UI';
+import { EmptyState, Tabs } from '../components/UI';
 import Modal from '../components/Modal';
 import AddSheetSourceModal from '../components/AddSheetSourceModal';
+import SheetTargetModal from '../components/SheetTargetModal';
 import Popover from '../components/Popover';
 import { Icon } from '../lib/icons';
 import { GsBadge } from '../components/Badge';
@@ -13,6 +14,9 @@ import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
+
+const TARGET_TONE = { success: 'green', failed: 'red', never: 'neutral' };
+const TARGET_LABEL = { success: 'Success', failed: 'Failed', never: 'Never run' };
 
 const STAB = [{ id: '', label: 'All' }, { id: 'running', label: 'Running' }, { id: 'success', label: 'Success' }, { id: 'failed', label: 'Failed' }, { id: 'partial_success', label: 'Partial' }, { id: 'pending', label: 'Pending' }];
 const PS = 15;
@@ -69,6 +73,11 @@ export default function GoogleSyncPage() {
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
   const [addSheetOpen, setAddSheetOpen] = useState(false);
+  // `null` closed, `{}` a new push, a target object an edit.
+  const [pushForm, setPushForm] = useState(null);
+  const [runningId, setRunningId] = useState(null);
+  const { data: modules } = useFetch(gsyncApi.catalog, [], { initialData: [] });
+  const { data: targets, refetchQuiet: reloadTargets } = useFetch(gsyncApi.listTargets, [], { initialData: [] });
   const { data: logs, refetchQuiet: reloadLogs } = useFetch(gsyncApi.list, [], { initialData: [] });
   const GSYNC_LOGS = logs || [];
   // A sync is a long server-side job, and the cron schedule starts them without
@@ -96,6 +105,28 @@ export default function GoogleSyncPage() {
     }
     refresh();
   }
+  async function runPush(t) {
+    setRunningId(t.id);
+    toast(t.name + ' started…', 'nf');
+    try {
+      const result = await gsyncApi.runTarget(t.id);
+      toast(t.name + ' wrote ' + nf(result.log?.records_processed || 0) + ' rows', 'ok');
+    } catch (err) {
+      toast(err.response?.data?.error || (t.name + ' failed'), 'er');
+    }
+    setRunningId(null);
+    reloadTargets();
+    refresh();
+  }
+  async function removePush(t) {
+    try {
+      await gsyncApi.deleteTarget(t.id);
+      toast(t.name + ' removed', 'ok');
+    } catch {
+      toast('Could not remove ' + t.name, 'er');
+    }
+    reloadTargets();
+  }
   async function retry(l) {
     toast('Retrying sync #' + l.id + '…', 'nf');
     try {
@@ -109,9 +140,12 @@ export default function GoogleSyncPage() {
 
   return (
     <>
-      <PageHead title="Google Sync" sub="Sync history, live status, and manual controls for the core bookings/events pipeline."
-        actions={<>
+      {/* Actions on the tab row, title and description dropped — the shared
+          header pattern, see BookingsPage. */}
+      <Tabs list={STAB} active={statusFilter} onPick={(id) => { setStatusFilter(id); setPage(1); }}
+        actions={<div className="ph-act">
           <button className="btn btn-s btn-sm" onClick={() => setAddSheetOpen(true)}><Icon name="plus" size={13} />Add Sheet</button>
+          <button className="btn btn-s btn-sm" onClick={() => setPushForm({})}><Icon name="sheet" size={13} />New push</button>
           <div className="seg" style={{ height: 34 }}>
             <button className="btn btn-p btn-sm" style={{ borderRadius: 'var(--r-md) 0 0 var(--r-md)' }} onClick={() => run('full_sync')}><Icon name="refresh" size={13} />Sync all</button>
             <Popover align="right" trigger={({ toggle }) => <button className="btn btn-p btn-sm btn-ic" style={{ borderRadius: '0 var(--r-md) var(--r-md) 0', borderLeft: '1px solid rgba(255,255,255,.25)' }} onClick={toggle}><Icon name="chevD" size={13} /></button>}>
@@ -128,8 +162,46 @@ export default function GoogleSyncPage() {
               )}
             </Popover>
           </div>
-        </>} />
-      <Tabs list={STAB} active={statusFilter} onPick={(id) => { setStatusFilter(id); setPage(1); }} />
+        </div>}
+      />
+      {(targets || []).length ? (
+        <div className="tw" style={{ marginBottom: 16 }}>
+          <div className="tb">
+            <span className="tb-m" style={{ fontWeight: 700 }}>Sheet pushes</span>
+            <span className="dim" style={{ fontSize: 11.5 }}>Selected columns of one module, written to one tab. Every run replaces that tab in full.</span>
+            <div className="tb-sp" /><span className="tb-m"><b>{nf(targets.length)}</b> pushes</span>
+          </div>
+          <div className="tsc">
+            <table className="dt dt-form">
+              <thead><tr>{['Name', 'Module', 'Columns', 'Tab', 'Last run', 'Rows', 'Status', ''].map((l) => <th key={l}>{l}</th>)}</tr></thead>
+              <tbody>
+                {targets.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <span style={{ fontWeight: 650 }}>{t.name}</span>
+                      {t.is_enabled ? null : <span className="tg bg-neutral" style={{ marginLeft: 6 }}>Disabled</span>}
+                    </td>
+                    <td><span className="tg bg-neutral">{t.module_label || t.module}</span></td>
+                    <td className="dim" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={(t.column_labels || []).join(', ')}>{(t.column_labels || []).join(', ')}</td>
+                    <td className="mono">{t.tab_name}</td>
+                    <td className="dim">{t.last_synced_at ? fdate(t.last_synced_at) + ' ' + ftime(t.last_synced_at) : '—'}</td>
+                    <td className="mono num">{t.records_synced ? nf(t.records_synced) : '—'}</td>
+                    <td><span className={'tg bg-' + (TARGET_TONE[t.last_status] || 'neutral')} title={t.last_error || ''}>{TARGET_LABEL[t.last_status] || t.last_status}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 5 }}>
+                        <button className="btn btn-sm btn-p" disabled={runningId === t.id || !t.is_enabled} onClick={() => runPush(t)}>{runningId === t.id ? 'Running…' : 'Run'}</button>
+                        <button className="btn btn-sm btn-s" onClick={() => setPushForm(t)}>Edit</button>
+                        <button className="btn btn-sm btn-s" style={{ color: 'var(--red)' }} onClick={() => removePush(t)}>Remove</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
       <div className="tb">
         <div className="tb-s"><input className="in in-s" placeholder="Search sync logs…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} /></div>
         <select className="in" style={{ width: 'auto', height: 35, fontSize: 12 }} value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
@@ -143,7 +215,7 @@ export default function GoogleSyncPage() {
       {slice.length ? (
         <div className="tw">
           <div className="tsc">
-            <table className="dt">
+            <table className="dt dt-form">
               <thead><tr>{['#', 'Type', 'Sheet', 'Status', 'Mode', 'Started', 'Duration', 'Records', 'Updated', 'Failed', 'Source', 'By', ''].map((l) => <th key={l}>{l}</th>)}</tr></thead>
               <tbody>
                 {slice.map((l) => {
@@ -193,6 +265,10 @@ export default function GoogleSyncPage() {
       {addSheetOpen ? (
         <AddSheetSourceModal onClose={() => setAddSheetOpen(false)}
           onSaved={() => toast('Manage or sync it from Reports → Sheet Registry', 'nf')} />
+      ) : null}
+      {pushForm ? (
+        <SheetTargetModal target={pushForm.id ? pushForm : null} modules={modules || []}
+          onClose={() => setPushForm(null)} onSaved={reloadTargets} />
       ) : null}
     </>
   );
