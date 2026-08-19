@@ -193,7 +193,14 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
 
   return (
     <div className="tw">
-      <div className="tsc" style={{ maxHeight: 420 }}>
+      {/* No height of its own. A hardcoded maxHeight:420 here knew nothing about
+          how much room the modal body actually had, so on a window under roughly
+          780px tall the body scrolled as well and there were two scrollbars. The
+          height now comes from the .md-b.fill chain in styles/overlays.css, which
+          gives this box whatever is left after the invoice fields. It also
+          restores the <=880px rule `.tsc{max-height:none}`, which the inline
+          style silently outranked. */}
+      <div className="tsc">
         <table className="dt dt-form dt-grid">
           {/* Remove FIRST, then the row number, then the fields.
               The row is ~25 columns wide and this container scrolls horizontally, so

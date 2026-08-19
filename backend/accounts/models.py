@@ -318,6 +318,17 @@ class ActionLog(models.Model):
     class Meta:
         db_table = "action_logs"
         ordering = ["-created_at"]
+        # This table had exactly one index in the database — its primary key. Both
+        # of its read patterns are date-ordered: the recent-activity feed over the
+        # whole table, and one person's history. The composite leads with user_id
+        # so it also serves the plain FK lookup, which is why no separate
+        # single-column user_id index is created.
+        indexes = [
+            models.Index(
+                fields=["user", "-created_at"], name="action_logs_user_created_idx",
+            ),
+            models.Index(fields=["-created_at"], name="action_logs_created_idx"),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - {self.action} at {self.created_at}"

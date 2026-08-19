@@ -75,7 +75,14 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # request_date alone because 85 of 2,230 invoices carry only an invoice_date,
     # and a window that dropped them would put a different number under the same
     # button on two screens. See accounts/period_filter.py.
-    period_date_fields = ("invoice__request_date", "invoice__invoice_date")
+    # Now the denormalised delegate column rather than the two-field COALESCE over
+    # the joined invoice. accounts/period_filter.py passes a single field straight
+    # through as a bare column instead of building COALESCE(...) across the join,
+    # so the window is served directly by book_delegates_booked_id_idx. The value
+    # is identical by construction: BookDelegate.booked_on IS
+    # COALESCE(request_date, invoice_date), written by save() and kept in step by
+    # BookEvent.save(). period_filter.py itself is unchanged.
+    period_date_fields = ("booked_on",)
 
     # ── Compound filter spec ──────────────────────────────────────────────────
     # The five person-level fields are RESOLVED: the table shows the delegate
@@ -284,8 +291,38 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "_sort_effective_payment_status", "_sort_effective_payment_type",
         "_sort_effective_paid_or_free", "_sort_effective_ticket_tier",
         "_sort_effective_payment_date",
+        # The denormalised sort key. Listed because DRF silently DROPS an ordering
+        # term it does not find here, so an unlisted default would degrade to the
+        # pk tiebreak alone without any error.
+        "booked_on",
     ]
-    ordering        = ["-_sort_request_date"]
+    # DEFAULT ORDERING CHANGED, from -_sort_request_date to -booked_on.
+    #
+    # Same rows, same direction, one table. _sort_request_date was F() on
+    # invoice__request_date, so the sort lived on the JOINED side while
+    # StableOrderingFilter's pk tiebreak lived on the DRIVING side, across a
+    # varchar join — no index can serve that shape, and the measured plan was a
+    # full hash join plus a sort of the entire set to return 50 rows.
+    #
+    # The new order AGREES WITH THE PERIOD WINDOW BY CONSTRUCTION rather than by
+    # coincidence: period_date_fields above is now the same booked_on column, and
+    # booked_on IS COALESCE(request_date, invoice_date). Under the old default a
+    # delegate whose invoice carried only an invoice_date was inside the window
+    # but sorted as NULL.
+    #
+    # ROWS WHOSE POSITION CHANGES. Measured on the 2026-06-11 development snapshot
+    # (Task 1 question 4): 0 delegates have request_date NULL with invoice_date
+    # present, and 0 have both NULL — all 1,251 delegates carry a request_date, and
+    # 0 are orphaned from their invoice. So on this data the two orderings are
+    # identical and NOTHING moves. On production, any row in those first two
+    # buckets moves from the NULL group to its real date position, which is the
+    # intended correction.
+    #
+    # _sort_request_date is deliberately KEPT in both the annotation block and
+    # ordering_fields: frontend/src/pages/BookingsPage.jsx sends it as the Request
+    # Date column's serverOrdering, and dropping it would silently disable that
+    # header.
+    ordering        = ["-booked_on"]
 
     def get_queryset(self):
         from django.db.models import F, Value

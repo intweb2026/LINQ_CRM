@@ -31,6 +31,7 @@ that distinction; it is the difference between a missing number and a wrong one.
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -61,6 +62,16 @@ class DashboardAggregateTestCase(TestCase):
     the production snapshot is in and the state the old code silently reported
     zero for. Ownership is expressed only through the event catalogue.
     """
+
+    def setUp(self):
+        # DashboardAggregateView now caches its response for 120s, keyed on
+        # (period, resolved scope), and _owner_by_event() for 300s. LocMemCache
+        # is per-PROCESS, not per-test, and every test in this class asks for the
+        # same period as the same admin — so without this the first test's
+        # payload is served to all the others, and each one asserts against
+        # fixtures it cannot see. Django rolls back the DATABASE between tests;
+        # it knows nothing about the cache.
+        cache.clear()
 
     @classmethod
     def setUpTestData(cls):

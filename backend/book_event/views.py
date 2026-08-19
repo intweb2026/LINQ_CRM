@@ -6,7 +6,8 @@ Invoice CRUD + payment update + website intake.
 import logging
 from datetime import datetime
 from django.db import transaction, IntegrityError
-from django.db.models import Count
+from django.db.models import Count, IntegerField, OuterRef, Subquery
+from django.db.models.functions import Coalesce
 from rest_framework import viewsets, status
 from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from rest_framework.decorators import action
@@ -105,7 +106,36 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         qs = BookEvent.objects.select_related("sales_executive")
         qs = self.rbac_filter(qs)
         if self.action == "list":
-            qs = qs.annotate(_delegate_count_actual=Count("delegates", distinct=True))
+            # WAS: Count("delegates", distinct=True), which LEFT JOINs every
+            # delegate row onto every invoice and then GROUP BYs the whole result
+            # set before LIMIT can apply. With only select_related("sales_executive")
+            # there is no join that can multiply rows, so distinct=True bought
+            # nothing and paid for a sort or hash of the joined delegates across the
+            # entire table to return 50 invoices. The measured plan was
+            #   Sort -> GroupAggregate -> Hash Right Join (1,251 delegate rows)
+            # for a 50-row page. A correlated subquery lets the LIMIT apply first,
+            # so the subquery runs 50 times instead of the join running 1,251.
+            #
+            # OuterRef("invoice_number"), NOT OuterRef("pk"): BookDelegate.invoice
+            # is a to_field FK on invoice_number, so the attname invoice_id holds a
+            # varchar invoice number. Comparing it to the outer pk would compare
+            # varchar to integer, which errors rather than silently matching
+            # nothing. The filter keyword is invoice_id, the attname — invoice_number
+            # is the DB column and Django will not resolve it as a query name.
+            #
+            # Coalesce to 0 because a correlated subquery returns NULL for an
+            # invoice with no delegates, where COUNT returned 0. Without it, every
+            # zero-delegate invoice would serialise null instead of 0.
+            # Local import, matching this module's existing convention for
+            # BookDelegate (see the wipe handler below): book_delegate imports
+            # book_event at module level, so a top-level import here is circular.
+            from book_delegate.models import BookDelegate
+            counts = (BookDelegate.objects
+                      .filter(invoice_id=OuterRef("invoice_number"))
+                      .order_by().values("invoice_id")
+                      .annotate(n=Count("pk")).values("n")[:1])
+            qs = qs.annotate(_delegate_count_actual=Coalesce(
+                Subquery(counts, output_field=IntegerField()), 0))
         elif self.action in ("retrieve", "update", "partial_update"):
             qs = qs.prefetch_related("delegates__company")
         return qs

@@ -43,6 +43,28 @@ const FOCUS_STALE_MS = 10000;
 
 const isVisible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
 
+/**
+ * Visible AND focused.
+ *
+ * document.visibilityState alone treats a visible-but-unfocused window as
+ * active, which is exactly the second monitor with Bookings open that nobody is
+ * looking at. Combined with the poll interval, that is a recurring multi-row
+ * query for nothing.
+ *
+ * GATES THE POLL TIMER ONLY. The write-bus subscription below is deliberately
+ * NOT gated on this: a write arriving from another tab must still refresh
+ * regardless of focus, because that is the instant path and the person who made
+ * the write is watching this window for the result — often from the other tab,
+ * which by definition means this one is unfocused.
+ *
+ * hasFocus() is guarded for the same reason visibilityState is: this module is
+ * imported in environments without a document.
+ */
+const isTabActive = () => (
+  typeof document === 'undefined'
+    || (document.visibilityState !== 'hidden' && document.hasFocus())
+);
+
 export function useLiveData(refresh, options = {}) {
   const { resources = null, poll = LIVE_POLL_MS, enabled = true } = options;
 
@@ -92,7 +114,13 @@ export function useLiveData(refresh, options = {}) {
 
   useEffect(() => {
     if (!enabled || !poll) return undefined;
-    const id = setInterval(() => { if (isVisible()) run(MIN_GAP_MS); }, poll);
+    // The POLL is gated on focus as well as visibility; RETURNING to the tab is
+    // gated on visibility alone. The two are deliberately different: a focus or
+    // visibilitychange event is the moment someone came back to look, and it
+    // should refresh stale data even in the instant before hasFocus() settles.
+    // Both listeners feed the same FOCUS_STALE_MS path, so a quick alt-tab still
+    // does nothing and a return after twenty minutes still refreshes at once.
+    const id = setInterval(() => { if (isTabActive()) run(MIN_GAP_MS); }, poll);
     const onReturn = () => { if (isVisible()) run(FOCUS_STALE_MS); };
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onReturn);
     if (typeof window !== 'undefined') window.addEventListener('focus', onReturn);

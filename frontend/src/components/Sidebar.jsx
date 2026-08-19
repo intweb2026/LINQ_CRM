@@ -45,7 +45,7 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
           <img src="/static/logo-dark.webp" alt="iQ Hub" className="lg-dark" />
           <img src="/static/logo-icon.webp" alt="iQ Hub" className="lg-icon" />
         </div>
-        <div className="rail-name"><span>CRM Workspace</span></div>
+        <div className="rail-name"><span>Workspace</span></div>
         <button className="rail-collapse" aria-label="Collapse navigation" title="Collapse" onClick={collapsed.toggle}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
         </button>

@@ -117,7 +117,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
   }
 
   return (
-    <Modal size="full" onClose={onClose}
+    <Modal size="full" bodyFill onClose={onClose}
       header={
         <div className="md-h">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, flexWrap: 'wrap' }}>
@@ -169,7 +169,9 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
         </div>
       </div>
-      <div className="fs">
+      {/* fs-fill: this section, not the modal body, owns the vertical scroll.
+          See the .md-b.fill block in styles/overlays.css. */}
+      <div className="fs fs-fill">
         <div className="fs-t" style={{ justifyContent: 'space-between' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><Icon name="users" size={13} />Delegate details</span>
           <button className="btn btn-s btn-sm" onClick={addDelegate}><Icon name="plus" size={13} />Add delegate</button>

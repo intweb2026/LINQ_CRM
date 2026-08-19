@@ -8,9 +8,37 @@ import {
 } from '../lib/filterSpec';
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
+import useVirtualRows from '../hooks/useVirtualRows';
 import { apiErrorMessage, fetchAllIds, fetchPage } from '../api/client';
 
 const PAGE_SIZE_DEFAULT = 50;
+
+/**
+ * Measured row height, in pixels: 44.
+ *
+ * Derived from styles/components.css, not guessed:
+ *   table.dt tbody td { padding: 0 12px; height: 44px;
+ *                       border-bottom: 1px solid var(--n-50); }   (line 337)
+ *   table.dt          { border-collapse: separate; border-spacing: 0 }  (line 248)
+ *   base.css          { *, *::before, *::after { box-sizing: border-box } } (line 70)
+ *
+ * So: vertical padding is 0, the declared 44px is a BORDER-BOX height and
+ * therefore already includes the 1px bottom border, and border-spacing:0 means
+ * adjacent rows have no gap between them. The row pitch is exactly 44px, with no
+ * arithmetic left over. The 12.5px font at its default line-height is ~15px,
+ * well under 44, so the declared height wins rather than the content.
+ *
+ * This is the desktop value, which is the only one that matters: .tsc carries
+ * max-height:calc(100vh - 300px) normally and `max-height:none` inside
+ * @media(max-width:880px) (overlays.css:473), so below that width the container
+ * does not scroll and the virtualiser's threshold is never reached anyway.
+ *
+ * Used by the virtualiser to convert scroll position to a row index. A wrong
+ * value makes the scroll position drift by a compounding fraction per row,
+ * visible as a jump every time the user pauses. Remeasure after any CSS change
+ * to td padding, font-size, line-height, or row border.
+ */
+const ROW_HEIGHT = 44;
 
 /**
  * A column's pixel width for the fixed-layout grid (table.dt-grid in
@@ -56,7 +84,26 @@ function colWidth(col) {
  * screen. Past this point background refresh stands down and the explicit
  * Refresh button remains the way to reload.
  */
-const MAX_LIVE_SPAN = 500;
+// Was 500, one full max_page_size ceiling. A user parked at row 500 generated a
+// 500-row query carrying the join, the sort, and the count every 30 seconds.
+// 150 keeps the cheap case cheap; above it the merge path in liveReload below
+// refreshes the first page and merges it in place, so the span no longer has to
+// be refetched whole and the old "stand down entirely" branch is gone.
+const MAX_LIVE_SPAN = 150;
+
+/**
+ * Poll interval for server-mode tables: 60s rather than the 30s default.
+ *
+ * The write bus is the instant path and is unaffected by this — anything written
+ * in this browser, or in another tab, still lands in under a second. The poll
+ * covers only changes made outside the browser entirely (a webhook booking, the
+ * Sheets sync, a Django-admin edit, a cron job), and none of those need to be
+ * seen within thirty seconds.
+ *
+ * Applied as a DEFAULT, not an override: a caller that passes an explicit
+ * numeric `live` wins, which is how the Dashboard keeps its own longer interval.
+ */
+const SERVER_POLL_MS = 60_000;
 
 const FILTER_OPS = ['Contains', 'Not Contains', 'Is', 'Is Not', 'Starts With', 'Ends With', 'Like', 'Is Empty', 'Is Not Empty'];
 const NO_VALUE_OPS = ['Is Empty', 'Is Not Empty'];
@@ -723,10 +770,10 @@ export default function DataTable({
       if (!serverMode) return;
       if (!infinite) { serverState.refetch({ quiet: true }); return; }
       const span = page * pageSize;
-      if (span > MAX_LIVE_SPAN) return;
+      const refreshSize = span > MAX_LIVE_SPAN ? pageSize : span;
       fetchPage(server.resource, {
         page: 1,
-        pageSize: span,
+        pageSize: refreshSize,
         ordering,
         filterSpec: specTooLarge ? null : specJson,
         search: q || null,
@@ -738,8 +785,37 @@ export default function DataTable({
         params: paramsJson ? JSON.parse(paramsJson) : undefined,
       })
         .then((res) => {
-          setAcc(mapServerRows(res.results));
+          const fresh = mapServerRows(res.results);
           setLiveTotal(res.count);
+
+          // Full span fits in one request: swap wholesale, nothing moves.
+          if (refreshSize >= span) {
+            setAcc(fresh);
+            return;
+          }
+
+          // Beyond MAX_LIVE_SPAN: merge the first page into the accumulated
+          // rows by id. Values on rows the user can see update in place; rows
+          // keep their positions; genuinely new records prepend at the top,
+          // which is where the default newest-first ordering would have placed
+          // them. Nothing moves, and the request is one page rather than the
+          // whole scroll.
+          //
+          // This REPLACES the old "if (span > MAX_LIVE_SPAN) return;" branch,
+          // which stood down completely and left a deep-scrolled table stale
+          // until the user hit Refresh by hand.
+          //
+          // The functional updater is deliberate: it avoids a stale closure over
+          // `acc` without adding `acc` to the dependency array, which would give
+          // this callback a new identity on every poll response and re-register
+          // useLiveData on every cycle.
+          setAcc((prev) => {
+            const byId = new Map(fresh.map((r) => [r.id, r]));
+            const prevIds = new Set(prev.map((r) => r.id));
+            const merged = prev.map((r) => byId.get(r.id) || r);
+            const arrivals = fresh.filter((r) => !prevIds.has(r.id));
+            return arrivals.length ? [...arrivals, ...merged] : merged;
+          });
         })
         // Silent by design: a failed background refresh must leave the rows on
         // screen alone and say nothing. The user did not ask for this fetch.
@@ -749,7 +825,9 @@ export default function DataTable({
     {
       resources: liveResources,
       enabled: serverMode && live !== false,
-      poll: typeof live === 'number' ? live : undefined,
+      // An explicit numeric `live` from the caller wins; otherwise server-mode
+      // tables poll at SERVER_POLL_MS rather than useLiveData's 30s default.
+      poll: typeof live === 'number' ? live : SERVER_POLL_MS,
     },
   );
 
@@ -868,6 +946,34 @@ export default function DataTable({
   // going quiet; a callback ref re-runs the effect on every node swap.
   const [sentinelEl, setSentinelEl] = useState(null);
   const scrollBoxRef = useRef(null);
+
+  /**
+   * Row windowing. At 500 accumulated Ticket Central rows across 45 columns the
+   * body is ~22,000 <td> elements, and every poll response replaced `acc` and
+   * re-rendered all of them — the "browser freezes" report.
+   *
+   * Strictly downstream of everything: `pageRows` is computed above and is not
+   * modified, so `data`, `sourceRows` and the acc accumulation effect are all
+   * untouched. Below the hook's threshold `slice` IS `pageRows` by reference,
+   * which is what leaves in-memory and paged modes rendering exactly as before.
+   *
+   * Selection is deliberately NOT windowed: toggleAll still maps over pageRows
+   * and loadedCount still reads data.length, so both operate over the full
+   * accumulated set rather than the visible slice.
+   */
+  const { slice, padTop, padBottom } = useVirtualRows(
+    pageRows,
+    scrollBoxRef,
+    ROW_HEIGHT,
+  );
+
+  /**
+   * colSpan for the two spacer rows: every visible column, plus the checkbox
+   * column when `select` is on. Matches the <colgroup> above exactly — it emits
+   * one <col> for `select` and one per entry in activeCols — so a spacer spans
+   * the full width and cannot perturb the fixed-layout column grid.
+   */
+  const colCount = activeCols.length + (select ? 1 : 0);
 
   const loadMore = useCallback(() => {
     if (!serverMode) { setShown((s) => s + pageSize); return; }
@@ -1225,7 +1331,16 @@ export default function DataTable({
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((r) => (
+                {/* Spacer rows stand in for the rows scrolled past, so the
+                    scrollbar still reflects the full set. aria-hidden because
+                    they carry no content and must not appear to a screen reader
+                    as empty rows between real ones. */}
+                {padTop > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={colCount} style={{ height: padTop, padding: 0, border: 'none' }} />
+                  </tr>
+                )}
+                {slice.map((r) => (
                   <Row
                     key={r.id}
                     row={r}
@@ -1237,6 +1352,11 @@ export default function DataTable({
                     onToggle={toggleRow}
                   />
                 ))}
+                {padBottom > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={colCount} style={{ height: padBottom, padding: 0, border: 'none' }} />
+                  </tr>
+                )}
               </tbody>
             </table>
             {moreBar}

@@ -157,6 +157,13 @@ class ProposalSubmission(models.Model):
             models.Index(
                 "event_code", Lower("email"), name="proposal_dupe_idx",
             ),
+            # Meta.ordering above is exactly ["-submission_date", "-id"], and this
+            # index is exactly that. Same reasoning, same shape, as
+            # paper_reviews_subdate_id_idx.
+            models.Index(
+                fields=["-submission_date", "-id"],
+                name="proposal_subs_subdate_id_idx",
+            ),
         ]
         # A7. One paper review generates at most ONE proposal, enforced by the
         # database rather than only by the guard in proposal_bridge.py — a retried

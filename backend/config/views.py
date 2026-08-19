@@ -3,11 +3,14 @@ config/views.py
 ────────────────
 Global search + dashboard stats — RBAC-scoped per user role.
 """
+import hashlib
 from collections import Counter
 from decimal import Decimal
 
+from django.core.cache import cache
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -338,6 +341,46 @@ class DashboardAggregateView(APIView):
     @classmethod
     def _owner_by_event(cls, users):
         """
+        Cached wrapper over _owner_by_event_uncached().
+
+        WHY. The uncached call walks the WHOLE event catalogue and resolves three
+        free-text team columns per event through UserResolver, on every dashboard
+        request. That is ~200 events re-resolved per load, per open tab, and the
+        answer changes only when the catalogue or the user list changes.
+
+        KEYED ON THE ACTIVE USER COUNT, so adding or deactivating a user
+        invalidates the entry without a process restart — the case
+        accounts/user_resolution.py explicitly documents as needing to not
+        require one. The event count is in the key for the same reason on the
+        other side of the join.
+
+        STALENESS IS ACCEPTED, EXPLICITLY. For up to 300 seconds a rename of an
+        event's sales_team text can attribute bookings to the previous owner.
+        The trade is against re-resolving the full catalogue on every dashboard
+        load for every open tab, and the numbers this feeds are a management
+        overview, not a ledger. A user being ADDED is not subject to the window,
+        because that changes the key.
+
+        PICKLE-SAFETY. The diagnostics dict includes resolver.report(limit=10),
+        which returns plain ints, strings, bools and lists of small dicts — its
+        own docstring calls it a serialisable summary, and the Counter it is
+        derived from is expanded into that list rather than stored. `owner` is
+        {str: {str: int}}. Nothing here holds a Counter, a queryset or a model
+        instance, so it stores cleanly under LocMem and Redis alike. Verified in
+        config/tests_dashboard_cache.py.
+        """
+        key = (f"dashowner:v1:users={users.count()}"
+               f":events={Event.objects.count()}")
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = cls._owner_by_event_uncached(users)
+        cache.set(key, result, 300)
+        return result
+
+    @classmethod
+    def _owner_by_event_uncached(cls, users):
+        """
         {pipeline: {event_code: user_id}} — who owns each pipeline on each event.
 
         WHY THE EVENT CATALOGUE AND NOT JUST THE INVOICE
@@ -422,9 +465,40 @@ class DashboardAggregateView(APIView):
             period, p_from, p_to = period_filter.resolve_period(
                 request.query_params.get("period"))
         except period_filter.PeriodError as exc:
+            # Returned BEFORE the cache is touched, so a bad period is never
+            # written under any key and never served from one. Validation first,
+            # then cache, then work.
             return Response({"detail": str(exc)}, status=400)
 
         codes = _event_codes(request.user)
+
+        # ── Response cache ───────────────────────────────────────────────────
+        # THE FIRST STATEMENT AFTER PERIOD VALIDATION, deliberately: a cache hit
+        # must cost one cache read and nothing else. This view otherwise runs an
+        # all-time GROUP BY, a windowed four-column GROUP BY, and a full walk of
+        # the event catalogue through UserResolver — 15 queries measured — and
+        # the Dashboard both polls it and refetches on any write anywhere.
+        #
+        # It cannot use cache_page: the response VARIES BY RBAC SCOPE, and a
+        # URL-keyed cache would serve one user's numbers to another.
+        #
+        # Keyed on the period AND the caller's resolved event scope, so two users
+        # with different assignments can never read each other's numbers. An
+        # all-access caller keys on "*" rather than on an enumerated list of every
+        # code, which would make the key change whenever the catalogue grows and
+        # evict every admin's entry on each new event.
+        #
+        # 120 seconds. The payload is assembled and fully rendered (dates already
+        # isoformat()ed, Decimals already coerced) before it is stored, so what
+        # goes into the cache is plain JSON-serialisable and pickle-safe data
+        # rather than a queryset or a lazy Response.
+        scope = _event_codes(request.user)
+        cache_key = "dash:v1:" + hashlib.sha1(
+            f"{period}|{'*' if scope is None else ','.join(sorted(scope))}".encode()
+        ).hexdigest()
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
         del_qs = BookDelegate.objects.all()
         inv_qs = BookEvent.objects.all()
         if codes is not None:
@@ -689,7 +763,12 @@ class DashboardAggregateView(APIView):
                             + worked_by_name.get(name, 0)),
             }
 
-        return Response({
+        payload = {
+            # ISO string, not a datetime: this dict goes straight into the cache
+            # and must stay JSON-serialisable and pickle-safe. It is here so a
+            # stale reading is diagnosable from the browser without server access
+            # — subtract it from "now" and you have the entry's age.
+            "cached_at": timezone.now().isoformat(),
             "period": {
                 "key": period,
                 "from": p_from.isoformat() if p_from else None,
@@ -716,4 +795,10 @@ class DashboardAggregateView(APIView):
                     pipe[p]["total"] - pipe[p]["attributed"] for p in self.PIPELINES
                 ),
             },
-        })
+        }
+        # 120s. Every value above is already a primitive, a list or a dict — the
+        # period dates are isoformat()ed strings and the money figures were
+        # coerced on their way out of the aggregates — so this stores cleanly
+        # under both the LocMem and the Redis backend.
+        cache.set(cache_key, payload, 120)
+        return Response(payload)

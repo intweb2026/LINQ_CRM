@@ -190,6 +190,15 @@ class PaperReview(models.Model):
             models.Index(
                 "event_code", Lower("email"), name="paper_review_dupe_idx",
             ),
+            # Meta.ordering above is exactly ["-paper_submission_date", "-id"], and
+            # this index is exactly that. The single-column paper_submission_date
+            # index cannot answer it as an ordered scan: the column is nullable and
+            # heavily tied, so every page re-sorted the ties. Same shape as
+            # proposal_subs_subdate_id_idx; the two modules stay parallel.
+            models.Index(
+                fields=["-paper_submission_date", "-id"],
+                name="paper_reviews_subdate_id_idx",
+            ),
         ]
         verbose_name = "Paper Review"
         verbose_name_plural = "Paper Reviews"

@@ -63,7 +63,7 @@ export default function LoginPage() {
         <div className="lg-mk">
           <img src="/static/logo-light.png" alt="iQ Hub" className="lg-mk-img lg-light" />
           <img src="/static/logo-dark.webp" alt="iQ Hub" className="lg-mk-img lg-dark" />
-          <div><span>CRM Workspace</span></div>
+          <div><span>Workspace</span></div>
         </div>
         <h1>Welcome back</h1>
         <p>Sign in to reach bookings, tickets, events and the rest of the pipeline.</p>

@@ -65,6 +65,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Required by AddIndexConcurrently, used by the 00XX_perf_indexes migrations.
+    "django.contrib.postgres",
     # Third-party
     "rest_framework",
     "rest_framework.authtoken",
@@ -92,17 +94,33 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    # ── GZip ──────────────────────────────────────────────────────────────────
     # Compresses every response the API sends, for clients that advertise gzip,
     # which every browser does. Nothing here was compressed before, and these are
     # long, highly repetitive JSON documents: measured on the current database, a
     # 50-row page of paper-reviews is 264 KB raw and 43 KB gzipped, tickets 56 KB
-    # to 3 KB, delegates 65 KB to 6 KB. Between 6x and 17x off the wire, for one
-    # line and a few milliseconds of CPU.
+    # to 3 KB, delegates 65 KB to 6 KB. On API responses of tens to hundreds of KB
+    # of JSON this is typically a 5x to 8x reduction off the wire, for one line and
+    # a few milliseconds of CPU.
     #
-    # POSITION IS LOAD-BEARING. It must sit above everything that writes a body so
-    # it sees the finished response, and Django's own documentation puts it before
-    # any middleware that may change or use the content. CorsMiddleware stays
-    # first: it short-circuits preflights, which have no body to compress.
+    # POSITION IS LOAD-BEARING, and it is two constraints at once.
+    #
+    #   AFTER SecurityMiddleware. Security middleware decides the response's
+    #   security headers — HSTS, referrer policy, the SSL redirect — and a redirect
+    #   it issues short-circuits the rest of the chain. Letting it settle those
+    #   first means gzip never compresses a body that was about to be replaced by a
+    #   301, and the headers that govern the response are chosen before anything
+    #   touches its bytes.
+    #
+    #   BEFORE everything that contributes to the body. Response middleware runs
+    #   bottom-up, so sitting above SessionMiddleware, CommonMiddleware and the
+    #   view itself is what makes gzip see the FINISHED document rather than a
+    #   partial one. Django's own documentation states the same rule: place it
+    #   before any middleware that may change or use the content.
+    #
+    # CorsMiddleware stays first: it short-circuits preflights, which have no body
+    # to compress.
     #
     # ON BREACH. Compressing a response that carries a secret alongside
     # attacker-influenced text can leak the secret by length. Django masks the
@@ -110,7 +128,6 @@ MIDDLEWARE = [
     # authenticates with a Token header rather than a cookie, so there is no
     # session secret in these bodies to begin with.
     "django.middleware.gzip.GZipMiddleware",
-    "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -187,6 +204,36 @@ else:
     raise ImproperlyConfigured(
         "No database configured. Set DATABASE_URL, or DB_NAME/DB_USER/DB_PASSWORD."
     )
+
+# Persistent connections and pre-use health checks, applied to WHICHEVER branch
+# resolved above rather than only to DATABASE_URL. The DB_NAME branch previously
+# had neither, so a deployment configured with explicit credentials opened and
+# authenticated a fresh PostgreSQL connection on every request, including every
+# 30-second table poll. CONN_HEALTH_CHECKS makes a recycled or dropped connection
+# reconnect silently instead of surfacing as a burst of 500s after a DB restart.
+# SQLite ignores both keys, so the DEBUG branch is unaffected.
+DATABASES["default"].setdefault("CONN_MAX_AGE", 600)
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+# Redis when REDIS_URL is set; per-process LocMem otherwise. The fallback is
+# deliberately real rather than DummyCache: the cached-count paginator and the
+# dashboard cache added in this workstream must exercise the same code path in
+# every environment, and a per-process cache is merely weaker (each gunicorn
+# worker holds its own copy), never wrong — every entry here is a value that is
+# allowed to be up to its TTL stale.
+REDIS_URL = os.environ.get("REDIS_URL", "")
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "TIMEOUT": 300,
+    } if REDIS_URL else {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "linq-crm-default",
+        "OPTIONS": {"MAX_ENTRIES": 5000},
+    },
+}
 
 # ── Custom Auth ───────────────────────────────────────────────────────────────
 AUTH_USER_MODEL = "accounts.User"
@@ -345,6 +392,24 @@ GOOGLE_SHEET_BOOKINGS_TAB = "Bookings"
 GOOGLE_SHEET_CRM_ID = os.environ.get("GOOGLE_SHEET_CRM_ID", "")
 
 
+# ── Log retention ────────────────────────────────────────────────────────────
+# Windows for `manage.py prune_logs`, in days, per "app_label.ModelName". They
+# live here rather than in the command so changing one is a deployment change
+# and not a code edit, and every one is env-overridable for the same reason.
+# Defaults are deliberately conservative — a window that is too long costs disk,
+# a window that is too short destroys evidence.
+#
+# accounts.ActionLog is the audit trail and is deliberately NOT listed. It is
+# the largest table by growth rate and the one whose deletion needs a human
+# decision, not a default. prune_logs reports what it WOULD delete at a given
+# window via --report-action-logs, and deletes nothing.
+LOG_RETENTION_DAYS = {
+    "webhooks.WebhookLog":          int(os.environ.get("RETAIN_WEBHOOK_LOGS_DAYS", 90)),
+    "teams.TeamActivityLog":        int(os.environ.get("RETAIN_TEAM_LOGS_DAYS", 730)),
+    "reports.ReportSyncLog":        int(os.environ.get("RETAIN_REPORT_LOGS_DAYS", 90)),
+    "paper_review.NotificationLog": int(os.environ.get("RETAIN_NOTIF_LOGS_DAYS", 365)),
+}
+
 # ── Scheduled jobs ───────────────────────────────────────────────────────────
 # cron strings use server time, and TIME_ZONE above is UTC. Activate on the
 # Linux server with `python manage.py crontab add` (no-op on Windows dev).
@@ -353,5 +418,9 @@ CRONJOBS = [
     ("30 1 * * *", "django.core.management.call_command", ["backfill_ticket_numbers"]),
     # CRM → "CRM data" spreadsheet mirror — 05:30 IST == 00:00 UTC.
     ("0 0 * * *",  "django.core.management.call_command", ["mirror_crm_to_sheet"]),
+    # Weekly, Sunday 02:00 UTC. --commit because cron has no operator to confirm;
+    # the windows in LOG_RETENTION_DAYS are the safety margin, and ActionLog is
+    # excluded by design.
+    ("0 2 * * 0",  "django.core.management.call_command", ["prune_logs", "--commit"]),
 ]
 CRONTAB_LOCK_JOBS = True  # prevent overlap if a previous run is still going

@@ -55,7 +55,7 @@ export default function NewBookingModal({ onClose, onCreated }) {
   }
 
   return (
-    <Modal size="full" title="New booking" sub="Create an invoice and add every delegate booked onto it." onClose={onClose}
+    <Modal size="full" bodyFill title="New booking" sub="Create an invoice and add every delegate booked onto it." onClose={onClose}
       footer={<><span className="tb-m" style={{ marginRight: 'auto' }}><b>{delegates.length}</b> delegate{delegates.length === 1 ? '' : 's'}</span><button className="btn btn-s" onClick={onClose}>Cancel</button><button className="btn btn-p" onClick={create}><Icon name="check" size={15} />Save booking</button></>}>
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
@@ -69,7 +69,9 @@ export default function NewBookingModal({ onClose, onCreated }) {
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
         </div>
       </div>
-      <div className="fs">
+      {/* fs-fill: this section, not the modal body, owns the vertical scroll.
+          See the .md-b.fill block in styles/overlays.css. */}
+      <div className="fs fs-fill">
         <div className="fs-t" style={{ justifyContent: 'space-between' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><Icon name="users" size={13} />Delegate details</span>
           <button className="btn btn-s btn-sm" onClick={addDelegate}><Icon name="plus" size={13} />Add delegate</button>

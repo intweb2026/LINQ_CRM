@@ -33,6 +33,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
+from config.pagination import CachedCountPaginator
 from .models import GoogleSheetSource, ReportDefinition, ReportRow, ReportSyncLog
 from .serializers import (
     GoogleSheetSourceSerializer, GoogleSheetSourceListSerializer,
@@ -53,6 +54,11 @@ class StandardPagination(PageNumberPagination):
     page_size            = 100
     page_size_query_param = "page_size"
     max_page_size        = 500
+    # Same memoised COUNT(*) as config.pagination.StandardPagination. This class
+    # is a separate subclass only because reports pages 100 rows at a time rather
+    # than 50; the counting behaviour has no reason to differ, and ReportRow is
+    # the largest table any list endpoint reads.
+    django_paginator_class = CachedCountPaginator
 
 
 # ── Google Sheet Sources ──────────────────────────────────────────────────────

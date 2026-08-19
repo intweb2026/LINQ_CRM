@@ -194,6 +194,26 @@ table.gt th.num,table.gt td.num{text-align:right}
 .md-h-b h2{font-size:17.5px;font-weight:750;color:var(--text);letter-spacing:-.028em}
 .md-h-b p{font-size:11.5px;color:var(--text-4);margin-top:3px}
 .md-b{flex:1;overflow-y:auto;padding:18px 22px}
+/* Modal.jsx `bodyFill`. The delegate grid inside the booking modals is itself a
+   scroll container, so leaving `.md-b` scrollable put one scrollbox inside
+   another: the outer one appeared on any window under roughly 780px tall, and
+   because sticky headers resolve against the NEAREST scrolling ancestor, the
+   grid's column header and pinned first two columns tracked the inner box only.
+   Here `.md-b` stops scrolling and becomes the column layout, `.fs-fill` takes
+   whatever height is left, and the grid scrolls inside that. One scrollbar, at
+   every window size, with the invoice fields pinned above it.
+
+   min-height on the grid rather than letting it collapse: the sections above it
+   do not shrink, so without a floor a short window would flatten the table to
+   nothing instead of scrolling it. */
+.md-b.fill{overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.md-b.fill>.fs{flex-shrink:0}
+.md-b.fill>.fs-fill{flex:1;min-height:0;display:flex;flex-direction:column;margin-bottom:0}
+/* The heading row carries the Add delegate button; as a flex item it would
+   otherwise shrink along with everything else. */
+.md-b.fill>.fs-fill>.fs-t{flex-shrink:0}
+.md-b.fill>.fs-fill>.tw{flex:1;min-height:0;display:flex;flex-direction:column}
+.md-b.fill>.fs-fill>.tw>.tsc{flex:1;min-height:140px;max-height:none}
 .md-f{padding:13px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:7px;flex-shrink:0;background:var(--surface-2);border-radius:0 0 var(--r-xl) var(--r-xl);flex-wrap:wrap}
 @keyframes mIn{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .fs{margin-bottom:18px}.fs:last-child{margin-bottom:0}
@@ -451,6 +471,12 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
   .dn-c{margin:0 auto}
   .dr,.dr.wide{width:100%}
   .tsc{max-height:none}
+  /* Below this width `.fg` collapses to one column, so the invoice block above
+     the grid becomes three stacked fields and the fill layout no longer has
+     height to give away. `.tsc` is uncapped just above, so handing the scroll
+     back to `.md-b` still leaves exactly one scrollbar, just the outer one. */
+  .md-b.fill{overflow-y:auto;display:block}
+  .md-b.fill>.fs-fill>.tw>.tsc{min-height:0}
 }
 @media(max-width:560px){
   .kpis{grid-template-columns:1fr}

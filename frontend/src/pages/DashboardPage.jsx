@@ -109,7 +109,30 @@ export default function DashboardPage() {
       reloadSyncLogs();
       reloadSheets();
     }, [reloadStats, reloadEvents, reloadBookings, reloadOldest, reloadTickets, reloadWhLogs, reloadSyncLogs, reloadSheets]),
-    { resources: null, poll: 60000 },
+    {
+      // Was `resources: null` — every write anywhere in the CRM triggered this
+      // whole callback. A paper review save, a proposal edit, a company merge, a
+      // user or team change: none of them move a number on this screen, but each
+      // one cost a full aggregate over the delegate table for every open
+      // dashboard, plus eight other requests.
+      //
+      // Scoped to the resources this page actually READS. Not the three that
+      // feed the aggregate alone: the callback above also reloads the recent
+      // tickets, webhook delivery and sheet-sync panels, so narrowing to
+      // delegates/invoices/events would have left those three stale until the
+      // poll. The excluded set is still most of the app — paper-review,
+      // proposals, companies, users, teams, google_sync, import, search.
+      //
+      // Paths are what api/client.js announceWrite() publishes: normalisePath()
+      // strips the /api/ prefix and the query string, and pathTouches() matches
+      // by prefix in both directions, so 'delegates' catches 'delegates/1234'
+      // and 'webhooks' catches both 'webhooks/logs/9/retry' and 'webhooks/keys'.
+      resources: ['delegates', 'invoices', 'events', 'tickets', 'webhooks', 'reports'],
+      // Matched to the backend cache TTL. reports.dashboard() is cached for 120s
+      // (config/views.py), so polling faster than that only ever hits the cache —
+      // cheap, but nine requests' worth of cheap, per open tab, forever.
+      poll: 120_000,
+    },
   );
 
   const EVENTS = events || [];

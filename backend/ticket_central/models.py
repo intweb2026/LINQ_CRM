@@ -5,7 +5,9 @@ Two-phase ticket: Market Research → Data Mining.
 Field list extracted verbatim from Zoho Creator form (2026-06-02).
 """
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex, OpClass
 from django.db import models
+from django.db.models.functions import Upper
 
 
 class Ticket(models.Model):
@@ -148,6 +150,55 @@ class Ticket(models.Model):
             models.Index(fields=["event_code"]),
             models.Index(fields=["-created_at"]),
             models.Index(fields=["updated_at"]),
+            # Ticket Central's default sort is -created_at with the pk appended by
+            # StableOrderingFilter, so the single-column -created_at index above
+            # gets the leading column right and then re-sorts every tied group by
+            # hand. created_at is a timestamp so ties are rare, but the status tabs
+            # are not: filtering to one status and sorting by date is two separate
+            # indexes today, and PostgreSQL can only use one of them.
+            models.Index(fields=["-created_at", "-id"], name="tickets_created_id_idx"),
+            models.Index(
+                fields=["status", "-created_at", "-id"],
+                name="tickets_status_created_id_idx",
+            ),
+            # ── Trigram search ────────────────────────────────────────────────
+            # One search was fourteen unanchored substring predicates per row over
+            # ~43,000 rows. Measured before this change, ?search=summit planned as
+            # a Parallel Seq Scan removing 14,290 rows per worker, 3,793 buffers,
+            # 111 ms execution — and the same scan ran again for the COUNT before
+            # Prompt 1's CachedCountPaginator removed the repeat.
+            #
+            # THE EXPRESSION MUST MATCH THE EMITTED SQL, NOT THE COLUMN.
+            # Django's PostgreSQL backend compiles __icontains to
+            #     UPPER("tickets"."event_code"::text) LIKE UPPER(%s)
+            # A gin_trgm_ops index on the BARE column is not matched against an
+            # UPPER() expression: it would build, the plan would not change, and
+            # the work would look done while nothing improved. Indexing
+            # Upper("col") is what the planner matches.
+            #
+            # No explicit Cast is needed even though the predicate carries ::text.
+            # upper() takes text, so PostgreSQL normalises Upper("event_code") on a
+            # varchar column to upper((event_code)::text) when it stores the index
+            # expression — verified by reading pg_indexes.indexdef back after
+            # creating it, and confirmed by the resulting Bitmap Index Scan.
+            #
+            # SEPARATE INDEXES, NOT ONE MULTICOLUMN. SearchFilter ORs one predicate
+            # per field, and separate indexes let the planner bitmap-OR across
+            # exactly the ones a given term can use.
+            GinIndex(OpClass(Upper("ticket_number"), name="gin_trgm_ops"),
+                     name="tickets_ticketnum_trgm_idx"),
+            GinIndex(OpClass(Upper("event_code"), name="gin_trgm_ops"),
+                     name="tickets_event_code_trgm_idx"),
+            GinIndex(OpClass(Upper("purpose"), name="gin_trgm_ops"),
+                     name="tickets_purpose_trgm_idx"),
+            GinIndex(OpClass(Upper("organizer"), name="gin_trgm_ops"),
+                     name="tickets_organizer_trgm_idx"),
+            GinIndex(OpClass(Upper("competitor_event_name"), name="gin_trgm_ops"),
+                     name="tickets_competitor_trgm_idx"),
+            GinIndex(OpClass(Upper("assigned_mr"), name="gin_trgm_ops"),
+                     name="tickets_assigned_mr_trgm_idx"),
+            GinIndex(OpClass(Upper("assign_name"), name="gin_trgm_ops"),
+                     name="tickets_assign_name_trgm_idx"),
         ]
 
     def __str__(self):

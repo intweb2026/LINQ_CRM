@@ -170,12 +170,26 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     #   above, because its options are live users rather than a static list.
 
     filterset_class = TicketFilter
+    # Was fourteen fields, two of them TextField prose. One search was fourteen
+    # unanchored substring predicates per row over ~43,000 rows. mr_comments and
+    # dm_comments are the expensive pair and are not what people type into the
+    # search box; both remain filterable through the compound filter engine, which
+    # is explicit about the column it is scanning. Reverting is one line.
+    #
+    # THIS LIST MUST STAY EXACTLY THE SET COVERED BY THE TRIGRAM INDEXES in
+    # Ticket.Meta.indexes. SearchFilter ORs one predicate per field, and the
+    # planner can only bitmap-OR the whole disjunction if EVERY branch has an
+    # index — one uncovered field drags the entire search back to a sequential
+    # scan and silently undoes this work. Adding a field here means adding its
+    # GinIndex in the same change.
+    #
+    # Verified before trimming: all seven removed fields (type_of_ticket,
+    # ticket_type, mr_comments, dm_comments, assign_name_lx2, linkedin_keywords,
+    # event_location) are present in filter_spec_fields, so none became
+    # unreachable.
     search_fields   = [
-        "ticket_number", "event_code", "purpose",
-        "organizer", "competitor_event_name",
-        "type_of_ticket", "ticket_type", "mr_comments", "dm_comments",
-        "assign_name_lx2", "linkedin_keywords", "event_location",
-        "assigned_mr", "assign_name",
+        "ticket_number", "event_code", "purpose", "organizer",
+        "competitor_event_name", "assigned_mr", "assign_name",
     ]
     ordering_fields = ["id", "created_at", "updated_at", "status", "priority"]
     ordering        = ["-created_at"]

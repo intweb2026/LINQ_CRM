@@ -164,6 +164,11 @@ class WebhookLog(models.Model):
             # slowest request left in the app. DESC because that is the direction
             # every caller reads it in, newest first.
             models.Index(fields=["status", "-received_at"], name="wh_ev_status_recv_idx"),
+            # created_at is the model's Meta.ordering, so it is what direct ORM
+            # iteration and any caller that does not pass ?ordering= sorts by. The
+            # single-column wh_ev_created_idx above leads correctly but leaves the
+            # pk tiebreak to a sort step over 130,304 rows.
+            models.Index(fields=["-created_at", "-id"], name="wh_ev_created_id_idx"),
         ]
 
     def __str__(self):
