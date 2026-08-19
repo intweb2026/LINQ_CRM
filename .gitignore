@@ -58,6 +58,24 @@ service-account*.json
 # the whole CRM in one file. Archives are covered for the same reason — an
 # exported dataset usually arrives zipped.
 *.sql
+# EXCEPT the hand-run schema files, which are the one kind of .sql that MUST be
+# tracked. This project does not apply DDL with `manage.py migrate`: a schema
+# change is delivered as a reviewed file under backend/sql/ containing the DDL,
+# a rollback section and a verify section, applied by hand, and that same file
+# inserts the row into django_migrations that marks the matching state-only
+# Django migration as applied. So backend/sql/ IS the schema history — losing it
+# leaves migration files that were never meant to run and no record of what was
+# actually executed against the database.
+#
+# They were silently ignored until 2026-08-20; `git status` never mentioned
+# them, because an ignored file is not reported as untracked. Caught by running
+# `git check-ignore -v` over the directory rather than by anything noticing.
+#
+# Scoped to this one directory, and anchored with a leading slash, so the rule
+# above still catches a pg_dump saved anywhere else — including one saved INTO
+# backend/sql/ under any name that is not *.sql, and including any nested
+# directory beneath it.
+!/backend/sql/*.sql
 *.dump
 *.backup
 *.pgdump
