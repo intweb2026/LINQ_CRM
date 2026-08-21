@@ -14,6 +14,35 @@
 //                       against the old mock data.
 import { http, fetchAllPages } from './client';
 
+// Backend column -> frontend key, for the owner columns the server can answer
+// from the Teams module. Only these four are resolvable; see OWNER_ROLE_SOURCES
+// in backend/events/serializers.py for why sales_team, market_research_junior
+// and event_management_team are deliberately not.
+const OWNER_SRC_KEYS = {
+  team_leader: 'sales_lead',
+  telemarketing_team: 'tele_team',
+  market_research_senior: 'mr_senior',
+  spex_team: 'spex_lead',
+};
+
+/**
+ * The team-inherited owners for an event, keyed the way the UI keys them.
+ *
+ * Kept SEPARATE from the value fields below rather than merged into them. An
+ * inherited name written into `sales_lead` would be indistinguishable from one
+ * stored on the event, so the edit form would post it on the next save and
+ * freeze "whoever leads Sales" into one person's name without anyone asking.
+ * lib/owners.js reads this alongside the raw value and labels the difference.
+ */
+function ownerSrc(raw) {
+  const out = {};
+  Object.entries(raw || {}).forEach(([backendKey, v]) => {
+    const key = OWNER_SRC_KEYS[backendKey];
+    if (key && v && v.name) out[key] = { name: v.name, team: v.team || '' };
+  });
+  return out;
+}
+
 function toFrontend(e) {
   return {
     id: e.id,
@@ -45,6 +74,7 @@ function toFrontend(e) {
     mr_junior: e.market_research_junior,
     spex_lead: e.spex_team,
     event_mgmt: e.event_management_team,
+    owner_src: ownerSrc(e.owner_resolution),
     email_marketing: e.event_code ? e.event_code.split(' ')[0].toLowerCase() + '-campaign' : '',
     email_marketing_name: e.email_marketing_name || '',
     branding_name: e.branding_name || '',

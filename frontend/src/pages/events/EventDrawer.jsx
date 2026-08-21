@@ -5,6 +5,7 @@ import { Tabs } from '../../components/UI';
 import { Icon } from '../../lib/icons';
 import { EvBadge, Who } from '../../components/Badge';
 import { fdate, nf, pc } from '../../lib/helpers';
+import { OWNER_FIELDS, ownerOf } from '../../lib/owners';
 import * as bookingsApi from '../../api/bookings';
 import { useFetch } from '../../hooks/useFetch';
 import { useSession } from '../../context/SessionContext';
@@ -103,19 +104,30 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
       {tab === 'teams' && (
         <>
           <div className="sl">Team ownership</div>
-          {[['SCA', ev.sales_team], ['Sales team leader', ev.sales_lead], ['Telemarketing', ev.tele_team], ['Market Research Sr.', ev.mr_senior], ['Market Research Jr.', ev.mr_junior], ['SpEx lead', ev.spex_lead], ['Event management', ev.event_mgmt]].map((r) => (
-            <div key={r[0]} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--n-50)' }}>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-4)', width: 150, flexShrink: 0 }}>{r[0]}</span>
-              {/* Coalesced, not asserted. A dropped backend column shows up here as
-                  `undefined`, and calling .indexOf on it threw during render; with no
-                  error boundary in the app that white-screened the whole page rather
-                  than blanking one row. `speaker_sales_team` did exactly this after
-                  events migration 0017 removed it. Missing now degrades to an em dash. */}
-              {!r[1] ? <span className="dim">—</span>
-                : String(r[1]).indexOf('Team') > -1 ? <span style={{ fontWeight: 650, color: 'var(--text)', fontSize: 12.5 }}>{r[1]}</span>
-                : <Who name={r[1]} />}
-            </div>
-          ))}
+          {/* One list, shared with the Events table and both event forms — see
+              lib/owners.js. Six of these seven columns are blank on every event in
+              the live data, so each row that has no value of its own falls back to
+              the lead of the team that owns the role and says so underneath. The
+              attribution is not decoration: an inherited name follows the team and
+              will change when the team's lead changes, and reading it as the event's
+              own answer is the mistake worth preventing.
+
+              ownerOf coalesces. A dropped backend column arrives here as
+              `undefined`, and calling .indexOf on it threw during render; with no
+              error boundary in the app that white-screened the whole page rather
+              than blanking one row, which is what `speaker_sales_team` did after
+              events migration 0017 removed it. */}
+          {OWNER_FIELDS.map(({ key, label }) => {
+            const o = ownerOf(ev, key);
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--n-50)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-4)', width: 150, flexShrink: 0 }}>{label}</span>
+                {!o.name ? <span className="dim">—</span>
+                  : o.name.indexOf('Team') > -1 ? <span style={{ fontWeight: 650, color: 'var(--text)', fontSize: 12.5 }}>{o.name}</span>
+                  : <Who name={o.name} sub={o.inherited ? `lead of ${o.team}` : undefined} />}
+              </div>
+            );
+          })}
           <div className="sl" style={{ marginTop: 18 }}>Naming &amp; metadata</div>
           <div className="ro">
             <div className="ro-c"><div className="ro-l">Campaign name</div><div className="ro-v mono">{ev.email_marketing}</div></div>
