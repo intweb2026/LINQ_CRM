@@ -46,29 +46,66 @@ OWNER_ROLE_SOURCES = {
 
 def team_owner_defaults():
     """
-    {owner_field: {"name": <lead>, "team": <team name>}} for the role-backed
-    owner columns, skipping any role whose team is missing or has no lead.
+    {owner_field: {"names": [<lead>, ...], "team": <team name>}} for the
+    role-backed owner columns, skipping any role whose team is missing or has no
+    lead at all.
+
+    A TEAM MAY HAVE ANY NUMBER OF LEADS, and every one of them is returned. Sales
+    Team has two in the live data — the Team.team_lead FK names one of them and
+    the other is carried only by User.is_team_lead — so reading the FK alone
+    reported one lead and quietly dropped the rest. There is no cap here and
+    nothing downstream picks a winner: adding a third lead to a team makes three
+    names appear.
+
+    Both sources are unioned rather than one being preferred, because they can
+    disagree. The FK is the PRIMARY lead and goes first, and it counts even when
+    nobody remembered to tick is_team_lead on that row; the flagged members
+    follow in id order so the list is stable between requests.
     """
     from teams.models import Team
 
+    teams = sorted(
+        Team.objects.filter(is_archived=False).select_related("team_lead"),
+        key=lambda t: t.pk,
+    )
+    if not teams:
+        return {}
+
+    # One query for everyone flagged as a lead in any of these teams, rather than
+    # a members lookup per team. Both queries here are constant in the number of
+    # events being serialised, which is the property that matters.
+    flagged = {}
+    for user in User.objects.filter(
+        is_team_lead=True, team_id__in=[t.pk for t in teams]
+    ).order_by("id"):
+        flagged.setdefault(user.team_id, []).append(
+            user.get_full_name() or user.username
+        )
+
     by_role = {}
-    for team in Team.objects.filter(is_archived=False).select_related("team_lead"):
+    for team in teams:
         role = role_from_team_name(team.name)
-        if not role or not team.team_lead_id:
-            continue
         # Lowest pk wins. Two teams can imply the same role ("Sales Team" and
         # "Inside Sales" both say SALES), and without a tie-break the answer
         # would follow whatever order the database happened to return and could
-        # differ between two requests for the same event.
-        if role in by_role and by_role[role][0] <= team.pk:
+        # differ between two requests for the same event. `teams` is sorted, so
+        # the first role to land is the one that keeps it.
+        if not role or role in by_role:
             continue
-        lead = team.team_lead
-        by_role[role] = (team.pk, lead.get_full_name() or lead.username, team.name)
+
+        names = []
+        if team.team_lead_id:
+            names.append(team.team_lead.get_full_name() or team.team_lead.username)
+        for name in flagged.get(team.pk, []):
+            if name not in names:
+                names.append(name)
+        if names:
+            by_role[role] = {"names": names, "team": team.name}
 
     return {
-        field: {"name": hit[1], "team": hit[2]}
+        field: by_role[role]
         for field, role in OWNER_ROLE_SOURCES.items()
-        if (hit := by_role.get(role))
+        if role in by_role
     }
 
 
@@ -87,6 +124,13 @@ class OwnerResolutionMixin:
     of the events table.
     """
 
+    # Values that LOOK stored but mean "nothing is assigned", so a column holding
+    # one still inherits. NewEventModal wrote "—" into every owner column it had
+    # no editor for, and imported columns hold whitespace where a human meant
+    # nothing; either would otherwise read as a real answer and suppress the
+    # team's, leaving the row blank in the UI for the opposite reason.
+    _BLANK_OWNER_VALUES = {"", "-", "–", "—"}
+
     def get_owner_resolution(self, obj):
         defaults = getattr(self, "_owner_defaults", None)
         if defaults is None:
@@ -94,7 +138,7 @@ class OwnerResolutionMixin:
         return {
             field: value
             for field, value in defaults.items()
-            if not (getattr(obj, field, "") or "").strip()
+            if (getattr(obj, field, "") or "").strip() in self._BLANK_OWNER_VALUES
         }
 
 

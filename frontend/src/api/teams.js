@@ -51,8 +51,13 @@ function toFrontend(t) {
     name: t.name,
     color: t.color || '#6b7280',
     description: t.description || '',
+    slug: t.slug || '',
     team_lead_id: t.team_lead_id,
     team_lead_name: t.team_lead_name,
+    // EVERY lead, not just the team_lead FK. A team may have any number; Sales
+    // Team has two, and the FK names only one of them. The serializer has always
+    // sent this list — dropping it here is what limited callers to one lead.
+    team_leads: (t.team_leads || []).map((l) => ({ id: l.id, name: l.name })),
     member_count: t.member_count || 0,
     is_archived: t.is_archived,
     is_all_access: !!t.is_all_access,
@@ -99,8 +104,24 @@ export function savePermissions(id, matrix, { isAllAccess } = {}) {
 export function reassign(userId, teamId) {
   return http.post('teams/move-member/', { user_id: userId, destination_team_id: teamId || null }).then((r) => r.data);
 }
-export function assignLead(teamId, userId) {
-  return http.post(`teams/${teamId}/assign-lead/`, { user_id: userId }).then((r) => r.data);
+/**
+ * Replace a team's leads. `leadIds` is the WHOLE list, in order, and the first is
+ * the primary — the one that lands on Team.team_lead.
+ *
+ * `user_ids`, never the older `user_id`. The endpoint has accepted a list from
+ * the start, but this function only ever sent the singular key, so the UI could
+ * appoint exactly one lead per team however many the team really had. Worse, the
+ * endpoint clears is_team_lead across the team before applying the payload, so
+ * sending one id DEMOTED every other lead — silently, on a screen that said
+ * nothing about them.
+ *
+ * An empty list is meaningful and is passed through: it removes every lead.
+ */
+export function assignLead(teamId, leadIds) {
+  const user_ids = (Array.isArray(leadIds) ? leadIds : [leadIds])
+    .filter((id) => id != null && id !== '')
+    .map(Number);
+  return http.post(`teams/${teamId}/assign-lead/`, { user_ids }).then((r) => r.data);
 }
 export function archive(teamId) {
   return http.post(`teams/${teamId}/archive/`, {}).then((r) => r.data);

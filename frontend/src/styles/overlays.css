@@ -209,12 +209,21 @@ table.gt th.num,table.gt td.num{text-align:right}
    nothing instead of scrolling it. */
 .md-b.fill{overflow:hidden;display:flex;flex-direction:column;min-height:0}
 .md-b.fill>.fs{flex-shrink:0}
-.md-b.fill>.fs-fill{flex:1;min-height:0;display:flex;flex-direction:column;margin-bottom:0}
+.md-b.fill>.fs-fill{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;margin-bottom:0}
 /* The heading row carries the Add delegate button; as a flex item it would
    otherwise shrink along with everything else. */
 .md-b.fill>.fs-fill>.fs-t{flex-shrink:0}
-.md-b.fill>.fs-fill>.tw{flex:1;min-height:0;display:flex;flex-direction:column}
-.md-b.fill>.fs-fill>.tw>.tsc{flex:1;min-height:140px;max-height:none}
+.md-b.fill>.fs-fill>.tw{flex:0 1 auto;min-height:0;display:flex;flex-direction:column}
+/* GROW to content, SHRINK to fit — `flex:1` here instead made the grid claim
+   every pixel the modal had left, so a booking with one delegate drew a card
+   about 200px tall around a 76px table and the empty remainder read as a
+   rendering fault, with the horizontal scrollbar stranded at the bottom of it.
+   `0 1 auto` sizes the box to its rows and only shrinks when they overflow.
+
+   The floor is one header plus one row: enough that a short window scrolls the
+   grid rather than flattening it, and low enough that a single-row grid is
+   never padded out to reach it. */
+.md-b.fill>.fs-fill>.tw>.tsc{flex:0 1 auto;min-height:76px;max-height:none}
 .md-f{padding:13px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:7px;flex-shrink:0;background:var(--surface-2);border-radius:0 0 var(--r-xl) var(--r-xl);flex-wrap:wrap}
 @keyframes mIn{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .fs{margin-bottom:18px}.fs:last-child{margin-bottom:0}

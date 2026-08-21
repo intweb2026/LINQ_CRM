@@ -8,19 +8,19 @@ import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import * as eventsApi from '../../api/events';
-import { OWNER_FIELDS } from '../../lib/owners';
+import { OWNER_EDIT_FIELDS } from '../../lib/owners';
 
-// The row list lives in lib/owners.js now. It was written out by hand here, in
-// EditEventModal, in the Events table and in the drawer's Teams tab — four copies
-// of one list, and the two here were POSITIONAL, so a label and a key could drift
-// apart silently and the form would write the wrong column.
+// Only the SCA and the sales team leader are editable here — see OWNER_EDIT_FIELDS
+// in lib/owners.js. The other five owner columns belong to the Teams module and are
+// shown, inherited, in the drawer's Teams tab and the Events table; giving them an
+// editor here only invites someone to re-type what the team already knows, and a
+// value typed on the event outranks the team's answer permanently.
 //
-// The selects below deliberately keep reading form values RAW rather than through
-// ownerOf(): an inherited name is the owning team's answer, and writing it into
-// the event would freeze "whoever leads Telemarketing" into one person's name on
-// the next unrelated save.
-const OWNER_LABELS = OWNER_FIELDS.map((f) => f.label);
-const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
+// The selects read form values RAW rather than through ownerOf(): an inherited name
+// is the team's answer, and writing it into the event would freeze "whoever leads
+// Sales" into one person's name on the next unrelated save.
+const OWNER_LABELS = OWNER_EDIT_FIELDS.map((f) => f.label);
+const OWNER_KEYS = OWNER_EDIT_FIELDS.map((f) => f.key);
 
 export default function NewEventModal({ onClose, onSaved }) {
   const toast = useToast();
@@ -35,7 +35,7 @@ export default function NewEventModal({ onClose, onSaved }) {
     email_marketing_name: '', branding_name: '', annualisation: 'Annual', date_format: 'DD-MM-YYYY',
     related_event_1: '', related_event_2: '', related_event_3: '',
     upcoming_event_1: '', upcoming_event_2: '', upcoming_event_3: '',
-    owners: ['', '', '', '', '', '', ''],
+    owners: OWNER_KEYS.map(() => ''),
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setOwner = (i) => (e) => setForm((f) => { const o = [...f.owners]; o[i] = e.target.value; return { ...f, owners: o }; });
@@ -45,11 +45,13 @@ export default function NewEventModal({ onClose, onSaved }) {
     if (!code || !name || !start) { toast('Event code, name and start date are required', 'er'); return; }
     const end = form.end_date || new Date(new Date(start).getTime() + 2 * 864e5).toISOString().slice(0, 10);
     const ownerFields = {};
-    // Unassigned reads as '—' for the display-only owner columns, but sales_team
-    // must stay EMPTY: Event.save() resolves sales_executive by matching this
-    // text against user names, and the Bookings tab falls back to it for Sales
-    // Executive — a literal '—' would be stored and shown as if it were a name.
-    OWNER_KEYS.forEach((k, i) => { ownerFields[k] = form.owners[i] || (k === 'sales_team' ? '' : '—'); });
+    // EMPTY, never '—'. This used to write a literal em dash into every owner
+    // column it had no editor for, and blank is now what makes a column inherit
+    // the owning team's lead: a stored '—' is a value, so it suppressed the
+    // team's answer and left the row showing nothing on every event created here.
+    // The columns with no editor are not sent at all, so they keep the model
+    // default and inherit.
+    OWNER_KEYS.forEach((k, i) => { ownerFields[k] = form.owners[i] || ''; });
     try {
       await eventsApi.create({
         event_code: code, name, location: form.location.trim() || '—', event_date: start, end_date: end,

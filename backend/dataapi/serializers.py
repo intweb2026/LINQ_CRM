@@ -13,6 +13,7 @@ from rest_framework import serializers
 
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
+from dataapi.models import DATA_API_SCOPES, DataApiKey
 from events.models import Event
 from ticket_central.models import Ticket
 
@@ -157,3 +158,52 @@ class DataApiTicketSerializer(serializers.ModelSerializer):
 
     def get_returned_by(self, obj):
         return self._user_label(obj.returned_by)
+
+
+# ── Key management (CRM admin UI, not the export surface) ───────────────────
+# These two are read/written by session-authenticated admins through
+# DataApiKeyManagementViewSet. They are NOT reachable with a dapi_ key.
+
+class DataApiKeyListSerializer(serializers.ModelSerializer):
+    created_by = serializers.StringRelatedField()
+    is_expired = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DataApiKey
+        # key_hash is absent and must stay absent. key_preview is the only part
+        # of the secret that exists after creation, and it is a truncation, so
+        # it identifies a row without being replayable.
+        fields = [
+            "id", "name", "key_preview", "scopes", "is_active",
+            "expires_at", "is_expired", "created_by", "created_at",
+            "last_used_at", "usage_count", "rate_limit_per_minute",
+        ]
+        read_only_fields = fields
+
+    def get_is_expired(self, obj):
+        # An expired key is still is_active=True in the database; is_valid()
+        # rejects it at auth time. The table would otherwise show it as active.
+        return bool(obj.expires_at and not obj.is_valid() and obj.is_active)
+
+
+class DataApiKeyCreateSerializer(serializers.Serializer):
+    # 150 to match DataApiKey.name, so the form cannot accept a value the
+    # column would then truncate or reject.
+    name = serializers.CharField(max_length=150)
+    # min_length=1: the model reads an empty scopes list as UNRESTRICTED, so
+    # allowing an empty list here would turn "the admin picked nothing" into
+    # "this key reads everything". A key with no scopes has to be a deliberate
+    # act at the console, not the default outcome of an unfilled form.
+    scopes = serializers.ListField(child=serializers.CharField(), min_length=1)
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    VALID_SCOPES = set(DATA_API_SCOPES)
+
+    def validate_scopes(self, value):
+        invalid = set(value) - self.VALID_SCOPES
+        if invalid:
+            raise serializers.ValidationError(
+                f"Invalid scopes: {', '.join(sorted(invalid))}. "
+                f"Valid scopes: {', '.join(sorted(self.VALID_SCOPES))}."
+            )
+        return sorted(set(value))

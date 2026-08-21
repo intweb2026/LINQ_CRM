@@ -100,57 +100,93 @@ class Event(models.Model):
         self.tele_marketing_team = self.telemarketing_team
         self.market_research_team = self.market_research_senior
 
-        # Sync sales_team and sales_executive
-        if self.pk:
-            orig = Event.objects.filter(pk=self.pk).first()
-            if orig:
-                if self.sales_executive != orig.sales_executive:
-                    if self.sales_executive:
-                        self.sales_team = self.sales_executive.get_full_name() or self.sales_executive.username
-                    else:
-                        self.sales_team = ""
-                elif self.sales_team != orig.sales_team or (self.sales_team and not self.sales_executive):
-                    if self.sales_team:
-                        from django.contrib.auth import get_user_model
-                        User = get_user_model()
-                        name_str = self.sales_team.strip()
-                        user = User.objects.filter(role='sales').filter(
-                            models.Q(username__iexact=name_str) |
-                            models.Q(email__iexact=name_str) |
-                            models.Q(first_name__icontains=name_str) |
-                            models.Q(last_name__icontains=name_str)
-                        ).first()
-                        if not user:
-                            for u in User.objects.filter(role='sales'):
-                                full = (u.get_full_name() or u.username).lower()
-                                if name_str.lower() in full or full in name_str.lower():
-                                    user = u
-                                    break
-                        self.sales_executive = user
-                    else:
-                        self.sales_executive = None
-        else:
-            if self.sales_executive and not self.sales_team:
-                self.sales_team = self.sales_executive.get_full_name() or self.sales_executive.username
-            elif self.sales_team and not self.sales_executive:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                name_str = self.sales_team.strip()
-                user = User.objects.filter(role='sales').filter(
-                    models.Q(username__iexact=name_str) |
-                    models.Q(email__iexact=name_str) |
-                    models.Q(first_name__icontains=name_str) |
-                    models.Q(last_name__icontains=name_str)
-                ).first()
-                if not user:
-                    for u in User.objects.filter(role='sales'):
-                        full = (u.get_full_name() or u.username).lower()
-                        if name_str.lower() in full or full in name_str.lower():
-                            user = u
-                            break
-                self.sales_executive = user
-        
+        # Sync sales_team and sales_executive. Every write path in the codebase
+        # goes through save(), the importer and the bulk editor included
+        # (accounts/bulk_update.py never uses queryset.update), so this one call
+        # is what makes ANY new event route to the right person.
+        self._sync_sales_owner()
+
         super().save(*args, **kwargs)
+
+    def _sync_sales_owner(self):
+        """
+        Keep `sales_team`, the SCA name shown in the UI, and `sales_executive`,
+        the FK that decides who can SEE this row, saying the same thing.
+
+        Why the FK matters this much. events/views.py get_queryset scopes a non
+        admin to `Q(assigned_users=user) | Q(sales_executive=user)`, and
+        accounts.User.assigned_event_codes feeds the same pair to Bookings and
+        Delegates. An event whose SCA text names somebody, but whose FK is null,
+        is invisible to that person on every screen in the product, with nothing
+        anywhere reporting a problem.
+
+        Precedence, and the reason for each step:
+
+          create   an explicitly passed FK wins and NAMES the text column;
+                   otherwise the text is resolved. A create cannot be a "clear".
+          update   1. FK moved by hand, so the text follows it. A human picking a
+                      person from a dropdown outranks any string.
+                   2. text emptied by hand, so the FK is cleared. This is how the
+                      UI unassigns, and it must not be undone by step 4.
+                   3. text names somebody and either changed or has no FK yet.
+                      This is the case that was broken in production. A resolution
+                      only ever ran at the moment the row was saved, so events
+                      imported before a new starter existed kept a null FK
+                      forever, and adding the account changed nothing.
+                   4. FK set, text blank, so the text is filled in. Keeps the
+                      Events table from showing an empty SCA on a row that is
+                      correctly owned.
+
+        An ambiguous or unknown name leaves the FK exactly as it was, and is
+        logged. Guessing is what the old two way substring compare in this method
+        did, and a guess here hands one person's events to another silently.
+        """
+        import logging
+
+        from accounts.user_resolution import is_blank_name, resolve_owner
+
+        log = logging.getLogger(__name__)
+
+        def display(user):
+            return user.get_full_name() or user.username
+
+        def resolve_text():
+            # The reason is left on the instance so a caller, an import report or
+            # the routing command can say WHY a row was not routed, rather than
+            # showing a blank owner with no explanation anywhere.
+            user, reason = resolve_owner(self.sales_team)
+            self.owner_routing = reason
+            if user is not None:
+                self.sales_executive = user
+                self.sales_team = display(user)
+            else:
+                log.warning(
+                    "event %s sales_team %r %s; sales_executive left as %s",
+                    self.event_code, self.sales_team, reason,
+                    self.sales_executive_id,
+                )
+
+        self.owner_routing = None
+        orig = Event.objects.filter(pk=self.pk).first() if self.pk else None
+
+        if orig is None:
+            if self.sales_executive_id:
+                self.sales_team = display(self.sales_executive)
+            elif not is_blank_name(self.sales_team):
+                resolve_text()
+            return
+
+        text_changed = (self.sales_team or "") != (orig.sales_team or "")
+
+        if self.sales_executive_id != orig.sales_executive_id:
+            self.sales_team = display(self.sales_executive) if self.sales_executive_id else ""
+        elif text_changed and is_blank_name(self.sales_team):
+            self.sales_executive = None
+            self.sales_team = ""
+        elif not is_blank_name(self.sales_team) and (text_changed or not self.sales_executive_id):
+            resolve_text()
+        elif self.sales_executive_id and is_blank_name(self.sales_team):
+            self.sales_team = display(self.sales_executive)
 
     class Meta:
         db_table = "events"

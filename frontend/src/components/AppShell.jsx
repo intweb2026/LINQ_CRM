@@ -16,7 +16,7 @@ import { plur } from '../lib/helpers';
 const titleFromSegment = (s) => s.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 export default function AppShell() {
-  const { canView } = useSession();
+  const { canView, user } = useSession();
   const toast = useToast();
   const loc = useLocation();
   const [collapsedRail, setCollapsedRail] = useState(false);
@@ -58,7 +58,7 @@ export default function AppShell() {
 
   // "/" reads as the landing page for the one render before the index route
   // redirects, so the crumb and tab title never flash a page the user is not on.
-  const seg = loc.pathname.split('/')[1] || homeFor(canView).path.slice(1);
+  const seg = loc.pathname.split('/')[1] || homeFor(canView, user?.username).path.slice(1);
   // Matched on `path`, not on `id`. The two are NOT interchangeable: 'paper_review'
   // is underscored where /paper-review is hyphenated, so an id comparison never
   // matched those entries and they fell through to the fallback below — which used

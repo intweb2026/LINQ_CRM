@@ -1,4 +1,20 @@
 // Ported 1:1 from legacy-vanilla-js/js/01-data.js (domain constants section).
+
+/**
+ * The one account the UI treats as a named owner rather than a role.
+ *
+ * Mirrors dapi_USERNAME in backend/accounts/permissions.py, which IsHPAccount
+ * reads. It lives here, in a module with no React and no siblings, because more
+ * than one part of the UI now asks the question: the clear-all button on five
+ * pages, and the Data API Keys entry in the rail, the command palette and the
+ * page itself. It previously lived in ClearAllButton.jsx, which nav.js must not
+ * import — nav.js is read outside a component and has to stay React-free.
+ *
+ * A second copy of this literal would be a second chance to mistype it, and a
+ * mistyped copy fails silently in the dangerous direction on the show side: the
+ * control appears for someone whose click can only ever answer 403.
+ */
+export const HP_USERNAME = 'HP';
 /**
  * Selectable payment statuses, in the order the Bookings tab presents them.
  *

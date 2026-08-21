@@ -10,10 +10,10 @@ import { useFetch } from '../hooks/useFetch';
 import { useSession } from '../context/SessionContext';
 
 export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
-  const { canView } = useSession();
+  const { canView, user } = useSession();
   const nav = useNavigate();
   const loc = useLocation();
-  const home = homeFor(canView);
+  const home = homeFor(canView, user?.username);
   // Compared against each item's `path`, not its `id` — see nav.js: 'paper_review'
   // is underscored where /paper-review is hyphenated, so the id comparison this
   // replaces left Paper Review and Proposal Submission permanently unhighlighted
@@ -58,7 +58,7 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
           // greyed out: a "No access" row still tells the user the module exists,
           // and a role holding only Bookings should see only Bookings. The whole
           // group header goes with them when nothing in it is visible.
-          const vis = g.items.filter((i) => canAccess(i, canView));
+          const vis = g.items.filter((i) => canAccess(i, canView, user?.username));
           if (!vis.length) return null;
           return (
             <div className="rail-group" key={g.g}>

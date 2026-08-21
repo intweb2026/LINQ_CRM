@@ -74,6 +74,42 @@ export function OwnerName({ owner }) {
   );
 }
 
+/**
+ * Who a person reports to. Takes the result of lib/reporting.js
+ * `reportingManagerOf`.
+ *
+ * Same rule as OwnerName above: a name INHERITED from the team is muted and
+ * italic with the source in its tooltip, because it is who the person reports to
+ * in practice rather than a mapping anybody recorded. Every applicable lead is
+ * listed — a team may have several, and showing the first alone would read as a
+ * complete answer.
+ */
+export function ReportsTo({ value, avatar = true }) {
+  if (!value || !value.source) return <span className="dim">—</span>;
+
+  // An administrator has nobody above them. Said plainly rather than left as a
+  // bare dash, which reads as missing data.
+  if (value.source === 'top') {
+    return <span className="dim" title="Administrators are the top of the hierarchy">— administrator</span>;
+  }
+  if (!value.names.length) return <span className="dim">—</span>;
+
+  // Recorded against this person: the only answer that is not a derivation, so
+  // the only one rendered as a normal person cell.
+  if (value.source === 'explicit') return <Who name={value.names[0]} avatar={avatar} />;
+
+  const plural = value.names.length > 1 ? 's' : '';
+  const why = value.source === 'admin'
+    ? `Not recorded for this person, and they lead ${value.team || 'their team'} — shown as the administrator${plural}`
+    : `Not recorded for this person — shown as the lead${plural} of ${value.team}`;
+
+  return (
+    <span className="dim" style={{ fontStyle: 'italic' }} title={why}>
+      {value.names.join(', ')}
+    </span>
+  );
+}
+
 export function Who({ name, sub, size = 'sm', mono = false, avatar = true }) {
   return (
     <span className="who">

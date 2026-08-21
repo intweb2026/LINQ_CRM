@@ -20,6 +20,14 @@ from django.db import models
 from django.utils import timezone
 
 
+# The resources a key can be scoped to. This is the ONE list; the management
+# viewset validates against it, and each data-export viewset's `resource_name`
+# must appear here or a key can never be scoped to it. An empty `scopes` list on
+# a row still means unrestricted, which is why the model itself does not
+# constrain the field.
+DATA_API_SCOPES = ("bookings", "delegates", "events", "tickets")
+
+
 class DataApiKey(models.Model):
     """
     The raw key is shown ONCE on creation. Only its SHA-256 hash is stored, so

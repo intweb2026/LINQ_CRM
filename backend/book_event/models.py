@@ -13,6 +13,8 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from book_event.booking_code_canonical import canonicalize_on_save
+
 
 class BookEvent(models.Model):
     class PaymentStatus(models.TextChoices):
@@ -228,6 +230,15 @@ class BookEvent(models.Model):
                     self.event_name = f"{clean_name} {self.edition}"
                 else:
                     self.event_name = clean_name
+
+        # Spelling, not meaning. canonicalize() only ever swaps a code for a
+        # member of the closed list it already key-matches (case- and
+        # spacing-insensitively); anything off that list is returned untouched.
+        # It sits HERE, on save(), rather than at the webhook call site, because
+        # the webhook is not the only writer: the importer, the bulk-update
+        # engine and the DRF serializers all reach this line, and a chokepoint
+        # is the only version of this that cannot be bypassed by a new one.
+        args, kwargs = canonicalize_on_save(self, args, kwargs)
         super().save(*args, **kwargs)
 
         # THE ONE SANCTIONED queryset .update() IN THIS CODEBASE.

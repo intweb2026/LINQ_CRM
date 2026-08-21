@@ -120,11 +120,21 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
           {OWNER_FIELDS.map(({ key, label }) => {
             const o = ownerOf(ev, key);
             return (
-              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--n-50)' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-4)', width: 150, flexShrink: 0 }}>{label}</span>
-                {!o.name ? <span className="dim">—</span>
+              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--n-50)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-4)', width: 150, flexShrink: 0, paddingTop: 4 }}>{label}</span>
+                {!o.names.length ? <span className="dim">—</span>
                   : o.name.indexOf('Team') > -1 ? <span style={{ fontWeight: 650, color: 'var(--text)', fontSize: 12.5 }}>{o.name}</span>
-                  : <Who name={o.name} sub={o.inherited ? `lead of ${o.team}` : undefined} />}
+                  : (
+                    /* One entry per lead, not a joined string: a team may have any
+                       number of leads and each is a person with their own avatar.
+                       Sales Team has two, and showing only the first would look
+                       like a complete answer. */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+                      {o.names.map((n) => (
+                        <Who key={n} name={n} sub={o.inherited ? `lead of ${o.team}` : undefined} />
+                      ))}
+                    </div>
+                  )}
               </div>
             );
           })}

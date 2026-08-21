@@ -356,35 +356,30 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
         def _clean(d, key, default=""):
             return str(d.get(key) or default).strip()
 
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
+        from accounts.user_resolution import OwnerResolver
 
-        # Cache users to avoid N+1 queries during user resolution
-        all_users = list(User.objects.all())
+        # One read of the user table for the whole import, not one per row per
+        # column, which is the reason UserResolver is a class.
+        _owner_resolver = OwnerResolver()
 
         def _resolve_user(name_str):
-            if not name_str:
-                return None
-            name_str = str(name_str).strip()
-            
-            # Exact matches first
-            for u in all_users:
-                if u.username.lower() == name_str.lower():
-                    return u
-                if u.email.lower() == name_str.lower():
-                    return u
-                full = (u.get_full_name() or u.username).lower()
-                if full == name_str.lower():
-                    return u
-            
-            # Substring matches
-            for u in all_users:
-                full = (u.get_full_name() or u.username).lower()
-                if name_str.lower() in full or full in name_str.lower():
-                    return u
-                if name_str.lower() in u.username.lower():
-                    return u
-            return None
+            """
+            The user an imported owner name names, or None.
+
+            Shares accounts.user_resolution.OwnerResolver with Event.save() and
+            the routing command, so an event imported from a sheet and the same
+            event edited in the UI cannot end up owned by two different people. It
+            replaces a local two way substring compare returning the first hit,
+            which mattered more here than anywhere else: the names resolved in
+            this loop are also written into `assigned_users`, and that m2m grants
+            row visibility, so a wrong partial match did not merely mislabel a
+            column, it showed one person another person's events.
+
+            An ambiguous name resolves to None and the row keeps its plain text,
+            exactly as an unknown name always did.
+            """
+            user, _reason = _owner_resolver.resolve(name_str)
+            return user
 
         inserted = 0
         skipped = 0
@@ -455,8 +450,15 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     web_bookings = awb_raw.lower() in ("yes", "true", "1")
 
                     # Resolve Sales Executive
+                    #
+                    # Falls back to the SCA column, because most sheets carry only
+                    # that one. Event.save() would resolve it anyway, but it would
+                    # build a resolver per row; resolving here reuses the one built
+                    # for the whole import, and it puts the person into
+                    # assigned_users as well, so the event is visible to them by
+                    # both of the links events/views.py get_queryset checks.
                     se_name = _clean(row, "sales_executive")
-                    sales_exec = _resolve_user(se_name)
+                    sales_exec = _resolve_user(se_name) or _resolve_user(sales_team)
 
                     # Resolve other team members for M2M assignments and string values
                     spex_user = _resolve_user(_clean(row, "spex_team"))

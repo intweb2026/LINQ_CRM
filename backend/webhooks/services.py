@@ -18,6 +18,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
+from book_event.booking_code_canonical import DEFAULT_BOOKING_CODE
 from book_event.models import BookEvent
 from book_event.serializers import WebsiteBookingSerializer
 from book_delegate.models import BookDelegate
@@ -334,7 +335,7 @@ class WebhookProcessor:
             paid_or_free           = d.get("PaidOrFree", ""),
             payment_type           = d.get("PaymentType", ""),
             request_date           = invoice_date_val,
-            booking_code           = "delegate",
+            booking_code           = DEFAULT_BOOKING_CODE,
         )
         return invoice, WebhookLog.DbInsertStatus.INSERTED, f"Booking CREATED: id={invoice.id}"
 
@@ -381,7 +382,7 @@ class WebhookProcessor:
             field_map["request_date"] = parsed_invoice_date
             
         if not getattr(invoice, "booking_code", ""):
-            field_map["booking_code"] = "delegate"
+            field_map["booking_code"] = DEFAULT_BOOKING_CODE
             
         for attr, val in field_map.items():
             if val or val == 0: 

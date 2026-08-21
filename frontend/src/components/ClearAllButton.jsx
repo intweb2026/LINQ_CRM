@@ -4,17 +4,15 @@ import { useSession } from '../context/SessionContext';
 import { useConfirm } from '../context/ConfirmContext';
 import { useToast } from '../context/ToastContext';
 import { apiErrorMessage } from '../api/client';
+import { HP_USERNAME } from '../lib/constants';
 
 /**
- * The HP account name, as the UI knows it.
- *
- * Mirrors accounts/permissions.py HP_USERNAME. Declared here once, for the same
- * reason it is declared once there: five pages carry this button, and five copies
- * of a username literal is five chances for one to be typed wrong — which would
- * either hide the control from the only person who may use it, or show it to
- * someone whose click can only ever answer 403.
+ * Re-exported so the five pages importing it from here keep working. The
+ * definition moved to lib/constants.js when a second, non-React consumer
+ * appeared — lib/nav.js, which gates the Data API Keys entry on the same
+ * account and cannot import a component module.
  */
-export const HP_USERNAME = 'HP';
+export { HP_USERNAME };
 
 /**
  * "Clear all data" for one module — renders NOTHING for anyone but HP.

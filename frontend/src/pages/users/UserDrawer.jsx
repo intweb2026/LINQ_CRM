@@ -1,6 +1,7 @@
 import Drawer from '../../components/Drawer';
 import { Icon } from '../../lib/icons';
-import { Av, RoleBadge, StatusPill } from '../../components/Badge';
+import { Av, ReportsTo, RoleBadge, StatusPill } from '../../components/Badge';
+import { reportingManagerOf } from '../../lib/reporting';
 import { rel } from '../../lib/helpers';
 import { ROLE_FULL } from '../../lib/constants';
 import { useSession } from '../../context/SessionContext';
@@ -18,7 +19,7 @@ import * as teamsApi from '../../api/teams';
  * be laid out inside the 520px drawer and clipped by `.dr-b`'s overflow, not
  * centred on the viewport.
  */
-export default function UserDrawer({ user: u, onClose, onChanged, onEdit, onResetPassword }) {
+export default function UserDrawer({ user: u, users, onClose, onChanged, onEdit, onResetPassword }) {
   const { can } = useSession();
   const toast = useToast();
   const { data: teams } = useFetch(teamsApi.list, [], { initialData: [] });
@@ -28,6 +29,7 @@ export default function UserDrawer({ user: u, onClose, onChanged, onEdit, onRese
   // recomputing it and risking a different one.
   const perms = u.effective_permissions;
   const team = (teams || []).find((t) => t.id === u.team_id) || null;
+  const reportsTo = reportingManagerOf(u, teams, users);
   const teamGrid = team ? team.permissions : teamsApi.emptyMatrix();
 
   async function toggleStatus() {
@@ -61,6 +63,7 @@ export default function UserDrawer({ user: u, onClose, onChanged, onEdit, onRese
         <div className="ro-c"><div className="ro-l">Role</div><div className="ro-v"><RoleBadge value={u.role} /></div></div>
         <div className="ro-c"><div className="ro-l">Team</div><div className="ro-v">{team ? (team.is_all_access ? team.name + ' · full access' : team.name) : <span className="dim">None — no module access</span>}</div></div>
         <div className="ro-c"><div className="ro-l">Team lead</div><div className="ro-v">{u.is_lead ? 'Yes' : 'No'}</div></div>
+        <div className="ro-c f"><div className="ro-l">Reporting manager</div><div className="ro-v"><ReportsTo value={reportsTo} /></div></div>
         <div className="ro-c"><div className="ro-l">Status</div><div className="ro-v"><StatusPill value={u.status} /></div></div>
         <div className="ro-c f"><div className="ro-l">Email</div><div className="ro-v" style={{ fontWeight: 500 }}>{u.email}</div></div>
         <div className="ro-c f"><div className="ro-l">Last active</div><div className="ro-v">{rel(u.last_login)}</div></div>

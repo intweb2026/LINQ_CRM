@@ -16,9 +16,27 @@
 // An entry must set one or the other, never both. `mod: null` with no `needsAny`
 // would mean ungated, which nothing is any more.
 //
+// `hpOnly` is a THIRD gate and stacks on top of whichever of the two an entry
+// uses: the entry is reachable only by the HP account, whatever the permission
+// matrix says. It is not a module because it is not a role capability — no role
+// can be granted it and no role can lose it, so putting it in the permission
+// matrix would only create a switch that looks like it works and does not.
+//
+// ONE ENTRY CARRIES IT, DELIBERATELY: Data API Keys. The gate belongs to
+// CREDENTIAL surfaces and to nothing else — the only other one is the API keys
+// TAB inside Webhooks, which is gated in WebhookLogsPage rather than here
+// because the page around it is an ordinary `webhooks` module page and stays
+// that way. Every other section belongs to the role model, where access is
+// something an administrator can grant and revoke under Roles. Adding `hpOnly`
+// elsewhere takes that page out of the permission system entirely and leaves no
+// way to delegate it — the intended trade for a surface that hands out keys, and
+// not intended for anything else.
+//
 // `id` is a badge/lookup key, NOT the route: 'paper_review' is underscored where
 // its path is hyphenated. Anything deriving state from the current URL therefore
 // matches on `path` — see AppShell and Sidebar.
+import { HP_USERNAME } from './constants';
+
 /**
  * The modules Dashboard actually renders a section for.
  *
@@ -59,6 +77,18 @@ export const NAV = [
     // to a webhooks-only role whose every request then 403'd, and hid it from a
     // role actually granted google_sync.
     { id: 'googlesync', l: 'Google Sync', ic: 'refresh', mod: 'google_sync', path: '/googlesync' },
+    // `hpOnly` — and the `mod` alongside it is now all but decorative, kept only
+    // so an entry never sits here with no module at all. The endpoint moved from
+    // IsAdminRole to IsHPAccount: a key minted there reads the whole export API
+    // and is displayed in the clear exactly once, and the list alone says what
+    // every live credential can reach. So the audience is one named account, not
+    // a role, and no permission grant widens it.
+    //
+    // This gate and the server's must match, which is why both read one username
+    // constant. When they disagreed before — the rail said webhooks, the endpoint
+    // said admin — a non-admin role holding webhooks saw the entry and bounced
+    // off a 403.
+    { id: 'data-api-keys', l: 'Data API Keys', ic: 'key', mod: 'webhooks', hpOnly: true, path: '/data-api-keys' },
   ] },
 ];
 
@@ -72,8 +102,14 @@ export const NAV_FLAT = NAV.flatMap((g) => g.items);
  * `!i.mod || canView(i.mod)`. Three copies of a rule about who sees what is
  * three places for a module to stay visible after being revoked, so it lives
  * here instead.
+ *
+ * `username` is the third argument rather than something read off a hook,
+ * for the same reason `canView` is passed in: this module must stay React-free.
+ * It is optional, and an absent username fails `hpOnly` closed — a caller that
+ * has not been given the session yet hides the entry rather than showing it.
  */
-export function canAccess(item, canView) {
+export function canAccess(item, canView, username) {
+  if (item.hpOnly && username !== HP_USERNAME) return false;
   if (item.needsAny) return item.needsAny.some((m) => canView(m));
   return !item.mod || canView(item.mod);
 }
@@ -103,8 +139,8 @@ export function canAccess(item, canView) {
  * sidebar logo, NoAccessPage) still resolves through here, so the landing page
  * is decided in exactly one place.
  */
-export function homeFor(canView) {
-  const first = NAV_FLAT.find((i) => canAccess(i, canView));
+export function homeFor(canView, username) {
+  const first = NAV_FLAT.find((i) => canAccess(i, canView, username));
   return first
     ? { path: first.path, label: first.l, ic: first.ic }
     : { path: '/dashboard', label: 'Dashboard', ic: 'grid' };

@@ -9,13 +9,16 @@ reaches exactly these four list/detail endpoints and nothing else.
 """
 import logging
 
-from rest_framework import viewsets
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 
+from accounts.permissions import IsHPAccount
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
+from dataapi.models import DataApiKey
 from events.models import Event
 from ticket_central.models import Ticket
 
@@ -25,6 +28,8 @@ from .serializers import (
     DataApiBookingSerializer,
     DataApiDelegateSerializer,
     DataApiEventSerializer,
+    DataApiKeyCreateSerializer,
+    DataApiKeyListSerializer,
     DataApiTicketSerializer,
 )
 
@@ -141,3 +146,79 @@ class TicketDataViewSet(DataApiBaseViewSet):
         if status:
             qs = qs.filter(status=status)
         return qs
+
+
+class DataApiKeyManagementViewSet(viewsets.ViewSet):
+    """
+    HP-only key management for the CRM UI, at /api/data/keys/.
+
+    AUTHENTICATION IS DELIBERATELY NOT SET HERE. Leaving
+    authentication_classes unset means this view inherits the project default,
+    Token/Session, exactly like every other CRM view. That is the whole point of
+    the separation: the four export viewsets above pin
+    DataApiKeyAuthentication locally, so a dapi_ key reaches data and nothing
+    else, and cannot mint, list, or revoke keys. Naming
+    DataApiKeyAuthentication here would let a leaked export key issue itself new
+    ones.
+
+    It is a plain ViewSet rather than a ModelViewSet because there is no update
+    path and no destroy path. A key is created once and revoked; editing a
+    key's scopes in place would silently widen a credential already deployed in
+    somebody's Apps Script, and deleting the row would destroy the usage
+    history that says what that credential did.
+
+    AUDIENCE IS ONE ACCOUNT, NOT A ROLE. This was IsAdminRole, which admits
+    three kinds of caller: role == admin, a team flagged is_all_access, and HP.
+    Every one of those is a legitimate administrator who must nevertheless NOT
+    see this surface, because a key minted here reads the whole export API and
+    is shown in the clear exactly once; listing is as sensitive as creating,
+    since the rows name what each live credential can reach. IsHPAccount is the
+    same primitive the clear-all endpoints use, so "restricted to one named
+    account" has one definition in this codebase rather than two.
+    """
+    permission_classes = [IsHPAccount]
+
+    def list(self, request):
+        qs = DataApiKey.objects.select_related("created_by").order_by("-created_at")
+        return Response(DataApiKeyListSerializer(qs, many=True).data)
+
+    def create(self, request):
+        ser = DataApiKeyCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        # DataApiKey.create_key() generates the raw key, hashes it, and builds
+        # key_preview. Hashing inline here would be a second implementation of
+        # the same secret handling, free to drift from the authenticator that
+        # verifies it; the management command already goes through this path.
+        key_obj, raw_key = DataApiKey.create_key(
+            name=ser.validated_data["name"],
+            scopes=ser.validated_data["scopes"],
+            expires_at=ser.validated_data.get("expires_at"),
+            created_by=request.user,
+        )
+
+        # raw_key appears in this response and never again. It is not stored,
+        # and no other endpoint can reconstruct it from key_hash.
+        return Response(
+            {
+                "id": key_obj.id,
+                "name": key_obj.name,
+                "key_preview": key_obj.key_preview,
+                "scopes": key_obj.scopes,
+                "raw_key": raw_key,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"])
+    def revoke(self, request, pk=None):
+        """POST /api/data/keys/{id}/revoke/ — one-way; is_active never comes back."""
+        try:
+            key_obj = DataApiKey.objects.get(pk=pk)
+        except DataApiKey.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        key_obj.is_active = False
+        key_obj.save(update_fields=["is_active"])
+        logger.info("Data API key %s (%s) revoked by %s",
+                    key_obj.pk, key_obj.key_preview, request.user)
+        return Response({"id": key_obj.id, "is_active": False})

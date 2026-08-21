@@ -11,6 +11,8 @@ Individual attendee linked to an invoice.
 from django.db import models
 from django.utils import timezone
 
+from book_event.booking_code_canonical import canonicalize_on_save
+
 
 class BookDelegate(models.Model):
     class Attendance(models.TextChoices):
@@ -101,6 +103,10 @@ class BookDelegate(models.Model):
         # as blank in the Bookings table now that the column is delegate-sourced.
         if not self.booking_code and self.invoice_id:
             self.booking_code = self.invoice.booking_code
+        # Canonical spelling, applied AFTER the inheritance above so a code
+        # inherited from an invoice is canonicalised too. Same chokepoint
+        # reasoning as BookEvent.save(); see booking_code_canonical.py.
+        args, kwargs = canonicalize_on_save(self, args, kwargs)
         # Last derivation before the write, so it sees the final invoice_id.
         self.booked_on = self._derive_booked_on()
         super().save(*args, **kwargs)

@@ -13,29 +13,32 @@ import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
 
 /**
- * `owner` may be a plain name string or an ownerOf() result. The SpEx and Market
- * Research chips take the latter: those two event columns are blank on every
- * event in the live data, so both chips were unconditionally suppressed and the
- * header showed only Sales Exec. An inherited name is italicised and says which
- * team it came from in its tooltip, so it is not mistaken for a value someone
- * set on this event.
+ * ONE CHIP PER PERSON. `owner` is either a plain name or an ownerOf() result, and
+ * a result can carry several names — a team may have any number of leads, and
+ * Sales Team has two — so this returns an ARRAY. Rendering names.join(', ') inside
+ * a single chip would put one avatar next to two different people.
+ *
+ * An inherited name belongs to the owning team rather than to this record: shown
+ * italic, with the team named in the tooltip. See the twin of this function in
+ * events/EditEventModal.jsx.
  */
-function ownerChip(roleLabel, owner) {
+function ownerChips(roleLabel, owner) {
   const map = { 'Sales Exec': ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], SpEx: ['--violet-bg', '--violet-tx'], 'Market Research': ['--amber-bg', '--amber-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
-  const personName = typeof owner === 'string' ? owner : (owner && owner.name) || '';
+  const names = typeof owner === 'string' ? [owner] : (owner && owner.names) || [];
   const inherited = typeof owner === 'object' && owner && owner.inherited;
   const team = (typeof owner === 'object' && owner && owner.team) || '';
-  if (!personName || personName === '—') return null;
-  return (
-    <span key={roleLabel} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
-      <Av name={personName} size="xs" />
-      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-        <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
+  return names
+    .filter((n) => n && n !== '—')
+    .map((personName) => (
+      <span key={roleLabel + personName} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
+        <Av name={personName} size="xs" />
+        <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
+        </span>
       </span>
-    </span>
-  );
+    ));
 }
 
 /**
@@ -149,7 +152,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
               {/* No SCA chip beside this one: `sales_exec` already falls back to the
                   event's sales_team, so the two would print the same name twice on
                   every booking whose event has no sales_executive FK. */}
-              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('SpEx', ownerOf(ev, 'spex_lead'))}{ownerChip('Market Research', ownerOf(ev, 'mr_senior'))}
+              {ownerChips('Sales Exec', ev.sales_exec)}{ownerChips('SpEx', ownerOf(ev, 'spex_lead'))}{ownerChips('Market Research', ownerOf(ev, 'mr_senior'))}
             </div>
           </div>
           {/* `.md-h` top-aligns its children (right, for a header whose title+sub

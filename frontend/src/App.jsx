@@ -36,6 +36,7 @@ const UsersPage = lazy(() => import('./pages/UsersPage'));
 const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
 const TeamsManagementPage = lazy(() => import('./pages/TeamsManagementPage'));
 const WebhookLogsPage = lazy(() => import('./pages/WebhookLogsPage'));
+const DataApiKeysPage = lazy(() => import('./pages/DataApiKeysPage'));
 const PaperReviewPage = lazy(() => import('./pages/PaperReviewPage'));
 const ProposalSubmissionPage = lazy(() => import('./pages/ProposalSubmissionPage'));
 
@@ -71,8 +72,8 @@ function LoginRoute() {
  * and send every session to the fallback.
  */
 function HomeRedirect() {
-  const { canView } = useSession();
-  return <Navigate to={homeFor(canView).path} replace />;
+  const { canView, user } = useSession();
+  return <Navigate to={homeFor(canView, user?.username).path} replace />;
 }
 
 export default function App() {
@@ -109,6 +110,7 @@ export default function App() {
                 <Route path="teams" element={<TeamsManagementPage />} />
                 <Route path="webhooks" element={<WebhookLogsPage />} />
                 <Route path="googlesync" element={<GoogleSyncPage />} />
+                <Route path="data-api-keys" element={<DataApiKeysPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />

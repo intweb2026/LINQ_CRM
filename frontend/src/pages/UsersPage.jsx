@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import { Icon } from '../lib/icons';
-import { Who, RoleBadge, StatusPill } from '../components/Badge';
+import { Who, RoleBadge, ReportsTo, StatusPill } from '../components/Badge';
+import { reportingManagerOf } from '../lib/reporting';
 import { avc, ini, rel } from '../lib/helpers';
 import { TEAM_ROLES, ROLE_FULL } from '../lib/constants';
 import { useSession } from '../context/SessionContext';
@@ -68,6 +69,10 @@ export default function UsersPage() {
           { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} />, opts: () => TEAM_ROLES },
           { key: 'team_id', label: 'Team', cell: (v) => teamName(v), opts: () => TEAMS.map((t) => t.name) },
           { key: 'is_lead', label: 'Lead', cell: (v) => (v ? <span className="bg bg-amber"><i />Lead</span> : <span className="dim">—</span>) },
+          // Sorted and filtered on the raw mapped_lead_name, which is '' for
+          // everyone until somebody records one; the cell falls back to the
+          // team's leads so the column is readable in the meantime.
+          { key: 'mapped_lead_name', label: 'Reporting Manager', cell: (v, r) => <ReportsTo value={reportingManagerOf(r, TEAMS, USERS)} avatar={false} /> },
           { key: 'events_count', label: 'Events', num: true },
           { key: 'last_login', label: 'Last active', cell: (v) => rel(v) },
           { key: 'status', label: 'Status', cell: (v) => <StatusPill value={v} />, opts: () => ['active', 'inactive'] },
@@ -83,13 +88,17 @@ export default function UsersPage() {
               <div><div className="l">Team</div><div className="v">{teamName(r.team_id)}</div></div>
               <div><div className="l">Events</div><div className="v">{r.events_count}</div></div>
               <div><div className="l">Lead</div><div className="v">{r.is_lead ? 'Yes' : 'No'}</div></div>
+              <div><div className="l">Reports to</div><div className="v"><ReportsTo value={reportingManagerOf(r, TEAMS, USERS)} avatar={false} /></div></div>
             </div>
           </div>
         )}
         onRow={(r) => setDrawerUser(r)}
       />
-      {drawerUser ? <UserDrawer user={drawerUser} onClose={() => setDrawerUser(null)} onChanged={refresh} onEdit={setFormUser} onResetPassword={setPwUser} /> : null}
-      {formUser !== undefined ? <UserFormModal user={formUser} onClose={() => setFormUser(undefined)} onSaved={refresh} /> : null}
+      {/* `users` is passed down, not re-fetched in each child. Both need the list
+          only to work out who could be a reporting manager, and api/client.js
+          warns about exactly the duplicate fetchAllPages walk that would be. */}
+      {drawerUser ? <UserDrawer user={drawerUser} users={USERS} onClose={() => setDrawerUser(null)} onChanged={refresh} onEdit={setFormUser} onResetPassword={setPwUser} /> : null}
+      {formUser !== undefined ? <UserFormModal user={formUser} users={USERS} onClose={() => setFormUser(undefined)} onSaved={refresh} /> : null}
       {pwUser ? <ResetPasswordModal user={pwUser} onClose={() => setPwUser(null)} /> : null}
       {inviteOpen ? (
         <Modal size="sm" title="Invite by email" sub="They receive a link to set their own password." onClose={() => setInviteOpen(false)}

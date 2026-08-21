@@ -1,12 +1,43 @@
 """
 accounts/serializers.py
 """
+import logging
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from events.models import Event
 from .models import CRM_MODULES, PERM_ACTIONS, UserPermission
 
 User = get_user_model()
+
+log = logging.getLogger(__name__)
+
+
+def _route_new_user_events(user):
+    """
+    Give `user` the events that already name them as SCA, and log what happened.
+
+    Swallows its own failures on purpose. Routing is a repair pass over other
+    rows; if it breaks, the account itself must still be created, and the same
+    work is available on demand as `manage.py route_event_owners`. The exception
+    is logged with a traceback rather than dropped.
+    """
+    try:
+        from events.owner_routing import route_events_for_user
+        report = route_events_for_user(user)
+    except Exception:
+        log.exception("event routing failed for user %s", getattr(user, "pk", None))
+        return None
+
+    if report["routed"]:
+        log.info("routed %d event(s) to %s on save",
+                 len(report["routed"]), user.username)
+    return report
+
+# Distinguishes "the request did not mention this field" from "the request set it
+# to null". Only the second is an instruction, and conflating the two made every
+# nullable FK on UserWriteSerializer impossible to clear — see update().
+_MISSING = object()
 
 
 def team_permission_matrix(team):
@@ -191,6 +222,21 @@ class UserWriteSerializer(serializers.ModelSerializer):
         user.save()
         if event_ids:
             user.assigned_events.set(Event.objects.filter(id__in=event_ids))
+
+        # Pick up the events that already NAME this person in their SCA column.
+        #
+        # Event.sales_executive, the FK that events/views.py get_queryset scopes
+        # a non admin by, is only ever resolved while an event row is saved. Every
+        # event in the catalogue was last saved before this account existed, so
+        # without this call the new user's own events keep a null FK and they see
+        # an empty Events page, an empty Bookings page and an empty event
+        # dropdown, with their name plainly visible in the SCA column of the rows
+        # they own and nothing reporting a fault. Creating the account has to be
+        # enough on its own.
+        #
+        # Scoped to this user and to rows with NO owner, so adding somebody can
+        # never take an event off anybody. See events/owner_routing.py.
+        _route_new_user_events(user)
         if user.team:
             from teams.models import TeamActivityLog
             request = self.context.get('request')
@@ -204,12 +250,24 @@ class UserWriteSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
+        # _MISSING, not None. Both of these fields declare allow_null=True, which
+        # says an explicit null is meaningful and means "unassign" — but popping
+        # with a None default made "the request did not mention this field" and
+        # "the request set it to null" the same value, and the `is not None`
+        # guards below then skipped BOTH. The result was that neither a team nor
+        # a reporting manager could ever be cleared through the API: the form sent
+        # null, the server answered 200, and the old value was still there.
         event_ids = validated_data.pop("assigned_event_ids", None)
-        team_id = validated_data.pop("team_id", None)
-        mapped_lead_id = validated_data.pop("mapped_lead_id", None)
+        team_id = validated_data.pop("team_id", _MISSING)
+        mapped_lead_id = validated_data.pop("mapped_lead_id", _MISSING)
         password  = validated_data.pop("password", None)
 
         old_team = instance.team
+        # What this user's name resolves FROM, before the write. A change to any
+        # of these changes which SCA strings point at them, so the events that
+        # could not be routed under the old spelling get another chance below.
+        old_identity = (instance.first_name, instance.last_name,
+                        instance.username, instance.email, instance.is_active)
 
         # See create(): naming a role on the request makes it stick, so the form
         # can move someone into a team and still override the role that implies.
@@ -219,12 +277,17 @@ class UserWriteSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
-        if team_id is not None:
+        if team_id is not _MISSING:
             from teams.models import Team
             instance.team = Team.objects.filter(id=team_id).first() if team_id else None
 
-        if mapped_lead_id is not None:
-            instance.mapped_lead = User.objects.filter(id=mapped_lead_id).first() if mapped_lead_id else None
+        if mapped_lead_id is not _MISSING:
+            # Nobody reports to themselves. The form excludes the person from its
+            # own list, but the API is reachable without it.
+            instance.mapped_lead = (
+                User.objects.filter(id=mapped_lead_id).exclude(pk=instance.pk).first()
+                if mapped_lead_id else None
+            )
 
         if password:
             instance.set_password(password)
@@ -233,6 +296,14 @@ class UserWriteSerializer(serializers.ModelSerializer):
 
         if event_ids is not None:
             instance.assigned_events.set(Event.objects.filter(id__in=event_ids))
+
+        # A rename, a new address, or a reactivation changes what the SCA text on
+        # an event resolves to. Correcting the spelling of somebody's name is one
+        # of the two ways a human fixes an unrouted event, so it has to actually
+        # route it; the other is correcting the event.
+        if (instance.first_name, instance.last_name, instance.username,
+                instance.email, instance.is_active) != old_identity:
+            _route_new_user_events(instance)
 
         new_team = instance.team
         if team_id is not None and old_team != new_team:

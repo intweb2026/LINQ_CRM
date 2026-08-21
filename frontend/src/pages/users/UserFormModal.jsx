@@ -7,6 +7,7 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { useSession } from '../../context/SessionContext';
 import { useFetch } from '../../hooks/useFetch';
+import { managerOptionGroups } from '../../lib/reporting';
 import { apiErrorMessage } from '../../api/client';
 import PermissionGrid, { PermissionLegend } from '../../components/PermissionGrid';
 import * as usersApi from '../../api/users';
@@ -35,7 +36,7 @@ import * as teamsApi from '../../api/teams';
  * Users list filters, and User.save() fills it in from the team's name. It
  * grants nothing.
  */
-export default function UserFormModal({ user: u, onClose, onSaved }) {
+export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   const isNew = !u;
   const toast = useToast();
   const confirm = useConfirm();
@@ -53,6 +54,7 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       password: '',
       role: u?.role || 'sales',
       team_id: u?.team_id ? String(u.team_id) : '',
+      mapped_lead_id: u?.mapped_lead_id ? String(u.mapped_lead_id) : '',
       status: u?.status || 'active',
       is_lead: !!u?.is_lead,
       login_access: u ? u.login_access !== false : true,
@@ -62,6 +64,13 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
   const setChk = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
 
   const chosenTeam = TEAMS.find((t) => String(t.id) === String(form.team_id)) || null;
+  // Two groups — the chosen team's leads, then the administrators — and the person
+  // being edited never appears in either: nobody reports to themselves, and a
+  // team's primary lead is exactly the case where that would otherwise happen.
+  // Administrators are offered to everyone, because a team lead has no lead above
+  // them and would otherwise have nothing to pick.
+  const managerGroups = managerOptionGroups(chosenTeam, u, users);
+  const managerChoices = managerGroups.flatMap((g) => g.items);
   const impliedRole = chosenTeam ? roleFromTeamName(chosenTeam.name) : null;
   const roleOverridden = !!impliedRole && form.role !== impliedRole;
 
@@ -78,7 +87,9 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
     const teamId = e.target.value;
     const team = TEAMS.find((t) => String(t.id) === String(teamId));
     const implied = team ? roleFromTeamName(team.name) : null;
-    setForm((f) => ({ ...f, team_id: teamId, role: implied || f.role }));
+    // The reporting manager is a lead OF THIS TEAM, so moving team invalidates it.
+    // Left alone it would keep pointing at a lead of the team the person just left.
+    setForm((f) => ({ ...f, team_id: teamId, role: implied || f.role, mapped_lead_id: '' }));
     // Exceptions were relative to the OLD team's grid. Carrying them across
     // would mean "revoke Bookings delete" following someone into a team that
     // never granted it, and reading afterwards as a deliberate decision about
@@ -150,6 +161,8 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       role: form.role,
       status: form.status,
       team_id: form.team_id ? +form.team_id : null,
+      // null, not omitted: clearing a reporting manager has to reach the server.
+      mapped_lead_id: form.mapped_lead_id ? +form.mapped_lead_id : null,
       is_lead: form.is_lead,
       login_access: form.login_access,
       password: form.password,
@@ -281,6 +294,31 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
               <input type="checkbox" className="ck" checked={form.is_lead} onChange={setChk('is_lead')} />
               Team lead
             </label>
+          </div>
+          <div className="fd">
+            <label className="fd-l">Reporting manager</label>
+            {/* Scoped to the leads of the chosen team, because that is what the
+                column means — "the specific team lead this member is mapped
+                under". A team may have several, so this is a real choice rather
+                than a formality: Sales Team has two. Any stored value that is no
+                longer a lead is kept as an option so opening the form and saving
+                it does not quietly drop it. */}
+            <select className="in" value={form.mapped_lead_id} onChange={set('mapped_lead_id')} disabled={!managerChoices.length && !form.mapped_lead_id}>
+              <option value="">— Not recorded —</option>
+              {form.mapped_lead_id && !managerChoices.some((m) => String(m.id) === String(form.mapped_lead_id))
+                ? <option value={form.mapped_lead_id}>{u?.mapped_lead_name || 'Current manager'}</option>
+                : null}
+              {managerGroups.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.items.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+              {!managerChoices.length
+                ? 'Nobody available to report to \u2014 no team leads and no administrators.'
+                : 'Left unrecorded, the profile shows the leads of this person\u2019s team, or the administrators if they lead it themselves.'}
+            </span>
           </div>
           <div className="fd">
             <label className="fd-l" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>

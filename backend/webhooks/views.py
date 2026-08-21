@@ -25,7 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
-from accounts.permissions import IsAdminRole
+from accounts.permissions import IsAdminRole, IsHPAccount
 from .models import WebhookApiKey, WebhookLog
 from .parsers import AnyTypeJSONParser
 from .serializers import (
@@ -442,7 +442,24 @@ class WebhookLogViewSet(FilterSpecMixin, viewsets.ReadOnlyModelViewSet):
 # ── API Key Management ────────────────────────────────────────────────────────
 
 class WebhookApiKeyViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAdminRole]
+    """
+    The website's ingest credentials, at /api/webhooks/keys/.
+
+    HP ONLY, and for the same reason as the Data API keys next door (see
+    dataapi/views.py DataApiKeyManagementViewSet): this is a credential surface,
+    not a data one. It is if anything the sharper of the two, because these keys
+    are WRITE — a holder posts bookings straight into the CRM — and the list
+    serves the key string itself in the clear on every read, so being able to
+    list is being able to use. Regenerate and toggle are on the same viewset and
+    can silently break a live website integration.
+
+    That is why the audience is a named account rather than IsAdminRole, which
+    admitted every admin, every is_all_access team, and HP. The Webhooks page
+    still opens for anyone holding the module — only its API keys tab is gated,
+    since delivery logs are operational data that the people running the site
+    need. Note the LOGS viewset above deliberately keeps IsAdminRole.
+    """
+    permission_classes = [IsHPAccount]
     queryset = WebhookApiKey.objects.select_related("created_by").all()
 
     def get_serializer_class(self):

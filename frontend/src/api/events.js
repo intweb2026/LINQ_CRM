@@ -38,7 +38,10 @@ function ownerSrc(raw) {
   const out = {};
   Object.entries(raw || {}).forEach(([backendKey, v]) => {
     const key = OWNER_SRC_KEYS[backendKey];
-    if (key && v && v.name) out[key] = { name: v.name, team: v.team || '' };
+    // `names` is a LIST and every entry survives — a team may have any number of
+    // leads (Sales Team has two), and nothing here picks one.
+    const names = (v && v.names) || [];
+    if (key && names.length) out[key] = { names, team: (v && v.team) || '' };
   });
   return out;
 }

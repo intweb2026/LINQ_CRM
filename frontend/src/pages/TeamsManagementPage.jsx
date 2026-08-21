@@ -43,7 +43,7 @@ function Column({ id, name, color, members, isOver, match, secondMetric, onDragS
               <>
                 <div className="pop-t">{name}</div>
                 <button className="pop-i" onClick={() => { close(); onEdit(id); }}><Icon name="edit" size={15} />Edit team</button>
-                <button className="pop-i" onClick={() => { close(); onAssignLead(id); }}><Icon name="star" size={15} />Assign lead</button>
+                <button className="pop-i" onClick={() => { close(); onAssignLead(id); }}><Icon name="star" size={15} />Assign leads</button>
                 <button className="pop-i" onClick={() => { close(); onViewActivity(id); }}><Icon name="chart" size={15} />View activity</button>
                 <button className="pop-i del" onClick={() => { close(); onArchive(id, name, members.length); }}><Icon name="trash" size={15} />Archive team</button>
               </>

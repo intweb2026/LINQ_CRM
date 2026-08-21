@@ -25,6 +25,26 @@ export const OWNER_FIELDS = [
 export const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
 
 /**
+ * The owner columns the EVENT FORMS let you set. Everything else on an event is
+ * owned by the Teams module, so the only owners worth overriding per event are
+ * the SCA and the sales lead — the rest would be re-typing what the team already
+ * knows, and a typo there silently outranks the team's answer forever.
+ *
+ * Display is unaffected: the drawer's Teams tab and the Events table still show
+ * all seven, inherited where the event says nothing.
+ */
+export const OWNER_EDIT_KEYS = ['sales_team', 'sales_lead'];
+
+export const OWNER_EDIT_FIELDS = OWNER_FIELDS.filter((f) => OWNER_EDIT_KEYS.includes(f.key));
+
+/**
+ * Placeholders that mean "nothing is assigned". Mirrors _BLANK_OWNER_VALUES in
+ * backend/events/serializers.py — a column holding one of these must inherit,
+ * not read as an answer.
+ */
+const BLANK = ['', '-', '–', '—'];
+
+/**
  * Who owns `key` on this event, and where that answer came from.
  *
  * Returns `{ name, inherited, team }`. `name` is '' when nothing owns it.
@@ -38,10 +58,17 @@ export const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
  */
 export function ownerOf(ev, key) {
   const own = String((ev && ev[key]) || '').trim();
-  if (own && own !== '—') return { name: own, inherited: false, team: '' };
+  if (!BLANK.includes(own)) return { names: [own], name: own, inherited: false, team: '' };
 
   const src = ((ev && ev.owner_src) || {})[key];
-  if (src && src.name) return { name: src.name, inherited: true, team: src.team || '' };
+  const names = (src && src.names) || [];
+  if (names.length) {
+    // `name` is the joined form for the dense single-line callers (table cells).
+    // `names` is the list, and callers with room render one element per lead —
+    // NOTHING here picks a primary or truncates. A team with three leads shows
+    // three.
+    return { names, name: names.join(', '), inherited: true, team: (src && src.team) || '' };
+  }
 
-  return { name: '', inherited: false, team: '' };
+  return { names: [], name: '', inherited: false, team: '' };
 }

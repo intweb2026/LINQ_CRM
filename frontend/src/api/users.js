@@ -48,6 +48,12 @@ function toFrontend(u) {
     login_access: u.login_access !== false,
     team_id: u.team_id || null,
     is_lead: !!u.is_team_lead,
+    // Who this person reports to. The backend has exposed these two since the
+    // column was added; nothing in the UI read them, so the field was invisible
+    // and unsettable and every row is still null. lib/reporting.js falls back to
+    // the team's leads when it is unset.
+    mapped_lead_id: u.mapped_lead_id || null,
+    mapped_lead_name: u.mapped_lead_name || '',
     events_count: u.assigned_events_count || 0,
     assigned_events: u.assigned_events || [],
     last_login: u.last_login,
@@ -78,6 +84,9 @@ export const list = () => fetchAllPages('users/').then((rows) => rows.map(toFron
  */
 function toBackend(patch) {
   const body = {};
+  // `null` unassigns, so this is tested for `undefined` like team_id above it and
+  // not for truthiness — clearing a reporting manager must reach the server.
+  if (patch.mapped_lead_id !== undefined) body.mapped_lead_id = patch.mapped_lead_id;
   if (patch.username !== undefined) body.username = patch.username;
   if (patch.email !== undefined) body.email = patch.email;
   if (patch.first_name !== undefined) body.first_name = patch.first_name;

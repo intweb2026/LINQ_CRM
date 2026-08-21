@@ -5,7 +5,7 @@ import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
 import { Av, EvBadge } from '../../components/Badge';
 import { avc, ini } from '../../lib/helpers';
-import { OWNER_FIELDS, ownerOf } from '../../lib/owners';
+import { OWNER_EDIT_FIELDS, ownerOf } from '../../lib/owners';
 import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
@@ -13,40 +13,45 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
 
-// The row list lives in lib/owners.js now. It was written out by hand here, in
-// EditEventModal, in the Events table and in the drawer's Teams tab — four copies
-// of one list, and the two here were POSITIONAL, so a label and a key could drift
-// apart silently and the form would write the wrong column.
+// Only the SCA and the sales team leader are editable here — see OWNER_EDIT_FIELDS
+// in lib/owners.js. The other five owner columns belong to the Teams module and are
+// shown, inherited, in the drawer's Teams tab and the Events table; giving them an
+// editor here only invites someone to re-type what the team already knows, and a
+// value typed on the event outranks the team's answer permanently.
 //
-// The selects below deliberately keep reading form values RAW rather than through
-// ownerOf(): an inherited name is the owning team's answer, and writing it into
-// the event would freeze "whoever leads Telemarketing" into one person's name on
-// the next unrelated save.
-const OWNER_LABELS = OWNER_FIELDS.map((f) => f.label);
-const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
+// The selects read form values RAW rather than through ownerOf(): an inherited name
+// is the team's answer, and writing it into the event would freeze "whoever leads
+// Sales" into one person's name on the next unrelated save.
+const OWNER_LABELS = OWNER_EDIT_FIELDS.map((f) => f.label);
+const OWNER_KEYS = OWNER_EDIT_FIELDS.map((f) => f.key);
 
 /**
- * `owner` is either a plain name or an ownerOf() result — see the twin of this
- * function in bookings/EditBookingModal.jsx. Chips whose column is blank on
- * every event now show the owning team's lead, italicised and attributed in the
- * tooltip rather than passed off as this event's own value.
+ * ONE CHIP PER PERSON. `owner` is either a plain name or an ownerOf() result, and
+ * a result can carry several names — a team may have any number of leads, and
+ * Sales Team has two — so this returns an ARRAY. Rendering names.join(', ') inside
+ * a single chip would put one avatar next to two different people.
+ *
+ * An inherited name belongs to the owning team rather than to this record: shown
+ * italic, with the team named in the tooltip. See the twin of this function in
+ * bookings/EditBookingModal.jsx.
  */
-function ownerChip(roleLabel, owner) {
-  const map = { Sales: ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], Telemarketing: ['--violet-bg', '--violet-tx'], 'Market Research': ['--cyan-bg', '--cyan-tx'], SpEx: ['--violet-bg', '--violet-tx'] };
+function ownerChips(roleLabel, owner) {
+  const map = { Sales: ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
-  const personName = typeof owner === 'string' ? owner : (owner && owner.name) || '';
+  const names = typeof owner === 'string' ? [owner] : (owner && owner.names) || [];
   const inherited = typeof owner === 'object' && owner && owner.inherited;
   const team = (typeof owner === 'object' && owner && owner.team) || '';
-  if (!personName || personName === '—') return null;
-  return (
-    <span key={roleLabel} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
-      <Av name={personName} size="xs" />
-      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-        <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
+  return names
+    .filter((n) => n && n !== '—')
+    .map((personName) => (
+      <span key={roleLabel + personName} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
+        <Av name={personName} size="xs" />
+        <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+          <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
+        </span>
       </span>
-    </span>
-  );
+    ));
 }
 
 export default function EditEventModal({ event: ev, onClose, onSaved }) {
@@ -93,7 +98,11 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
             </div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ownerChip('SCA', ev.sales_team)}{ownerChip('Sales', ownerOf(ev, 'sales_lead'))}{ownerChip('SpEx', ownerOf(ev, 'spex_lead'))}{ownerChip('Market Research', ownerOf(ev, 'mr_senior'))}
+              {/* SCA and the sales lead only, matching the editable set below. The
+                  SpEx and Market Research chips were here too, but this form no
+                  longer owns those columns — the drawer's Teams tab is where all
+                  seven owners are shown. */}
+              {ownerChips('SCA', ev.sales_team)}{ownerChips('Sales', ownerOf(ev, 'sales_lead'))}
             </div>
           </div>
           {/* See the identical fix/comment in bookings/EditBookingModal.jsx — same
