@@ -47,7 +47,6 @@ OFFERED_ROW = {
     "website_live_date": "2026-07-15",
     "website": "https://example.invalid/summit",
     "web_bookings": "yes",
-    "speaker_sales_team": "Quintus Speakerdesk",
     "sales_team": "Octavia Salesdesk",
     "team_leader": "Ptolemy Leaddesk",
     "spex_team": "Xanthe Spexdesk",

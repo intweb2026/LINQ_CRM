@@ -2,7 +2,9 @@
 Linq CRM — Django Settings
 Production-ready configuration with environment variable overrides.
 """
+import base64
 import os
+import tempfile
 from pathlib import Path
 import dj_database_url
 from corsheaders.defaults import default_headers
@@ -51,10 +53,12 @@ CORS_ALLOW_CREDENTIALS = True
 #   x-crm-api-key    -> /api/webhooks/ingest/      (webhooks/utils.py)
 #   x-webhook-secret -> legacy static secret       (webhooks/utils.py)
 #   x-api-key        -> /api/invoices/create_from_website/ (book_event/authentication.py)
+#   x-data-api-key   -> /api/data/*                      (dataapi/authentication.py)
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-crm-api-key",
     "x-webhook-secret",
     "x-api-key",
+    "x-data-api-key",
 ]
 
 # ── Applications ──────────────────────────────────────────────────────────────
@@ -90,6 +94,10 @@ INSTALLED_APPS = [
     # PaperReview (source_paper_review), so its table has to exist first.
     "paper_review",
     "proposal_submission",
+    # Read-only export surface for external consumers (Google Sheets). Its
+    # authenticator is wired per-view in dataapi/views.py and must NEVER be
+    # added to REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] below.
+    "dataapi",
 ]
 
 MIDDLEWARE = [
@@ -376,10 +384,38 @@ PAPER_REVIEW_NOTIFICATIONS_ENABLED = os.environ.get(
 WEBSITE_API_KEY     = os.environ.get("WEBSITE_API_KEY", "")
 WEBHOOK_SECRET_KEY  = os.environ.get("WEBHOOK_SECRET_KEY", "")
 
+# ── Google Sign-In ────────────────────────────────────────────────────────────
+# Web client ID from Google Cloud Console (OAuth 2.0 -> Web application). The
+# same ID is handed to the browser as REACT_APP_GOOGLE_CLIENT_ID; the ID token flow
+# uses no client secret, so there is nothing else to configure. Without this,
+# POST /api/auth/google/ answers 500 rather than silently letting anyone in.
+GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+# Only these email domains may sign in. Emptying the list disables the check.
+GOOGLE_OAUTH_ALLOWED_DOMAINS = [
+    d.strip().lower()
+    for d in config(
+        "GOOGLE_OAUTH_ALLOWED_DOMAINS",
+        default="iq-hub.com,linq-corporate.com",
+    ).split(",")
+    if d.strip()
+]
+
 # ── Google Sheets Sync ────────────────────────────────────────────────────────
 # Look for credentials relative to project root
 _creds_path = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "config/credentials/google-sheets.json")
 GOOGLE_SHEETS_CREDENTIALS = os.path.join(BASE_DIR.parent, _creds_path)
+
+# Production fallback: if the credentials FILE does not exist on disk but the
+# entire JSON is available as a base64 env var, decode it to a temp file and
+# repoint the setting. Runs once at startup. Local dev is unaffected because
+# the file exists and this block never fires.
+if not os.path.exists(GOOGLE_SHEETS_CREDENTIALS) and os.environ.get("GOOGLE_SHEETS_CREDENTIALS_B64"):
+    _decoded = base64.b64decode(os.environ["GOOGLE_SHEETS_CREDENTIALS_B64"])
+    _tmp = os.path.join(tempfile.gettempdir(), "google-sheets-credentials.json")
+    with open(_tmp, "wb") as _f:
+        _f.write(_decoded)
+    GOOGLE_SHEETS_CREDENTIALS = _tmp
+
 GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "1x69V6G_qY6H5W_m6P9V6G_qY6H5W_m6P")
 GOOGLE_SHEET_EVENTS_TAB = "Events"
 GOOGLE_SHEET_BOOKINGS_TAB = "Bookings"
@@ -406,7 +442,6 @@ GOOGLE_SHEET_CRM_ID = os.environ.get("GOOGLE_SHEET_CRM_ID", "")
 LOG_RETENTION_DAYS = {
     "webhooks.WebhookLog":          int(os.environ.get("RETAIN_WEBHOOK_LOGS_DAYS", 90)),
     "teams.TeamActivityLog":        int(os.environ.get("RETAIN_TEAM_LOGS_DAYS", 730)),
-    "reports.ReportSyncLog":        int(os.environ.get("RETAIN_REPORT_LOGS_DAYS", 90)),
     "paper_review.NotificationLog": int(os.environ.get("RETAIN_NOTIF_LOGS_DAYS", 365)),
 }
 

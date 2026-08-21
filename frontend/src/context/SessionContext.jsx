@@ -67,11 +67,11 @@ function readCachedPerms() {
   return parsed;
 }
 
-// Login/OTP responses only carry username/email/role — the backend has no
-// display-name field on these endpoints — so `name` falls back to whichever
+// The Google login response only carries username/email/role — the backend has
+// no display-name field on this endpoint — so `name` falls back to whichever
 // identifier is available.
-function toUser(data, fallbackUsername) {
-  const username = data.username || fallbackUsername || data.email;
+function toUser(data) {
+  const username = data.username || data.email;
   return {
     user_id: data.user_id,
     username,
@@ -121,11 +121,18 @@ export function SessionProvider({ children }) {
     return () => { cancelled = true; };
   }, [user, permsLoaded, resolvePerms]);
 
-  const login = useCallback(async (credentials) => {
-    const data = await authApi.login(credentials);
+  /**
+   * The one and only login path: swap a Google ID token for a DRF token.
+   *
+   * Same body as the retired password/OTP callbacks — the backend returns an
+   * identical payload, so toUser() and the perms resolution are untouched. The
+   * ID token itself is never stored; only the DRF token that comes back is.
+   */
+  const loginWithGoogle = useCallback(async (credential) => {
+    const data = await authApi.googleLogin(credential);
     storageSet('auth_token', data.token);
     markTokenFreshness();
-    const userInfo = toUser(data, credentials.username);
+    const userInfo = toUser(data);
     const permsData = await resolvePerms(userInfo.role);
     storageSet('auth_user', JSON.stringify(userInfo));
     if (permsData) storageSet('auth_perms', JSON.stringify(permsData));
@@ -137,8 +144,13 @@ export function SessionProvider({ children }) {
     return userInfo;
   }, [resolvePerms]);
 
-  const loginWithCode = useCallback(async (email, code) => {
-    const data = await authApi.verifyCode(email, code);
+  /**
+   * Emergency break-glass login. Same steps as loginWithGoogle — store token,
+   * resolve permissions, set user — only the credential differs. Reachable
+   * from the hidden /170405 gate, never from the main login page.
+   */
+  const loginWithFallback = useCallback(async (credentials) => {
+    const data = await authApi.fallbackLogin(credentials);
     storageSet('auth_token', data.token);
     markTokenFreshness();
     const userInfo = toUser(data);
@@ -146,8 +158,6 @@ export function SessionProvider({ children }) {
     storageSet('auth_user', JSON.stringify(userInfo));
     if (permsData) storageSet('auth_perms', JSON.stringify(permsData));
     setUser(userInfo);
-    // denyAll() rather than null: permsLoaded is about to become true, and every
-    // page reads this matrix during render. See denyAll().
     setPerms(permsData || denyAll());
     setPermsLoaded(true);
     return userInfo;
@@ -188,9 +198,9 @@ export function SessionProvider({ children }) {
   }, [perms]);
 
   const value = useMemo(() => ({
-    user, perms, permsLoaded, login, loginWithCode, logout, canView, can,
+    user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can,
     roleLabel: user ? ROLE_FULL[user.role] || user.role : '',
-  }), [user, perms, permsLoaded, login, loginWithCode, logout, canView, can]);
+  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

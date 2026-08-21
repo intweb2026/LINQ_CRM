@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import { Icon } from '../lib/icons';
@@ -54,15 +53,18 @@ export default function UsersPage() {
 
   return (
     <>
-      <PageHead title="Users"
-        actions={can('create', 'users') ? <>
-          <button className="btn btn-s" onClick={() => setInviteOpen(true)}><Icon name="mail" size={15} />Invite</button>
-          <button className="btn btn-p" onClick={() => setFormUser(null)}><Icon name="plus" size={15} />Add user</button>
-        </> : null} />
       <DataTable
         rows={USERS} noun="users" pageSize={50} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
+        // No tabs or date-range row on this page to fold these into (see
+        // BookingsPage / TicketCentralPage, PaperReviewPage / ProposalSubmissionPage),
+        // so they ride on the table's own toolbar row instead of a PageHead row
+        // of their own — one fewer row of height above the table.
+        extraToolbar={can('create', 'users') ? <>
+          <button className="btn btn-s" onClick={() => setInviteOpen(true)}><Icon name="mail" size={15} />Invite</button>
+          <button className="btn btn-p" onClick={() => setFormUser(null)}><Icon name="plus" size={15} />Add user</button>
+        </> : null}
         cols={[
-          { key: 'name', label: 'User', cls: 'st', cell: (v, r) => <Who name={v} sub={r.username} mono avatar={false} /> },
+          { key: 'name', label: 'User', cls: 'st usr-name', cell: (v, r) => <Who name={v} sub={r.username} mono avatar={false} /> },
           { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} />, opts: () => TEAM_ROLES },
           { key: 'team_id', label: 'Team', cell: (v) => teamName(v), opts: () => TEAMS.map((t) => t.name) },
           { key: 'is_lead', label: 'Lead', cell: (v) => (v ? <span className="bg bg-amber"><i />Lead</span> : <span className="dim">—</span>) },

@@ -1,5 +1,4 @@
 import { useCallback, useState } from 'react';
-import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Dot, Who } from '../components/Badge';
@@ -15,7 +14,6 @@ import PaperReviewFormModal from './paperReview/PaperReviewFormModal';
 import PaperReviewImportModal from './paperReview/PaperReviewImportModal';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
-import DateRangeFilter from '../components/DateRangeFilter';
 
 /**
  * The columns, at module scope — evaluated once, never rebuilt.
@@ -86,7 +84,10 @@ export default function PaperReviewPage() {
   // created_at — see accounts/period_filter.py. The fallback matters here:
   // paper_submission_date is nullable, and a window over it alone would silently
   // hide every review whose submission date was never filled in.
-  const [period, setPeriod] = useState('all');
+  //
+  // Fixed at 'all' now — the Date Range control was removed from this page
+  // (kept on Bookings only), so there is no UI left to change it.
+  const period = 'all';
   /**
    * The row count, as its own small aggregate; the table no longer holds the set.
    *
@@ -99,7 +100,7 @@ export default function PaperReviewPage() {
    * PaperReviewViewSet.stats.
    */
   const fetchStats = useCallback(() => paperReviewApi.stats(period), [period]);
-  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } =
+  const { data: stats, refetchQuiet: reloadStats } =
     useFetch(fetchStats, [period], { initialData: {} });
   const total = stats && stats.total != null ? stats.total : null;
 
@@ -139,18 +140,6 @@ export default function PaperReviewPage() {
 
   return (
     <>
-      <PageHead title="Paper Review"
-        actions={<>
-          {can('create', 'paper_review') ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button> : null}
-          {can('create', 'paper_review') ? <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New review</button> : null}
-          <ClearAllButton noun="paper review" count={total}
-            onClear={paperReviewApi.clearAll} onCleared={refresh}
-            extra="Proposal submissions generated from these reviews are NOT deleted — they are unlinked from the review and stay in Proposal Submission, which has its own clear-all." />
-        </>} />
-
-      <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
-        count={total} noun="reviews" note="by paper submission date" />
-
       <DataTable
         /**
          * SERVER MODE. Django does the filtering, ordering and paging, so the
@@ -181,13 +170,23 @@ export default function PaperReviewPage() {
            over the whole table — measured at 389 ms here, against 13 ms for the
            plain total — to label a checkbox. Ticking it now shows the real figure
            in the footer, taken from the count the list response already carries. */
+        // No status tabs or date-range row on this page to fold these into
+        // (see BookingsPage / TicketCentralPage), so they ride on the
+        // table's own toolbar row instead of a row of their own.
         extraToolbar={(
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-3)', whiteSpace: 'nowrap' }}
-            title="A duplicate is another review with the same speaker email on the same event. The count only covers events you are assigned to, so a duplicate on someone else's event reads as none.">
-            <input type="checkbox" className="ck" checked={dupesOnly}
-              onChange={(e) => setDupesOnly(e.target.checked)} />
-            Duplicates only
-          </label>
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-3)', whiteSpace: 'nowrap' }}
+              title="A duplicate is another review with the same speaker email on the same event. The count only covers events you are assigned to, so a duplicate on someone else's event reads as none.">
+              <input type="checkbox" className="ck" checked={dupesOnly}
+                onChange={(e) => setDupesOnly(e.target.checked)} />
+              Duplicates only
+            </label>
+            {can('create', 'paper_review') ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button> : null}
+            {can('create', 'paper_review') ? <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New review</button> : null}
+            <ClearAllButton noun="paper review" count={total}
+              onClear={paperReviewApi.clearAll} onCleared={refresh}
+              extra="Proposal submissions generated from these reviews are NOT deleted — they are unlinked from the review and stay in Proposal Submission, which has its own clear-all." />
+          </>
         )}
         groups={REVIEW_GROUPS}
         hiddenDefault={REVIEW_HIDDEN}

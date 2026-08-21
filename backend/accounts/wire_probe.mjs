@@ -715,7 +715,7 @@ ALL_MODULES.forEach((m) => { teamMatrix[m] = { view: true, create: false, update
 
 const desired = {};
 ALL_MODULES.forEach((m) => { desired[m] = { ...teamMatrix[m] }; });
-desired.reports = { view: true, create: true, update: false, delete: false };   // grant
+desired.webhooks = { view: true, create: true, update: false, delete: false };  // grant
 desired.bookings = { view: false, create: false, update: false, delete: false }; // revoke
 
 captured.length = 0;
@@ -732,11 +732,11 @@ check("a cell matching the team is sent as null, so it keeps inheriting",
   byModule.events.can_view === null && byModule.events.can_create === null,
   JSON.stringify(byModule.events));
 check("an extra grant is sent as true",
-  byModule.reports.can_create === true, JSON.stringify(byModule.reports));
+  byModule.webhooks.can_create === true, JSON.stringify(byModule.webhooks));
 check("a revoke is sent as false, not as an omission",
   byModule.bookings.can_view === false, JSON.stringify(byModule.bookings));
 check("an agreeing cell inside an overridden module still inherits",
-  byModule.reports.can_view === null, JSON.stringify(byModule.reports));
+  byModule.webhooks.can_view === null, JSON.stringify(byModule.webhooks));
 check("every module is present, so a cleared exception is actually cleared",
   deltas.length === ALL_MODULES.length, `${deltas.length} of ${ALL_MODULES.length}`);
 check("no user permission cell is undefined — null is the inherit signal",

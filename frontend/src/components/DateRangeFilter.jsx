@@ -30,7 +30,7 @@ import { DASH_PERIODS, DASH_PERIOD_LABEL } from '../lib/constants';
  */
 export default function DateRangeFilter({
   value, onChange, count = null, total = null, noun = 'records',
-  from = null, to = null, note = null, loading = false,
+  from = null, to = null, note = null, loading = false, actions = null,
 }) {
   const isAll = value === 'all';
   const range = from && to ? fmtRange(from, to) : null;
@@ -55,11 +55,20 @@ export default function DateRangeFilter({
         </span>
         <span className="s">{parts.length ? parts.join(' · ') : 'Every record on file'}</span>
       </div>
-      <Seg
-        options={DASH_PERIODS.map((p) => ({ value: p.k, label: p.l }))}
-        value={value}
-        onChange={onChange}
-      />
+      <div className="dfl-r">
+        {/* Bookings and Ticket Central fold their import/create buttons into
+            the tab row above this one (Tabs' own `actions` slot) because they
+            have a tab row to fold into. Paper Review and Proposal Submission
+            don't — no status tabs — so without this slot those buttons sat in
+            a PageHead row of their own above everything, costing this page a
+            whole extra row of height that the tabbed pages never pay. */}
+        {actions}
+        <Seg
+          options={DASH_PERIODS.map((p) => ({ value: p.k, label: p.l }))}
+          value={value}
+          onChange={onChange}
+        />
+      </div>
     </div>
   );
 }

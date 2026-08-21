@@ -58,8 +58,9 @@ class Command(BaseCommand):
                     if end_date:
                         event.end_date = end_date
 
-                    # Sales Team (Primary ForeignKey mapping)
-                    sales_name = str(row.get('Sales Team', '')).strip()
+                    # SCA (Primary ForeignKey mapping). The sheet still ships
+                    # the column under its old header, so both spellings are read.
+                    sales_name = str(row.get('SCA', '') or row.get('Sales Team', '')).strip()
                     if sales_name:
                         user = User.objects.filter(role='sales').filter(
                             models.Q(first_name__icontains=sales_name) | 
@@ -70,7 +71,6 @@ class Command(BaseCommand):
                             event.sales_executive = user
 
                     # Team & Checks (String Fields)
-                    event.speaker_sales_team   = row.get('Speaker Sales Team', '').strip()
                     event.spex_team            = row.get('SpEx Team', '').strip()
                     event.tele_marketing_team  = row.get('Tele Marketing Team', '').strip()
                     event.market_research_team = row.get('Market Research Team', '').strip()

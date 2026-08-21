@@ -1,15 +1,15 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
-import { Donut, Seg, Sparkline } from '../components/UI';
+import { Donut, Sparkline } from '../components/UI';
 import { Who, RoleBadge, EvBadge } from '../components/Badge';
 import { nf, pc, plur, rel, MON } from '../lib/helpers';
-import { ROLE_FULL, ALL_MODULES, DASH_PERIODS, DASH_PERIOD_LABEL } from '../lib/constants';
+import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
 import * as eventsApi from '../api/events';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
 import * as webhooksApi from '../api/webhooks';
-import * as reportsApi from '../api/reports';
+import * as statsApi from '../api/stats';
 import { useFetch } from '../hooks/useFetch';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
@@ -23,20 +23,6 @@ const EMPTY_STATS = {
   months: [], channels: [], booking_team_productivity: [], team_productivity: [], tickets: {}, whFailed: 0, year: 0, delta: 0,
   period: {}, attribution: {},
 };
-
-// dd Mmm yyyy, for the resolved window the backend echoes back. Read from
-// `period.from`/`period.to` rather than recomputed here: the window is the
-// server's arithmetic, and a second implementation in the browser would be one
-// timezone away from disagreeing with the numbers underneath it.
-function windowText(period) {
-  if (!period || !period.key || period.key === 'all') return 'Every booking on record';
-  if (!period.from || !period.to) return '';
-  const fmt = (iso) => {
-    const d = new Date(iso + 'T00:00:00');
-    return d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear();
-  };
-  return fmt(period.from) + ' → ' + fmt(period.to);
-}
 
 // Per-team headline. The pipeline figure is PIPELINE-wide, not team-wide (two
 // teams can work one pipeline — Sales and Telemarketing both sell delegate
@@ -63,7 +49,9 @@ export default function DashboardPage() {
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [newTicketOpen, setNewTicketOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [period, setPeriod] = useState('all');
+  // Fixed at 'all' now — the Date Range control was removed from this page
+  // (kept on Bookings only), so there is no UI left to change it.
+  const period = 'all';
 
   // Every fetch on this page is either a bounded page or an aggregate. It used to
   // hold three fetchAllPages walks (delegates 13,269 / tickets 35,690 / webhook
@@ -76,25 +64,23 @@ export default function DashboardPage() {
   const { data: oldestPending, refetchQuiet: reloadOldest } = useFetch(bookingsApi.oldestPending, [], { initialData: null });
   const { data: recentTickets, refetchQuiet: reloadTickets } = useFetch(dashRecentTickets, [], { initialData: [] });
   const { data: recentWhLogs, refetchQuiet: reloadWhLogs } = useFetch(dashRecentWhLogs, [], { initialData: [] });
-  const { data: syncLogs, refetchQuiet: reloadSyncLogs } = useFetch(reportsApi.syncLogs, [], { initialData: [] });
-  const { data: sheets, refetchQuiet: reloadSheets } = useFetch(reportsApi.sheets, [], { initialData: [] });
   // The only period-sensitive fetch on the page. useFetch memoises `run` on the
   // deps array, so [period] is what makes changing the range refetch — and the
   // ONLY thing that does. An inline arrow with an empty deps array would capture
   // the first period forever and the buttons would visibly do nothing.
-  const fetchStats = useCallback(() => reportsApi.dashboard(period), [period]);
-  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: EMPTY_STATS });
+  const fetchStats = useCallback(() => statsApi.dashboard(period), [period]);
+  const { data: stats, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: EMPTY_STATS });
 
   /**
    * The whole page, on any write.
    *
    * Nothing here is a list this user edits in place — every number is an
-   * aggregate over tables owned by other pages, plus the webhook and sheet-sync
-   * feeds, which are written by machines and not by anyone's browser. So the
-   * subscription is unfiltered (`resources: null`): a booking, a ticket, an event,
-   * a sheet source or a delivery all move something on this screen.
+   * aggregate over tables owned by other pages, plus the webhook delivery feed,
+   * which is written by machines and not by anyone's browser. So the subscription
+   * is unfiltered (`resources: null`): a booking, a ticket, an event or a
+   * delivery all move something on this screen.
    *
-   * Polled at a minute rather than the default thirty seconds. This is nine
+   * Polled at a minute rather than the default thirty seconds. This is seven
    * requests, one of them a full aggregate over the delegate table, and a
    * dashboard left open on a wall display would otherwise run that all day.
    */
@@ -106,9 +92,7 @@ export default function DashboardPage() {
       reloadOldest();
       reloadTickets();
       reloadWhLogs();
-      reloadSyncLogs();
-      reloadSheets();
-    }, [reloadStats, reloadEvents, reloadBookings, reloadOldest, reloadTickets, reloadWhLogs, reloadSyncLogs, reloadSheets]),
+    }, [reloadStats, reloadEvents, reloadBookings, reloadOldest, reloadTickets, reloadWhLogs]),
     {
       // Was `resources: null` — every write anywhere in the CRM triggered this
       // whole callback. A paper review save, a proposal edit, a company merge, a
@@ -118,8 +102,8 @@ export default function DashboardPage() {
       //
       // Scoped to the resources this page actually READS. Not the three that
       // feed the aggregate alone: the callback above also reloads the recent
-      // tickets, webhook delivery and sheet-sync panels, so narrowing to
-      // delegates/invoices/events would have left those three stale until the
+      // tickets and webhook delivery panels, so narrowing to
+      // delegates/invoices/events would have left those two stale until the
       // poll. The excluded set is still most of the app — paper-review,
       // proposals, companies, users, teams, google_sync, import, search.
       //
@@ -127,10 +111,10 @@ export default function DashboardPage() {
       // strips the /api/ prefix and the query string, and pathTouches() matches
       // by prefix in both directions, so 'delegates' catches 'delegates/1234'
       // and 'webhooks' catches both 'webhooks/logs/9/retry' and 'webhooks/keys'.
-      resources: ['delegates', 'invoices', 'events', 'tickets', 'webhooks', 'reports'],
-      // Matched to the backend cache TTL. reports.dashboard() is cached for 120s
+      resources: ['delegates', 'invoices', 'events', 'tickets', 'webhooks'],
+      // Matched to the backend cache TTL. stats.dashboard() is cached for 120s
       // (config/views.py), so polling faster than that only ever hits the cache —
-      // cheap, but nine requests' worth of cheap, per open tab, forever.
+      // cheap, but seven requests' worth of cheap, per open tab, forever.
       poll: 120_000,
     },
   );
@@ -139,15 +123,12 @@ export default function DashboardPage() {
   const RECENT_BOOKINGS = recentBookings || [];
   const RECENT_TICKETS = recentTickets || [];
   const WH_LOGS = recentWhLogs || [];
-  const SYNC_LOGS = syncLogs || [];
-  const SHEETS = sheets || [];
   const S = stats || EMPTY_STATS;
-  // Read through a local: the resolved window arrives with the aggregate, so it
-  // is absent on the very first render and on any response that predates it.
-  // Reaching straight into S.period.from there is the same crash the
-  // oldestPending note below describes — one undefined read blanks the page.
-  const P = S.period || {};
-  const RANGE = period === 'all' ? 'all time' : DASH_PERIOD_LABEL[period].toLowerCase();
+  // `period` is fixed at 'all' now (see above), so this is always 'all time' —
+  // kept as a named value rather than inlined below because the several card
+  // captions that read it are clearer for saying what it is than for saying
+  // where it comes from.
+  const RANGE = 'all time';
 
   const hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
@@ -181,7 +162,6 @@ export default function DashboardPage() {
   // whFailed is a server-side count (webhooks/logs/?status=failed, read for
   // `count`), not a filter over whatever logs happen to be loaded.
   if (canView('webhooks') && S.whFailed) acts.push({ ic: 'webhook', tone: 'var(--red)', t: 'Failed webhook deliveries', s: 'Website bookings may be missing', n: S.whFailed, go: () => nav('/webhooks') });
-  if (canView('reports')) { const e = SHEETS.filter((s) => s.status === 'error').length; if (e) acts.push({ ic: 'sheet', tone: 'var(--amber)', t: 'Sheet sources erroring', s: 'Sync has not completed', n: e, go: () => nav('/reports/registry') }); }
   if (canView('events') && live.length) acts.push({ ic: 'zap', tone: 'var(--green)', t: 'Events live right now', s: live.slice(0, 2).map((e) => e.event_code).join(', ') + (live.length > 2 ? ' +' + (live.length - 2) : ''), n: live.length, go: () => nav('/events') });
 
   const lines = [
@@ -197,7 +177,6 @@ export default function DashboardPage() {
   RECENT_BOOKINGS.slice(0, 3).forEach((b) => feed.push({ ic: 'receipt', t: <><b>{b.name}</b> booked onto <b>{b.event_code}</b></>, m: rel(b.request_date) + ' · ' + b.payment_status }));
   RECENT_TICKETS.slice(0, 2).forEach((t) => feed.push({ ic: 'ticket', t: <><b>{t.ticket_number}</b> completed by <b>{t.assign_name}</b></>, m: rel(t.complete_date) + ' · ' + nf(t.mined_count) + ' contacts mined' }));
   WH_LOGS.slice(0, 2).forEach((w) => feed.push({ ic: 'webhook', t: <>Webhook <b>{w.api_key_name}</b> — {w.status}</>, m: rel(w.received_at) + ' · ' + plur(w.records, 'record') }));
-  SYNC_LOGS.slice(0, 2).forEach((s) => feed.push({ ic: 'sheet', t: <><b>{s.source}</b> sync {s.status}</>, m: rel(s.started_at) + ' · ' + nf(s.rows_written) + ' rows' }));
 
   function toggleTeam(id) { setOpenTeams((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
 
@@ -223,24 +202,6 @@ export default function DashboardPage() {
           {can('create', 'bookings') ? <button onClick={() => setImportOpen(true)}><Icon name="download" size={14} />Import data</button> : null}
           <button onClick={() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}><Icon name="target" size={14} />Search anything</button>
         </div>
-      </div>
-
-      <div className="dfl">
-        <div className="dfl-t">
-          <span className="n">
-            Date range<span className="tg bg-neutral">{DASH_PERIOD_LABEL[period]}</span>
-            {statsLoading ? <span className="s" style={{ fontWeight: 500 }}>updating…</span> : null}
-          </span>
-          <span className="s">
-            {windowText(P)} · applies to the pipelines, monthly chart, intake mix and team bookings — not to the attention queue, tickets or webhooks
-            {P.undated_records ? ' · ' + plur(P.undated_records, 'record') + ' carry no booking date and appear only under All time' : ''}
-          </span>
-        </div>
-        <Seg
-          options={DASH_PERIODS.map((p) => ({ value: p.k, label: p.l }))}
-          value={period}
-          onChange={setPeriod}
-        />
       </div>
 
       <div className="dg w21">
@@ -315,7 +276,7 @@ export default function DashboardPage() {
       ) : null}
 
       <div className="dg w21">
-        {canView('reports') ? (
+        {canView('bookings') ? (
           <div className="card">
             <div className="card-h">
               {/* The H1→H2 swing is only meaningful across a full year; inside a
@@ -365,7 +326,7 @@ export default function DashboardPage() {
         ) : null}
       </div>
 
-      {canView('reports') ? (
+      {canView('bookings') ? (
         <>
           <div className="sl">Team productivity — booking pipelines<span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>{RANGE}</span></div>
           {S.booking_team_productivity.map((t) => {
@@ -459,7 +420,7 @@ export default function DashboardPage() {
       ) : null}
 
       <div className="dg c2" style={{ marginTop: 18 }}>
-        {canView('reports') ? (
+        {canView('bookings') ? (
           <div className="card">
             <div className="card-h"><div><div className="card-t">Where bookings come from</div><div className="card-s">Share of total intake</div></div></div>
             {S.channels.map((c) => (

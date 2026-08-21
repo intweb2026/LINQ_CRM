@@ -9,7 +9,7 @@ Features:
 - Exponential-backoff retry on transient errors
 - Sheet ID extraction from full URLs
 - Worksheet listing via spreadsheets.get metadata call
-- Graceful degradation: raises clear exceptions the importer catches and logs
+- Graceful degradation: raises clear exceptions the caller catches and logs
 """
 import logging
 import os

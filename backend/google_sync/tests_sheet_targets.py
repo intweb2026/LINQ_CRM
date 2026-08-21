@@ -23,6 +23,7 @@ from companies.models import Company
 from rest_framework.test import APIClient
 
 from accounts.models import User
+from teams.models import Team
 from sync import catalog
 
 from .models import GoogleSheetSyncLog, SheetSyncTarget
@@ -318,14 +319,88 @@ class RunTargetTests(TestCase):
         self.assertEqual(_FakeSheets.instances, [])
 
 
+# ── Inside Sync all ───────────────────────────────────────────────────────────
+
+class FullSyncRunsPushesTests(TestCase):
+    """
+    A push is a sync like any other, so "Sync all" has to carry it.
+
+    Before this, a push only ever moved when somebody pressed its own button;
+    the scheduled full_sync wrote bookings and events and left every push
+    untouched, so a sheet could sit stale for days with the page reporting a
+    successful sync.
+    """
+
+    def setUp(self):
+        inv = _booking(payment_status="Paid")
+        _delegate(inv, "Ada", "ada@acme.test")
+        self.enabled = SheetSyncTarget.objects.create(
+            name="Delegate contacts", spreadsheet_id="1AbCdEf",
+            tab_name="Delegate contacts", module="bookings", columns=THREE,
+        )
+        self.disabled = SheetSyncTarget.objects.create(
+            name="Paused push", spreadsheet_id="1AbCdEf",
+            tab_name="Paused", module="bookings", columns=THREE,
+            is_enabled=False,
+        )
+
+    def _full_sync(self):
+        from .services import SyncOrchestrator
+
+        with _patch_sheets(),                 mock.patch("services.google_sheets.google_sheets", object()),                 mock.patch("sync.bookings_sync.sync_bookings"),                 mock.patch("sync.events_sync.sync_events"):
+            return SyncOrchestrator.run(sync_type="full_sync", triggered_by="tester")
+
+    def test_sync_all_writes_every_enabled_push(self):
+        log = self._full_sync()
+        self.enabled.refresh_from_db()
+
+        self.assertEqual(self.enabled.last_status, SheetSyncTarget.Status.SUCCESS)
+        self.assertEqual(log.sync_summary["pushes"], {"Delegate contacts": 1})
+        self.assertEqual(log.records_processed, 1)
+
+    def test_a_disabled_push_is_left_alone(self):
+        self._full_sync()
+        self.disabled.refresh_from_db()
+
+        self.assertEqual(self.disabled.last_status, SheetSyncTarget.Status.NEVER)
+        self.assertNotIn("Paused", [f.written for f in _FakeSheets.instances][0])
+
+    def test_each_push_still_keeps_its_own_log_row(self):
+        self._full_sync()
+
+        self.assertTrue(
+            GoogleSheetSyncLog.objects.filter(
+                sync_type=GoogleSheetSyncLog.SyncType.SHEET_TARGET,
+                sheet_name="Delegate contacts",
+            ).exists()
+        )
+
+    def test_a_failing_push_makes_the_whole_sync_partial(self):
+        from .services import SyncOrchestrator
+
+        with mock.patch("services.google_sheets.google_sheets", object()),                 mock.patch("sync.bookings_sync.sync_bookings"),                 mock.patch("sync.events_sync.sync_events"),                 mock.patch("services.google_sheets.GoogleSheetsService",
+                           side_effect=RuntimeError("no credentials")):
+            log = SyncOrchestrator.run(sync_type="full_sync", triggered_by="tester")
+
+        self.assertEqual(log.status, GoogleSheetSyncLog.Status.FAILED)
+        self.assertIn("Push Delegate contacts", log.error_message)
+
+
 # ── Over the wire ─────────────────────────────────────────────────────────────
 
 class TargetApiTests(TestCase):
 
     def setUp(self):
+        # An all-access TEAM, not merely role="admin". These endpoints moved from
+        # IsAdminRole to crm_permission("google_sync") when Google Sync got its own
+        # module, and under that gate `role` grants nothing on its own — access
+        # comes from the team's grid, which is all-True for an all-access team.
+        # Every other module's tests are set up the same way.
         self.admin = User.objects.create_user(
             username="admin1", password="pw", role="admin", is_staff=True,
         )
+        self.admin.team = Team.objects.create(name="gsync_admin", is_all_access=True)
+        self.admin.save()
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
 

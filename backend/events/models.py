@@ -37,7 +37,6 @@ class Event(models.Model):
     # ── New fields from Events.csv ──────────────────────────────────────────
     master_code            = models.CharField(max_length=50, blank=True, default="", db_index=True)
     official_name          = models.CharField(max_length=255, blank=True, default="")
-    speaker_sales_team     = models.CharField(max_length=255, blank=True, default="")
     spex_team              = models.CharField(max_length=255, blank=True, default="")
     tele_marketing_team    = models.CharField(max_length=255, blank=True, default="")
     market_research_team   = models.CharField(max_length=255, blank=True, default="")

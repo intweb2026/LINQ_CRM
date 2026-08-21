@@ -30,9 +30,14 @@ class TeamViewSet(viewsets.ModelViewSet):
             .prefetch_related("permissions", "members")
             .order_by("name")
         )
-        show_archived = self.request.query_params.get("archived") == "1"
-        if not show_archived:
-            qs = qs.filter(is_archived=False)
+        # The archived filter belongs to the LIST only. Applied to every action, it
+        # also hid archived teams from the detail routes, so an archived team could
+        # not be PATCHed back, nor toggled by the archive action, nor even read —
+        # /api/teams/{id}/ answered 404 and archiving was a one-way door with no
+        # way out but SQL. A team the caller reached by id is a team they named.
+        if self.action == "list":
+            if self.request.query_params.get("archived") != "1":
+                qs = qs.filter(is_archived=False)
         return qs
 
     def perform_create(self, serializer):
@@ -45,7 +50,15 @@ class TeamViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        old_name = serializer.instance.name
+        # Read BEFORE save(): serializer.instance is the live object, so these are
+        # the post-save values once save() has run and the comparison below would
+        # never fire. The edit modal now writes the archive flag and, for someone
+        # holding the `roles` right, the all-access flag through this same PATCH,
+        # and both are the kind of change that has to leave a trace — archiving
+        # takes a whole column off the board, and all-access opens every module.
+        old_name     = serializer.instance.name
+        old_archived = serializer.instance.is_archived
+        old_all      = serializer.instance.is_all_access
         team = serializer.save()
         if team.name != old_name:
             TeamActivityLog.objects.create(
@@ -53,6 +66,23 @@ class TeamViewSet(viewsets.ModelViewSet):
                 team=team,
                 moved_by=self.request.user,
                 notes=f"Renamed from '{old_name}' to '{team.name}'",
+            )
+        if team.is_archived != old_archived:
+            TeamActivityLog.objects.create(
+                action_type=TeamActivityLog.ActionType.TEAM_ARCHIVED,
+                team=team,
+                moved_by=self.request.user,
+                notes=f"Team {'archived' if team.is_archived else 'unarchived'}",
+            )
+        if team.is_all_access != old_all:
+            TeamActivityLog.objects.create(
+                action_type=TeamActivityLog.ActionType.PERMISSIONS_CHANGED,
+                team=team,
+                moved_by=self.request.user,
+                notes=(
+                    f"All-access {'granted to' if team.is_all_access else 'removed from'} "
+                    f"'{team.name}'"
+                ),
             )
 
     def destroy(self, request, *args, **kwargs):
@@ -187,7 +217,13 @@ class TeamViewSet(viewsets.ModelViewSet):
                     pass
             
             if clean_ids:
-                leads = list(User.objects.filter(pk__in=clean_ids, team=team))
+                # Ordered by the payload, not by whatever the database returns.
+                # `primary_lead` below is leads[0], so an unordered queryset meant
+                # the caller could not say WHICH of several leads is the primary
+                # one — the edit modal lists them in order and states that the
+                # first is primary, which is only true if that order survives.
+                found = {u.id: u for u in User.objects.filter(pk__in=clean_ids, team=team)}
+                leads = [found[i] for i in clean_ids if i in found]
                 User.objects.filter(pk__in=[u.id for u in leads]).update(is_team_lead=True)
         elif user_id:
             # Single-lead assignment (backward compatibility)

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { EvBadge, Who } from '../components/Badge';
@@ -38,11 +37,22 @@ export default function EventsPage() {
 
   return (
     <>
-      {/* No tab strip on this page, so the actions keep a row of their own —
-          but the title and description are gone, so that row now sits directly
-          under the breadcrumb instead of below a block of prose. */}
-      <PageHead title="Events"
-        actions={<>
+      {/* `infinite` without `server`. eventsApi.list already walks every page up
+          front via fetchAllPages, so the whole catalogue is in memory and
+          scrolling reveals more of what is already there rather than fetching;
+          there is no request per scroll, and the `opts` closures below keep
+          seeing the full set, which is what makes the filter dropdowns list
+          every real location, type and team rather than only the values that
+          happen to be on screen. Bookings and Tickets pair `infinite` with
+          `server` instead, because those tables are too large to hold at once;
+          this one is the catalogue. */}
+      <DataTable
+        rows={EVENTS} noun="events" infinite pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
+        select={can('update', 'events')}
+        // No tab strip on this page to fold these into (see BookingsPage /
+        // TicketCentralPage), so they ride on the table's own toolbar row
+        // instead of a PageHead row of their own — one fewer row of height.
+        extraToolbar={<>
           {can('create', 'events') ? <>
             <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
             <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New event</button>
@@ -59,20 +69,7 @@ export default function EventsPage() {
           <ClearAllButton noun="events" count={EVENTS.length}
             onClear={eventsApi.clearAll} onCleared={refresh}
             extra="Bookings are not deleted with the catalogue — they store their event as a text code, so they will survive with codes that no longer resolve to an event. Imports in Paper Review, Proposal Submission and Bookings will also reject every row until the catalogue is restored, because they match each row's Event Code against it." />
-        </>} />
-
-      {/* `infinite` without `server`. eventsApi.list already walks every page up
-          front via fetchAllPages, so the whole catalogue is in memory and
-          scrolling reveals more of what is already there rather than fetching;
-          there is no request per scroll, and the `opts` closures below keep
-          seeing the full set, which is what makes the filter dropdowns list
-          every real location, type and team rather than only the values that
-          happen to be on screen. Bookings and Tickets pair `infinite` with
-          `server` instead, because those tables are too large to hold at once;
-          this one is the catalogue. */}
-      <DataTable
-        rows={EVENTS} noun="events" infinite pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
-        select={can('update', 'events')}
+        </>}
         groups={[
           { key: 'ev', label: 'Event' }, { key: 'web', label: 'Web presence' }, { key: 'own', label: 'Team ownership' },
           { key: 'meta', label: 'Naming & metadata' }, { key: 'rel', label: 'Related & upcoming events' },

@@ -234,7 +234,7 @@ class DashboardAggregateView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    # Mirrors bucketOf() in frontend/src/api/reports.js. Order matters: the
+    # Mirrors bucketOf() in frontend/src/api/stats.js. Order matters: the
     # Credit prefix test has to run before the plain equality tests.
     BUCKETS = ["paid", "pending", "free", "credit", "unpaid", "cancelled"]
 
@@ -256,9 +256,14 @@ class DashboardAggregateView(APIView):
     # The Event column each pipeline's ownership falls back to, for the
     # `attribution` diagnostics block.
     PIPELINE_EVENT_FIELD = {
-        "sales": "Event.sales_executive / Event.sales_team",
+        "sales": "Event.sales_executive / Event.sales_team (SCA)",
         "spex": "Event.spex_team",
-        "speaker": "Event.speaker_sales_team",
+        # Speaker Sales has been merged into SCA, so Event.speaker_sales_team is
+        # gone and the speaker pipeline takes its ownership from the same column
+        # Sales does. The pipelines stay separate because they are separated by
+        # the BOOKING CODE (speaker_q vs the delegate remainder), not by which
+        # event column names the owner.
+        "speaker": "Event.sales_executive / Event.sales_team (SCA)",
     }
 
     # Team-name keywords, aligned with accounts.models.User.save(), which assigns
@@ -393,7 +398,9 @@ class DashboardAggregateView(APIView):
         executive), so it is the fallback, per pipeline:
             sales / telemarketing   Event.sales_executive, else Event.sales_team
             spex                    Event.spex_team
-            speaker                 Event.speaker_sales_team
+            speaker                 the same as sales — Event.speaker_sales_team
+                                    is gone since the Speaker Sales team was
+                                    merged into SCA (events migration 0017)
         the same fields book_event/views.py:212-238 attributes from.
 
         FREE TEXT RESOLVES EXACT-ONLY
@@ -416,26 +423,28 @@ class DashboardAggregateView(APIView):
         from_fk = 0
 
         rows = Event.objects.values(
-            "event_code", "sales_executive_id",
-            "sales_team", "spex_team", "speaker_sales_team",
+            "event_code", "sales_executive_id", "sales_team", "spex_team",
         )
         for ev in rows:
             code = ev["event_code"]
             if ev["sales_executive_id"]:
-                owner["sales"][code] = ev["sales_executive_id"]
-                counts["sales"] += 1
+                sales_owner = ev["sales_executive_id"]
                 from_fk += 1
             else:
                 user, _ = resolver.resolve(ev["sales_team"])
-                if user is not None:
-                    owner["sales"][code] = user.id
-                    counts["sales"] += 1
-            for pipeline, field in (("spex", "spex_team"),
-                                    ("speaker", "speaker_sales_team")):
-                user, _ = resolver.resolve(ev[field])
-                if user is not None:
-                    owner[pipeline][code] = user.id
+                sales_owner = user.id if user is not None else None
+            if sales_owner is not None:
+                # The speaker pipeline reads the SCA owner too: one merged team,
+                # one column. Its numbers stay its own because the booking-code
+                # classification, not this map, is what splits speaker bookings
+                # from delegate ones.
+                for pipeline in ("sales", "speaker"):
+                    owner[pipeline][code] = sales_owner
                     counts[pipeline] += 1
+            user, _ = resolver.resolve(ev["spex_team"])
+            if user is not None:
+                owner["spex"][code] = user.id
+                counts["spex"] += 1
 
         diagnostics = {
             p: {

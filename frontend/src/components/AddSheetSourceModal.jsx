@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import Modal from './Modal';
 import { Icon } from '../lib/icons';
-import * as reportsApi from '../api/reports';
+import * as sheetSourcesApi from '../api/sheetSources';
 import { useToast } from '../context/ToastContext';
 
 const SHEET_TYPES = ['bookings', 'events', 'delegates', 'revenue', 'pipeline', 'attendance', 'custom'];
@@ -37,7 +37,7 @@ export default function AddSheetSourceModal({ onClose, onSaved }) {
     if (!url.trim()) { toast('Paste a Google Sheet URL first', 'er'); return; }
     setDetecting(true);
     try {
-      const worksheets = await reportsApi.listWorksheets(url.trim());
+      const worksheets = await sheetSourcesApi.listWorksheets(url.trim());
       if (!worksheets.length) { toast('No worksheets found in that sheet', 'wn'); return; }
       setTabs(worksheets);
       if (!worksheets.includes(worksheet)) setWorksheet(worksheets[0]);
@@ -56,7 +56,7 @@ export default function AddSheetSourceModal({ onClose, onSaved }) {
     if (!trimmedUrl) { toast('Google Sheet URL is required', 'er'); return; }
     setSaving(true);
     try {
-      await reportsApi.addSource({
+      await sheetSourcesApi.addSource({
         name: trimmedName, url: trimmedUrl, type, worksheet: worksheet.trim() || 'Sheet1',
         frequency, syncEnabled, description: description.trim(), notes: notes.trim(),
       });

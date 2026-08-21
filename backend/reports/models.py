@@ -1,12 +1,14 @@
 """
 reports/models.py
 ──────────────────
-GoogleSheetSource  — configures one Google Sheet tab as a CRM data source
-ReportDefinition   — named report composed of one or more sheet sources
-ReportRow          — normalized, deduplicated row from a synced sheet
-ReportSyncLog      — per-run audit log for every import/sync operation
+GoogleSheetSource — configures one Google Sheet tab as a CRM data source.
+
+The only model left in this app. ReportDefinition, ReportRow and ReportSyncLog
+went with the Reports page: they existed to hold the rows that page previewed and
+the per-run log its Sync Logs tab listed, and nothing reads either now. What
+remains is the registry behind the Google Sync page's "Add sheet source" — a
+stored connection plus the live worksheet lookup that fills it in.
 """
-import secrets
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -75,6 +77,9 @@ class GoogleSheetSource(models.Model):
                                         help_text="Formula definitions reproduced from Google Sheets")
 
     # ── Sync tracking ─────────────────────────────────────────────────────────
+    # Left on the model, no longer written by anything: the importer that set
+    # them is gone with the Reports page. Kept so a source registered before the
+    # removal still reads back its last known state.
     last_synced_at        = models.DateTimeField(null=True, blank=True)
     last_successful_sync  = models.DateTimeField(null=True, blank=True)
     last_failed_sync      = models.DateTimeField(null=True, blank=True)
@@ -114,127 +119,3 @@ class GoogleSheetSource(models.Model):
                     # Remove any query string or hash
                     return candidate.split("?")[0].split("#")[0]
         return url_or_id.strip()
-
-
-class ReportDefinition(models.Model):
-    """A named report composed of one or more GoogleSheetSource records."""
-
-    class ReportType(models.TextChoices):
-        TABLE   = "table",   "Table"
-        SUMMARY = "summary", "Summary"
-        GROUPED = "grouped", "Grouped"
-        PIVOT   = "pivot",   "Pivot"
-
-    name         = models.CharField(max_length=200)
-    slug         = models.SlugField(unique=True, max_length=200)
-    description  = models.TextField(blank=True, default="")
-    report_type  = models.CharField(max_length=20, choices=ReportType.choices,
-                                    default=ReportType.TABLE)
-    sources      = models.ManyToManyField(
-        GoogleSheetSource,
-        blank=True,
-        related_name="report_definitions",
-    )
-
-    # Display & calculation configuration
-    column_config      = models.JSONField(default=list, blank=True,
-                                          help_text="Ordered list of column definitions")
-    filter_config      = models.JSONField(default=dict, blank=True)
-    grouping_config    = models.JSONField(default=dict, blank=True)
-    calculation_config = models.JSONField(default=dict, blank=True)
-
-    is_active   = models.BooleanField(default=True)
-    created_by  = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True, blank=True,
-        on_delete=models.SET_NULL,
-        related_name="created_reports",
-    )
-    created_at  = models.DateTimeField(default=timezone.now)
-    updated_at  = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "report_definitions"
-        ordering = ["name"]
-        verbose_name = "Report Definition"
-
-    def __str__(self):
-        return self.name
-
-
-class ReportRow(models.Model):
-    """One data row imported from a synced Google Sheet."""
-
-    source          = models.ForeignKey(
-        GoogleSheetSource,
-        on_delete=models.CASCADE,
-        related_name="rows",
-    )
-    row_number      = models.PositiveIntegerField(default=0,
-                                                  help_text="Original row index in the sheet (1-based, after header)")
-    raw_data        = models.JSONField(default=dict,
-                                       help_text="Verbatim column data keyed by sheet header")
-    processed_data  = models.JSONField(default=dict,
-                                       help_text="After column mapping and transformations applied")
-    row_hash        = models.CharField(max_length=64, blank=True, default="",
-                                       help_text="SHA-256 of raw_data for change detection")
-    is_active       = models.BooleanField(default=True, db_index=True)
-    synced_at       = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        db_table = "report_rows"
-        ordering = ["source", "row_number"]
-        indexes = [
-            models.Index(fields=["source", "is_active"],  name="rr_source_active_idx"),
-            models.Index(fields=["source", "row_number"], name="rr_source_row_idx"),
-        ]
-
-    def __str__(self):
-        return f"Row {self.row_number} — {self.source.name}"
-
-
-class ReportSyncLog(models.Model):
-    """Per-run audit log for every import/sync operation on a GoogleSheetSource."""
-
-    class Status(models.TextChoices):
-        RUNNING = "running", "Running"
-        SUCCESS = "success", "Success"
-        PARTIAL = "partial", "Partial"
-        FAILED  = "failed",  "Failed"
-
-    class TriggerSource(models.TextChoices):
-        MANUAL    = "manual",    "Manual (Admin)"
-        SCHEDULER = "scheduler", "Scheduler"
-        API       = "api",       "API"
-        SYSTEM    = "system",    "System"
-
-    source             = models.ForeignKey(
-        GoogleSheetSource,
-        null=True, blank=True,
-        on_delete=models.SET_NULL,
-        related_name="sync_logs",
-    )
-    status             = models.CharField(max_length=20, choices=Status.choices,
-                                          default=Status.RUNNING, db_index=True)
-    started_at         = models.DateTimeField(default=timezone.now)
-    completed_at       = models.DateTimeField(null=True, blank=True)
-    duration_seconds   = models.FloatField(null=True, blank=True)
-    records_processed  = models.PositiveIntegerField(default=0)
-    records_created    = models.PositiveIntegerField(default=0)
-    records_updated    = models.PositiveIntegerField(default=0)
-    records_failed     = models.PositiveIntegerField(default=0)
-    error_message      = models.TextField(blank=True, default="")
-    triggered_by       = models.CharField(max_length=150, blank=True, default="")
-    trigger_source     = models.CharField(max_length=20, choices=TriggerSource.choices,
-                                          default=TriggerSource.MANUAL)
-
-    class Meta:
-        db_table = "report_sync_logs"
-        ordering = ["-started_at"]
-        indexes = [
-            models.Index(fields=["source", "-started_at"], name="rsl_source_started_idx"),
-        ]
-
-    def __str__(self):
-        src = self.source.name if self.source_id else "unknown"
-        return f"[{self.status}] {src} @ {self.started_at:%Y-%m-%d %H:%M}"

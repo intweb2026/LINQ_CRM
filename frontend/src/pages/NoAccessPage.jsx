@@ -1,16 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
-import { useSession } from '../context/SessionContext';
 import { homeFor } from '../lib/nav';
 
 export default function NoAccessPage({ module }) {
   const nav = useNavigate();
-  const { canView } = useSession();
-  // The way out has to be a page this user can actually open. Hardcoding the
-  // landing page would send a user who lacks Reports access — the only kind who
-  // can see "No access to Reports" — straight back to the page they just bounced
-  // off. homeFor() returns Dashboard for exactly those roles.
-  const home = homeFor(canView);
+  // The way out has to be a page this user can actually open, and Dashboard is
+  // the only page that is not module-gated, so homeFor() can never point back at
+  // a module this user just bounced off.
+  const home = homeFor();
   return (
     <div className="card">
       <div className="mt">

@@ -22,8 +22,10 @@ WHAT WAS WRONG, MEASURED ON THE 2026-06-11 SNAPSHOT
     is the same one the Bookings screens use.
 
 WHAT IS STILL ZERO, AND WHY THAT IS NOT A BUG
-`Event.spex_team` and `Event.speaker_sales_team` are empty on all 217 events, so
-SpEx and Speaker bookings cannot be split by person at all. The view reports that
+`Event.spex_team` is empty on all 217 events, so SpEx bookings cannot be split by
+person at all. (`Event.speaker_sales_team` was the same and is now gone: the
+Speaker Sales team is merged into SCA, and the speaker pipeline takes its owner
+from `Event.sales_team` alongside Sales.) The view reports that
 as `attribution_available: False` with the pipeline's real totals beside it,
 rather than as a 0 indistinguishable from "sold nothing". Two tests below pin
 that distinction; it is the difference between a missing number and a wrong one.
@@ -100,8 +102,8 @@ class DashboardAggregateTestCase(TestCase):
 
         # Event.save() writes sales_team from the FK, so the catalogue names the
         # rep both ways — the FK path is what the view prefers.
-        # spex_team / speaker_sales_team are left blank, exactly as all 217 rows
-        # of the real catalogue have them.
+        # spex_team is left blank, exactly as all 217 rows of the real catalogue
+        # have it.
         cls.event = Event.objects.create(
             event_code="TST", official_event_name="Test Event",
             event_date=cls.today + timedelta(days=30), sales_executive=cls.rep,

@@ -25,7 +25,7 @@ class EventListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "event_code", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
-            "sales_team", "team_leader", "speaker_sales_team", "telemarketing_team", "spex_team",
+            "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
@@ -56,7 +56,7 @@ class EventDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id", "event_code", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
-            "sales_team", "team_leader", "speaker_sales_team", "telemarketing_team", "spex_team",
+            "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
@@ -95,7 +95,7 @@ class EventWriteSerializer(serializers.ModelSerializer):
         fields = [
             "event_code", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
-            "sales_team", "team_leader", "speaker_sales_team", "telemarketing_team", "spex_team",
+            "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",

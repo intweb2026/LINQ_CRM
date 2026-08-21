@@ -219,7 +219,7 @@ class ListScopeTests(ScopeBase):
         codes, _ = self.codes_seen_by(self.admin)
         self.assertEqual(codes, ["AFS - JS", "BIU", "BIUK - PM"])
 
-    def test_hp_sees_everything(self):
+    def test_dapi_sees_everything(self):
         codes, _ = self.codes_seen_by(self.hp)
         self.assertEqual(codes, ["AFS - JS", "BIU", "BIUK - PM"])
 

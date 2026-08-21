@@ -15,7 +15,7 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   const toast = useToast();
   const nav = useNavigate();
   const loc = useLocation();
-  const home = homeFor(canView);
+  const home = homeFor();
   // Compared against each item's `path`, not its `id` — see nav.js: 'paper_review'
   // is underscored where /paper-review is hyphenated, so the id comparison this
   // replaces left Paper Review and Proposal Submission permanently unhighlighted

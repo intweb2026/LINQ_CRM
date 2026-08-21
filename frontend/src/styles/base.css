@@ -82,6 +82,17 @@ html[data-theme=dark] ::selection{color:#fff}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip{position:fixed;top:-60px;left:12px;z-index:200;background:var(--t-500);color:#fff;padding:9px 15px;border-radius:var(--r-md);font-size:12.5px;font-weight:650;transition:top .16s}
 .skip:focus{top:12px;text-decoration:none}
+/* #app's only in-flow child is #main (.rail and .top are position:fixed, out
+   of flow) — a plain block #app has no border/padding between them, so
+   #main's margin-top:56px (components.css) collapsed straight through #app
+   and #root into body, shoving the WHOLE document down 56px with nothing
+   visible filling that gap (the fixed sidebar/topbar paint over it, so it
+   never looked wrong) and leaving the document exactly 56px taller than the
+   viewport — a permanent, page-independent scrollbar underneath whatever a
+   given page's own content added. display:flex is enough to start a new
+   formatting context that blocks the collapse: #main's margin becomes real
+   spacing inside #app instead of leaking out of it. */
+#app{display:flex;flex-direction:column}
 
 /* ═══════ SIDE RAIL ═══════ */
 .rail{position:fixed;top:0;left:0;bottom:0;width:var(--rail-w);background:var(--rail);border-right:1px solid var(--rail-bd);z-index:80;display:flex;flex-direction:column;transition:width .22s var(--ease),transform .22s var(--ease)}

@@ -407,15 +407,15 @@ class AdminCrudTests(TestCase):
         self.assertEqual(
             self.client.put(
                 f"/api/users/{created['id']}/permissions/",
-                self._delta("reports", can_create=True, can_delete=False),
+                self._delta("webhooks", can_create=True, can_delete=False),
                 format="json",
             ).status_code, 200,
         )
 
         resolved = User.objects.get(pk=created["id"]).effective_permissions()
-        self.assertTrue(resolved["reports"]["view"], "the team grant was lost")
-        self.assertTrue(resolved["reports"]["create"], "the day-one grant did not apply")
-        self.assertFalse(resolved["reports"]["delete"], "the day-one revoke did not apply")
+        self.assertTrue(resolved["webhooks"]["view"], "the team grant was lost")
+        self.assertTrue(resolved["webhooks"]["create"], "the day-one grant did not apply")
+        self.assertFalse(resolved["webhooks"]["delete"], "the day-one revoke did not apply")
         self.assertTrue(resolved["events"]["view"], "the exception leaked to another module")
 
     def test_a_user_can_be_granted_something_their_team_lacks(self):
@@ -428,12 +428,12 @@ class AdminCrudTests(TestCase):
 
         resp = self.client.put(
             f"/api/users/{member.id}/permissions/",
-            self._delta("reports", can_view=True), format="json",
+            self._delta("webhooks", can_view=True), format="json",
         )
         self.assertEqual(resp.status_code, 200, resp.content)
 
         resolved = User.objects.get(pk=member.pk).effective_permissions()
-        self.assertTrue(resolved["reports"]["view"], "the extra grant did not apply")
+        self.assertTrue(resolved["webhooks"]["view"], "the extra grant did not apply")
         self.assertFalse(resolved["events"]["view"], "the grant leaked to another module")
 
     def test_a_user_can_have_something_taken_away_that_their_team_grants(self):
@@ -470,16 +470,16 @@ class AdminCrudTests(TestCase):
             username="follower", password="x", email="follower@iq-hub.com", team=team,
         )
         self.client.put(f"/api/users/{member.id}/permissions/",
-                        self._delta("reports", can_create=True), format="json")
+                        self._delta("webhooks", can_create=True), format="json")
 
         # The team now loses view on everything. The member kept an override on
-        # reports.create only, so their view must follow the team down.
+        # webhooks.create only, so their view must follow the team down.
         self.client.put(f"/api/teams/{team.id}/permissions/",
                         self._grid(can_view=False), format="json")
 
         resolved = User.objects.get(pk=member.pk).effective_permissions()
-        self.assertFalse(resolved["reports"]["view"], "an inherited cell did not follow the team")
-        self.assertTrue(resolved["reports"]["create"], "the explicit grant was lost")
+        self.assertFalse(resolved["webhooks"]["view"], "an inherited cell did not follow the team")
+        self.assertTrue(resolved["webhooks"]["create"], "the explicit grant was lost")
 
     def test_an_all_null_module_is_not_stored(self):
         team = Team.objects.create(name="Nulls")
@@ -487,7 +487,7 @@ class AdminCrudTests(TestCase):
             username="nulls", password="x", email="nulls@iq-hub.com", team=team,
         )
         self.client.put(f"/api/users/{member.id}/permissions/",
-                        self._delta("reports"), format="json")
+                        self._delta("webhooks"), format="json")
         self.assertEqual(
             member.permission_overrides.count(), 0,
             "an override row with nothing in it was kept, and reads as an exception",

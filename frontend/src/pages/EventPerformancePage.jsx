@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { PageHead } from '../components/UI';
 import DataTable from '../components/DataTable';
 import Drawer from '../components/Drawer';
 import { Icon } from '../lib/icons';
@@ -53,10 +52,12 @@ export default function EventPerformancePage() {
 
   return (
     <>
-      <PageHead title="Event Performance"
-        actions={<button className="btn btn-p" onClick={() => toast('Pick an event row to log activity against it', 'nf')}><Icon name="plus" size={15} />Log activity</button>} />
       <DataTable
         rows={rows} noun="events" pageSize={50} defaultSort={{ key: 'offset', dir: 'asc' }} searchPlaceholder="Search event…"
+        // No tab strip here to fold this into (see BookingsPage /
+        // TicketCentralPage), so it rides on the table's own toolbar row
+        // instead of a PageHead row of its own — one fewer row of height.
+        extraToolbar={<button className="btn btn-p" onClick={() => toast('Pick an event row to log activity against it', 'nf')}><Icon name="plus" size={15} />Log activity</button>}
         cols={[
           { key: 'event_code', label: 'Event', cell: (v) => <span className="mono lnk">{v}</span> },
           { key: 'name', label: 'Name', cls: 'st' },

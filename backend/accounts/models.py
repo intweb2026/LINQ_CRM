@@ -39,6 +39,11 @@ class User(AbstractUser):
         max_length=20, choices=Status.choices, default=Status.ACTIVE, db_index=True
     )
     is_team_lead = models.BooleanField(default=False, db_index=True)
+    login_access = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="When unchecked the user exists in the system but cannot sign in.",
+    )
     mapped_lead = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
@@ -221,8 +226,8 @@ class User(AbstractUser):
         """Full access to everything, by account or by team."""
         # Imported here rather than at module scope: permissions.py pulls in
         # rest_framework, and models.py is loaded during app registry setup.
-        from .permissions import HP_USERNAME
-        if self.username == HP_USERNAME:
+        from .permissions import dapi_USERNAME
+        if self.username == dapi_USERNAME:
             return True
         return bool(self.team_id and self.team and self.team.is_all_access)
 
@@ -364,8 +369,16 @@ class OTPToken(models.Model):
 
 
 CRM_MODULES = [
-    "bookings", "ticket_central", "events", "reports",
+    # "reports" was here until the Reports page was removed. Its rows are deleted
+    # by migration 0026; the three Dashboard sections it used to gate are booking
+    # aggregates and now read "bookings".
+    "bookings", "ticket_central", "events",
     "users", "teams", "performance", "webhooks", "roles",
+    # Google Sync. Was reached through "webhooks" — the two share nothing but a
+    # sidebar group, and one grid cell could not say "may manage sheet pushes"
+    # without also saying "may replay webhook deliveries". Backfilled all-False
+    # by migration 0027, so no team gains it by the split.
+    "google_sync",
     # Placeholder pipeline modules. Registered so roles can be configured
     # ahead of the real feature; every existing role is backfilled all-False
     # by migration 0020, so nothing is visible until it is granted.

@@ -20,7 +20,7 @@ come apart — four people in Sales Team were carrying the Speaker Sales set, so
 """
 from rest_framework.permissions import BasePermission
 
-from .permissions import HP_USERNAME
+from .permissions import dapi_USERNAME
 
 # Actions that only need can_view
 _VIEW_ACTIONS = frozenset({
@@ -67,7 +67,7 @@ def has_module_action(user, module: str, action: str) -> bool:
     """
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    if getattr(user, "username", None) == HP_USERNAME:
+    if getattr(user, "username", None) == dapi_USERNAME:
         return True
     resolved = user.effective_permissions().get(module)
     if not resolved or not resolved.get("view"):
@@ -87,7 +87,7 @@ def crm_permission(module: str):
                 return False
 
             # HP username bypasses all permission checks
-            if user.username == HP_USERNAME:
+            if user.username == dapi_USERNAME:
                 return True
 
             resolved = user.effective_permissions().get(self.crm_module)

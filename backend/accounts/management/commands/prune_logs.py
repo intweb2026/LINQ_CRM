@@ -35,7 +35,7 @@ RAW SQL IS SAFE HERE, AND THAT WAS CHECKED
 Raw chunked DELETE skips Django's collector, which is only correct when nothing
 cascades and nothing listens. Verified across the whole codebase: NO model
 declares a ForeignKey or OneToOneField to any of webhooks.WebhookLog,
-accounts.ActionLog, teams.TeamActivityLog, reports.ReportSyncLog or
+accounts.ActionLog, teams.TeamActivityLog or
 paper_review.NotificationLog, and none of them has a pre_delete/post_delete
 receiver. Each model's path is printed in the report so the choice is visible at
 run time rather than assumed from this docstring.
@@ -55,7 +55,6 @@ CHUNK = 5_000
 AGE_FIELD = {
     "webhooks.WebhookLog":          "created_at",
     "teams.TeamActivityLog":        "created_at",
-    "reports.ReportSyncLog":        "started_at",
     "paper_review.NotificationLog": "sent_at",
     "accounts.ActionLog":           "created_at",
 }

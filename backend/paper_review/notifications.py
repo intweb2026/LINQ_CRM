@@ -6,9 +6,10 @@ record event = on add): tell the production team a paper review has landed.
 
 RECIPIENTS — WHY THE MAPPING CHANGED
 Zoho walked `Event_Code.Speaker_Sales_Team.Email` and
-`Event_Code.Market_Research_Senior.Email`. Those two columns exist here as
-Event.speaker_sales_team and Event.market_research_senior, but they are
-CharField(255) FREE TEXT with no relation to User — there is no `.Email` to
+`Event_Code.Market_Research_Senior.Email`. Speaker_Sales_Team no longer has a
+counterpart at all — the Speaker Sales team was merged into SCA, so the column
+is now Event.sales_team — and Market_Research_Senior is
+Event.market_research_senior, but both are CharField(255) FREE TEXT with no relation to User — there is no `.Email` to
 traverse. Name-matching them against User is exactly the failure this codebase
 has already been burned by (see events/models.py:112, where sales_team is matched
 by icontains against first/last name): a typo or a shared surname routes a

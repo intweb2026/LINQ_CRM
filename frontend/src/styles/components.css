@@ -1,5 +1,36 @@
 
-#main{margin-left:var(--rail-w);margin-top:var(--top-h);min-height:calc(100vh - var(--top-h));padding:20px 22px 56px;transition:margin-left .22s var(--ease)}
+/* Pinned to the viewport by its own four insets rather than by a margin-top
+   that has to add up correctly with #app/#root/body's own boxes above it —
+   margin is a relationship between boxes, and anything in that chain gaining
+   so much as a stray border or padding (or a sub-pixel rounding difference
+   between this calc() and the real rendered topbar height, which some
+   OS/zoom combinations do produce) reopens a gap between the fixed topbar
+   and where #main's own background actually starts, showing raw canvas
+   through it. inset values measured from the viewport have nothing to add up
+   WITH — #main simply IS "56px down, rail-w in, flush to the other two
+   edges", the same way .rail and .top already anchor themselves. That also
+   means #app/body/html now hold no in-flow content at all, so they can never
+   grow taller than the viewport or need a scrollbar of their own — #main's
+   own overflow-y:auto is the only fallback scroll a long non-table page gets,
+   and a list page's .dt-tw child still overrides that with flex:1 so ITS
+   .tsc scrolls instead (see the rules by .dt-tw below, and .md-b.fill in
+   overlays.css for the identical fix inside modals). */
+/* z-index:81 — one above .rail(80)/.top(70) in base.css, and load-bearing in
+   a way that is easy to lose sight of: `position:fixed` ALWAYS opens a new
+   stacking context (CSS spec, regardless of z-index), so every modal,
+   drawer and popover a page renders — all of them mount somewhere inside
+   #main — got sealed inside that context together with it. Their OWN
+   z-index (.modal-scrim/.mw run up to 110) only ever settled their order
+   AMONG each other; the context as a whole still placed itself among
+   #main's siblings by #main's own z-index, which was unset. An unset
+   z-index on a positioned box competes as 0, so the sidebar and topbar's
+   explicit, positive z-index put them above the entire context — dialog
+   and all — no matter how high a component inside it asked to be. This is
+   what let a modal render UNDER the sidebar/topbar instead of dimming them:
+   its scrim was in there too, so the chrome never got covered, and — more
+   than cosmetic — the sidebar kept catching clicks a modal's scrim is
+   supposed to be capturing instead. */
+#main{position:fixed;top:var(--top-h);left:var(--rail-w);right:0;bottom:0;padding:20px 22px 56px;display:flex;flex-direction:column;overflow-y:auto;z-index:81;transition:left .22s var(--ease)}
 
 /* ═══ PAGE HEAD ═══
    An action row and nothing else — no title (the breadcrumb names the page)
@@ -244,7 +275,32 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 
 /* ═══ TABLE ═══ */
 .tw{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-sm);border:1px solid var(--border);overflow:hidden}
-.tsc{overflow:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 300px)}
+.tsc{overflow:auto;-webkit-overflow-scrolling:touch}
+/* .dt-tw marks the ONE .tw that is a page's actual list — DataTable's rows
+   branch, not the loading/empty placeholders and not the small hand-rolled
+   .tw tables elsewhere (GoogleSyncPage, reports/Logs, webhooks/Keys, the
+   booking modals' delegate grid), which stay their natural height on purpose.
+   flex:1 hands it whatever height #main has left over after the page head,
+   banners and filter chips ABOVE actually take — a measured amount, not the
+   flat "300px of chrome" guess this replaced, which was too small on pages
+   with extra banners (double scrollbar: the page AND the table both scrolled)
+   and too large on short, banner-free ones (a table scrollbar with empty
+   space still visible below it). min-height keeps a short/loading table from
+   collapsing to nothing; .tsc's own max-height:none lets it fill exactly
+   .dt-tw's box, so it scrolls only when the rows genuinely do not fit — the
+   same pattern .md-b.fill uses for a scrolling grid inside a modal. */
+#main>.dt-tw{flex:1;min-height:280px;display:flex;flex-direction:column}
+#main>.dt-tw>.tsc{flex:1;min-height:0;max-height:none}
+/* Every OTHER direct child of #main — the hero banner, page heads, filter
+   rows, KPI cards, whatever a given page renders — must not flex at all. A
+   flex child defaults to flex-shrink:1, so without this a page whose content
+   (Dashboard, with its stacked cards, is the one that showed it first) runs
+   taller than #main's box got every single child proportionally squashed
+   to force them all to fit, instead of #main just scrolling past the
+   overflow the way its overflow-y:auto already intends. flex-shrink:0 opts
+   everything back out of that except the one child (.dt-tw, above) that is
+   actually supposed to grow and shrink with the space available to it. */
+#main>:not(.dt-tw){flex-shrink:0}
 table.dt{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
 /* .dt-grid: every column carries an explicit pixel width via a <colgroup> (see
    DataTable.jsx / DelegateTable.jsx), and table-layout:fixed makes those widths
@@ -340,6 +396,17 @@ table.dt tbody tr:hover{background:var(--t-50)}
 table.dt tbody tr.sel{background:var(--t-50)}
 table.dt tbody tr:last-child td{border-bottom:none}
 table.dt td.st{font-weight:650;color:var(--text)}
+/* Users table only. A name-plus-username identity is read as a word you scan
+   down the column, not a value compared across rows, so it left-aligns
+   instead of following the centred rhythm above — otherwise the "who" box's
+   own width (which varies with each name's length) shifts its left edge a
+   different amount per row even though the box itself is centred, reading as
+   crooked rather than aligned. Scoped to .usr-name, not .st, so every other
+   centred identity column keeps the shared rhythm. */
+table.dt td.usr-name{text-align:left}
+th.usr-name .th-w{justify-content:flex-start}
+th.usr-name .th-sp{display:none}
+th.usr-name .th-sort{justify-content:flex-start;padding-left:12px}
 table.dt td.ck,table.dt th.ck{width:40px;text-align:center;padding:0 0 0 13px}
 table.dt th.ck{padding:9px 0 9px 13px}
 /* Pinned leading cells — the delegate rows in the Bookings modals.

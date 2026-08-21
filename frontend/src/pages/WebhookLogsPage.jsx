@@ -15,8 +15,9 @@ export default function WebhookLogsPage() {
 
   return (
     <>
-      {/* No PageHead — see ReportsPage: title duplicated the breadcrumb and the
-          description was all that remained. */}
+      {/* No PageHead — the title duplicated the breadcrumb and the description
+          was all that remained, so the tab strip below is the whole head. Every
+          other list page has since been brought to the same shape. */}
       <Tabs list={TABS} active={tab} onPick={setTab} />
       {tab === '' ? <WebhookLogs /> : <WebhookKeys />}
     </>

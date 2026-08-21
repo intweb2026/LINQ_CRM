@@ -264,7 +264,11 @@ export default function GoogleSyncPage() {
       {detail ? <DetailModal log={detail} onClose={() => setDetail(null)} onRetry={retry} /> : null}
       {addSheetOpen ? (
         <AddSheetSourceModal onClose={() => setAddSheetOpen(false)}
-          onSaved={() => toast('Manage or sync it from Reports → Sheet Registry', 'nf')} />
+          // Was "manage or sync it from Reports → Sheet Registry". That page is
+          // gone, so the source is now a stored connection with no registry
+          // screen behind it; the toast says what actually happened instead of
+          // pointing at a route that no longer resolves.
+          onSaved={() => toast('Sheet source saved', 'ok')} />
       ) : null}
       {pushForm ? (
         <SheetTargetModal target={pushForm.id ? pushForm : null} modules={modules || []}

@@ -311,7 +311,8 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
 
         # For individual KPI cards, scope to the rep's own attributed bookings.
         # SpEx / Speaker Sales attribution comes from the event's team string fields
-        # (event.spex_team / event.speaker_sales_team) — NOT the invoice sales_executive FK,
+        # (event.spex_team, and event.sales_team for speaker sales now that the
+        # Speaker Sales team is merged into SCA) — NOT the invoice sales_executive FK,
         # because the FK is set to the main sales rep, not the SpEx/Speaker rep.
         # Sales reps continue to use the sales_executive FK.
         # Admin sees the global view with no restriction.
@@ -335,7 +336,8 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                 rep_del_qs = BookDelegate.objects.filter(invoice__in=rep_inv_qs)
 
             elif u_role == "speaker_sales":
-                ecodes = _event_codes_for_field("speaker_sales_team", u_name)
+                # Merged into SCA: the owner name now lives in event.sales_team.
+                ecodes = _event_codes_for_field("sales_team", u_name)
                 rep_inv_qs = qs.filter(event_code__in=ecodes)
                 rep_del_qs = BookDelegate.objects.filter(invoice__in=rep_inv_qs)
 
@@ -435,9 +437,10 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                         pending_count = max(0, booking_count - paid_count)
 
                     elif team_type == "speaker_sales":
-                        # Speaker Sales attribution: event.speaker_sales_team matches member name
-                        # + booking_code matches SPEAKER_Q. Hybrid codes count here AND in SpEx.
-                        m_ecodes = _event_codes_for_field("speaker_sales_team", m_name)
+                        # Speaker Sales attribution: event.sales_team (SCA) matches member
+                        # name + booking_code matches SPEAKER_Q. Hybrid codes count here AND
+                        # in SpEx.
+                        m_ecodes = _event_codes_for_field("sales_team", m_name)
                         m_bookings = _apply_period(
                             BookDelegate.objects.filter(
                                 INV_SPEAKER_Q,
@@ -464,7 +467,7 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                             BookEvent.objects.filter(SPEX_Q, event_code__in=m_ecodes_rev)
                         )
                     elif team_type == "speaker_sales":
-                        m_ecodes_rev = _event_codes_for_field("speaker_sales_team", m_name)
+                        m_ecodes_rev = _event_codes_for_field("sales_team", m_name)
                         member_invoices = _apply_period(
                             BookEvent.objects.filter(event_code__in=m_ecodes_rev)
                         )

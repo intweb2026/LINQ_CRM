@@ -38,7 +38,7 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "accepting_web_bookings": "Accepting Web Bookings (derived)",
             "name": "Name (derived)", "official_name": "Official Name (derived)",
             "city": "City (derived)", "country": "Country (derived)",
-            "venue": "Venue (derived)", "sales_team": "Sales Team (derived)",
+            "venue": "Venue (derived)", "sales_team": "SCA (derived)",
             "tele_marketing_team": "Telemarketing Team (derived)",
             "market_research_team": "Market Research Team (derived)",
         },
@@ -104,7 +104,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "market_research_junior": "Market Research Junior",
             "telemarketing_team":     "Telemarketing Team",
             "event_management_team":  "Event Management Team",
-            "speaker_sales_team":     "Speaker Sales Team",
             "spex_team":              "SPEX Team",
             "master_code":            "Master Code",
             "website_live_date":      "Website Live Date",
@@ -460,7 +459,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     sales_exec = _resolve_user(se_name)
 
                     # Resolve other team members for M2M assignments and string values
-                    speaker_sales_user = _resolve_user(_clean(row, "speaker_sales_team"))
                     spex_user = _resolve_user(_clean(row, "spex_team"))
                     tele_marketing_user = _resolve_user(_clean(row, "telemarketing_team") or _clean(row, "tele_marketing_team"))
                     market_research_senior_user = _resolve_user(market_research_senior)
@@ -470,11 +468,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     event_management_user = _resolve_user(event_management_team)
 
                     # Assign resolved user names to fields for absolute integrity
-                    if speaker_sales_user:
-                        speaker_sales_team = speaker_sales_user.get_full_name() or speaker_sales_user.username
-                    else:
-                        speaker_sales_team = _clean(row, "speaker_sales_team")
-
                     if spex_user:
                         spex_team = spex_user.get_full_name() or spex_user.username
                     else:
@@ -515,8 +508,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     assigned_users_to_set = []
                     if sales_exec:
                         assigned_users_to_set.append(sales_exec)
-                    if speaker_sales_user:
-                        assigned_users_to_set.append(speaker_sales_user)
                     if spex_user:
                         assigned_users_to_set.append(spex_user)
                     if tele_marketing_user:
@@ -553,7 +544,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             existing.vr1_sent_status = vr1_sent_status or existing.vr1_sent_status
                             existing.sales_team = sales_team or existing.sales_team
                             existing.team_leader = team_leader or existing.team_leader
-                            existing.speaker_sales_team = _clean(row, "speaker_sales_team") or existing.speaker_sales_team
                             existing.telemarketing_team = _clean(row, "telemarketing_team") or existing.telemarketing_team
                             existing.spex_team = _clean(row, "spex_team") or existing.spex_team
                             existing.market_research_senior = market_research_senior or existing.market_research_senior
@@ -602,7 +592,6 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             vr1_sent_status=vr1_sent_status,
                             sales_team=sales_team,
                             team_leader=team_leader,
-                            speaker_sales_team=_clean(row, "speaker_sales_team"),
                             telemarketing_team=_clean(row, "telemarketing_team"),
                             spex_team=_clean(row, "spex_team"),
                             market_research_senior=market_research_senior,

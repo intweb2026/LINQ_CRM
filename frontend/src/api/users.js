@@ -43,6 +43,9 @@ function toFrontend(u) {
     last_name: u.last_name || '',
     role: u.role,
     status: u.status || (u.is_active ? 'active' : 'inactive'),
+    // Absent on any response predating the column: treat that as access granted,
+    // which is the column default, so an old payload never reads as locked out.
+    login_access: u.login_access !== false,
     team_id: u.team_id || null,
     is_lead: !!u.is_team_lead,
     events_count: u.assigned_events_count || 0,
@@ -81,6 +84,7 @@ function toBackend(patch) {
   if (patch.last_name !== undefined) body.last_name = patch.last_name;
   if (patch.role !== undefined) body.role = patch.role;
   if (patch.status !== undefined) body.status = patch.status;
+  if (patch.login_access !== undefined) body.login_access = patch.login_access;
   if (patch.team_id !== undefined) body.team_id = patch.team_id;
   if (patch.is_lead !== undefined) body.is_team_lead = patch.is_lead;
   if (patch.custom_role_id !== undefined) body.custom_role_id = patch.custom_role_id;

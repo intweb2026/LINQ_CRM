@@ -55,6 +55,7 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       team_id: u?.team_id ? String(u.team_id) : '',
       status: u?.status || 'active',
       is_lead: !!u?.is_lead,
+      login_access: u ? u.login_access !== false : true,
     };
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -150,6 +151,7 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
       status: form.status,
       team_id: form.team_id ? +form.team_id : null,
       is_lead: form.is_lead,
+      login_access: form.login_access,
       password: form.password,
     };
     setBusy(true);
@@ -279,6 +281,16 @@ export default function UserFormModal({ user: u, onClose, onSaved }) {
               <input type="checkbox" className="ck" checked={form.is_lead} onChange={setChk('is_lead')} />
               Team lead
             </label>
+          </div>
+          <div className="fd">
+            <label className="fd-l" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
+              <input type="checkbox" className="ck" checked={form.login_access} onChange={setChk('login_access')} />
+              Provide login access
+            </label>
+            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+              Off means the account still exists, and everything assigned to it stays
+              assigned, but Google Sign-In refuses it.
+            </span>
           </div>
         </div>
       </div>

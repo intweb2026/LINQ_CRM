@@ -1,63 +1,13 @@
-// Real backend: /api/reports/* (see backend/reports/serializers.py + views.py).
+// Dashboard aggregates — /api/stats/dashboard_aggregate/ (config/views.py
+// DashboardAggregateView).
 //
-// Known gap: `overview()`/`months` (team productivity + bookings-by-month)
-// have no dedicated backend aggregate endpoint — computed here from the real
-// bookings/users/teams lists rather than fabricated.
-import { http, fetchAllPages } from './client';
+// Was api/reports.js, which also wrapped the /api/reports/* sheet-source and
+// sync-log endpoints for the Reports page. That page is gone; what is left here
+// has nothing to do with it and is read by the Dashboard and Teams Management.
+import { http } from './client';
 import * as ticketsApi from './tickets';
 import * as webhooksApi from './webhooks';
 
-const SYNC_STATUS_TO_UI = { success: 'synced', syncing: 'syncing', failed: 'error', partial: 'error', never: 'idle', idle: 'idle' };
-const LOG_STATUS_TO_UI = { success: 'success', partial: 'partial', failed: 'error', running: 'partial' };
-const INTERVAL_TO_UI = { manual: 'Manual', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly' };
-
-function sheetToFrontend(s) {
-  return {
-    id: s.id,
-    name: s.name,
-    worksheet: s.worksheet_name,
-    status: SYNC_STATUS_TO_UI[s.sync_status] || 'idle',
-    rows: s.records_count || 0,
-    interval: INTERVAL_TO_UI[s.sync_frequency] || s.sync_frequency,
-    last_sync: s.last_synced_at,
-    type: s.sheet_type,
-    error: s.last_error || '',
-  };
-}
-
-function syncLogToFrontend(l) {
-  return {
-    id: l.id,
-    status: LOG_STATUS_TO_UI[l.status] || l.status,
-    source: l.source_name || '—',
-    rows_read: l.records_processed || 0,
-    rows_written: (l.records_created || 0) + (l.records_updated || 0),
-    duration_ms: l.duration_seconds != null ? Math.round(l.duration_seconds * 1000) : 0,
-    started_at: l.started_at,
-    message: l.error_message || '',
-  };
-}
-
-export const sheets = () => fetchAllPages('reports/sources/').then((rows) => rows.map(sheetToFrontend));
-export const syncLogs = () => fetchAllPages('reports/sync-logs/').then((rows) => rows.map(syncLogToFrontend));
-
-// bookingAggregates() lived here: it walked every delegate, user and team row
-// to build the dashboard's GROUP BYs in the browser. Both callers now read
-// /api/stats/dashboard_aggregate/ instead (config/views.py DashboardAggregateView).
-
-export async function overview(period) {
-  // Same SQL aggregate as dashboard() — this used to walk every delegate row
-  // a second time to produce the identical two fields.
-  const { data } = await http.get('stats/dashboard_aggregate/', { params: { period } });
-  return {
-    booking_team_productivity: data.booking_team_productivity || [],
-    months: data.months || [],
-  };
-}
-
-// Full dashboard aggregate — see bookingAggregates() for the booking-derived
-// pieces. `delta`/`year` are computed from the same monthly series rather
-// than a dedicated backend endpoint.
 /**
  * Dashboard aggregates, from the database.
  *
@@ -112,31 +62,6 @@ export async function dashboard(period) {
     tickets: ticketStats, whFailed,
     year, delta,
   };
-}
-
-// `frequency` must be one of the backend's real SyncFrequency choices
-// (manual/hourly/daily/weekly) — see GoogleSheetSource.SyncFrequency. Both
-// sheet_id and sheet_url are sent as the raw pasted URL; the serializer's
-// create() re-extracts sheet_id from it and keeps sheet_url intact for
-// display, so this populates both fields correctly in one request.
-export function addSource(payload) {
-  return http.post('reports/sources/', {
-    name: payload.name,
-    sheet_id: payload.url || '',
-    sheet_url: payload.url || '',
-    worksheet_name: payload.worksheet || 'Sheet1',
-    sheet_type: payload.type || 'custom',
-    sync_frequency: payload.frequency || 'manual',
-    sync_enabled: payload.syncEnabled !== false,
-    description: payload.description || '',
-    notes: payload.notes || '',
-  }).then((r) => sheetToFrontend(r.data));
-}
-export function syncAll() {
-  return http.post('reports/sources/sync-all/', {}).then((r) => r.data);
-}
-export function listWorksheets(url) {
-  return http.post('reports/sources/list-worksheets/', { sheet_url: url }).then((r) => r.data.worksheets || []);
 }
 
 /**

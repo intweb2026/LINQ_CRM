@@ -75,11 +75,11 @@ class RecipientResolutionTests(_Base):
 
     def test_the_free_text_event_columns_are_never_consulted(self):
         """
-        B2's hard rule: Event.speaker_sales_team / market_research_senior are
+        B2's hard rule: Event.sales_team (SCA) / market_research_senior are
         CharField(255) free text, so name-matching them would misroute on a typo.
         Filling them with a real user's NAME must change nothing.
         """
-        self.event.speaker_sales_team = "Sam Exec"
+        self.event.sales_team = "Sam Exec"
         self.event.market_research_senior = "Sam Exec"
         self.event.save()
         got = resolve_recipients(_review(self.event.event_code))

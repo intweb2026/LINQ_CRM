@@ -224,6 +224,22 @@ class SyncOrchestrator:
                             "last_synced_at": str(el.last_synced_at),
                         }
 
+            # A push is a sync like any other, so "Sync all" runs every enabled
+            # one. Each keeps its own log row, which is what the Sheets table
+            # reads its Last run and Status from; the counts are folded into
+            # this log as well so the full_sync figure is the whole job.
+            if sync_type == "full_sync":
+                pushed = {}
+                for target in SheetSyncTarget.objects.filter(is_enabled=True):
+                    tlog = cls._execute_sheet_target(target, triggered_by, trigger_source)
+                    if tlog.status == GoogleSheetSyncLog.Status.FAILED:
+                        errors.append(f"Push {target.name}: {tlog.error_message}")
+                    else:
+                        total_processed += tlog.records_processed or 0
+                        pushed[target.name] = tlog.records_processed or 0
+                if pushed:
+                    summary["pushes"] = pushed
+
             duration = time.time() - start
 
             if errors and total_processed == 0:

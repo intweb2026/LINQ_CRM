@@ -29,7 +29,7 @@ from django.urls import get_resolver, reverse
 from rest_framework.test import APIClient
 
 
-from accounts.permissions import HP_USERNAME
+from accounts.permissions import dapi_USERNAME
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
@@ -89,7 +89,7 @@ class ClearAllGateTests(TestCase):
             )
 
         cls.hp = User.objects.create_user(
-            username=HP_USERNAME, password="x", email="hp@iq-hub.com", role="admin",
+            username=dapi_USERNAME, password="x", email="hp@iq-hub.com", role="admin",
         )
 
         # Every kind of caller who might reasonably expect to be allowed.
@@ -200,7 +200,7 @@ class ClearAllAsHPTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.hp = User.objects.create_user(
-            username=HP_USERNAME, password="x", email="hp@iq-hub.com", role="admin",
+            username=dapi_USERNAME, password="x", email="hp@iq-hub.com", role="admin",
         )
 
     def setUp(self):

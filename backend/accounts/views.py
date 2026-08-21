@@ -18,15 +18,14 @@ from .serializers import (
 from .models import CRM_MODULES, PERM_ACTIONS, PERM_FIELDS, UserPermission, role_from_team_name
 from .crm_permissions import crm_permission
 
-from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.authtoken.models import Token
+from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
-from django.core.mail import send_mail
 from django.conf import settings as django_settings
 from django.utils import timezone
-from datetime import timedelta
-from .models import OTPToken
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 
 User = get_user_model()
 
@@ -73,130 +72,104 @@ def _clean_permission_rows(items, allow_null=False):
     return cleaned, None
 
 
-class RequestOTPView(APIView):
+
+class GoogleTokenLoginView(APIView):
+    """
+    POST /api/auth/google/ — the only way in.
+
+    Body: {"credential": "<Google ID token>"}. The token is verified against
+    Google, its email is matched to an ALREADY EXISTING active User, and the
+    same DRF token payload the old login paths returned comes back. No user is
+    created here: a Google account that nobody has provisioned is a 403, not a
+    new row.
+    """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email = request.data.get("email", "").strip().lower()
-        if not email:
-            return Response({"detail": "Email is required."}, status=400)
+        credential = (request.data.get("credential") or "").strip()
+        if not credential:
+            return Response({"detail": "Google credential is required."}, status=400)
 
-        success_msg = {"detail": "If an account exists with this email, a login code has been sent."}
-
-        try:
-            user = User.objects.get(email__iexact=email, is_active=True)
-        except User.DoesNotExist:
-            return Response(success_msg)
-
-        # HP bypasses OTP rate limiting entirely
-        if user.username != "HP":
-            recent_count = OTPToken.objects.filter(
-                user=user,
-                created_at__gte=timezone.now() - timedelta(hours=1),
-            ).count()
-            if recent_count >= 20:
-                return Response({"detail": "Too many requests. Please try again later."}, status=429)
-
-        otp_obj = OTPToken.create_for_user(user)
-
-        try:
-            send_mail(
-                subject="Your IQ-HUB CRM Login Code",
-                message=(
-                    f"Hi {user.first_name or user.username},\n\n"
-                    f"Your one-time login code is: {otp_obj.otp}\n\n"
-                    f"This code expires in 5 minutes. If you didn't request this, ignore this email.\n\n"
-                    f"— IQ-HUB CRM"
-                ),
-                from_email=django_settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=False,
+        client_id = django_settings.GOOGLE_OAUTH_CLIENT_ID
+        if not client_id:
+            return Response(
+                {"detail": "Google Sign-In is not configured on this server."},
+                status=500,
             )
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Failed to send OTP email to %s", email)
 
-        return Response(success_msg)
-
-
-class VerifyOTPView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        email = request.data.get("email", "").strip().lower()
-        otp = request.data.get("otp", "").strip()
-
-        if not email or not otp:
-            return Response({"detail": "Email and OTP are required."}, status=400)
-
+        # 1. Verify the ID token with Google — signature, audience, expiry.
         try:
-            user = User.objects.get(email__iexact=email, is_active=True)
+            idinfo = google_id_token.verify_oauth2_token(
+                credential,
+                google_requests.Request(),
+                client_id,
+            )
+        except ValueError:
+            return Response({"detail": "Invalid Google credential."}, status=401)
+
+        # 2. Extract and validate email
+        email = (idinfo.get("email") or "").strip().lower()
+        if not email or not idinfo.get("email_verified"):
+            return Response({"detail": "Google account email is not verified."}, status=401)
+
+        # 3. Domain restriction
+        allowed = django_settings.GOOGLE_OAUTH_ALLOWED_DOMAINS
+        if allowed:
+            domain = email.rsplit("@", 1)[-1]
+            if domain not in allowed:
+                return Response(
+                    {"detail": "Sign-in is restricted to organisation accounts."},
+                    status=403,
+                )
+
+        # 4. Match to an existing, active user who has login access
+        try:
+            user = User.objects.get(email__iexact=email, is_active=True, login_access=True)
         except User.DoesNotExist:
-            return Response({"detail": "Invalid email or code."}, status=401)
+            return Response(
+                {"detail": "No account with login access found for this email. Contact an administrator."},
+                status=403,
+            )
 
-        # Dev bypass: any user can log in with "000000"
-        if otp == "000000":
-            token, _ = Token.objects.get_or_create(user=user)
-            user.last_login = timezone.now()
-            user.save(update_fields=["last_login"])
-            return Response({
-                "token":    token.key,
-                "user_id":  user.pk,
-                "email":    user.email,
-                "username": user.username,
-                "role":     user.role,
-            })
-
-        otp_obj = (
-            OTPToken.objects.filter(user=user, otp=otp, is_used=False)
-            .order_by("-created_at")
-            .first()
-        )
-
-        if not otp_obj:
-            return Response({"detail": "Invalid email or code."}, status=401)
-
-        if otp_obj.attempts >= 5:
-            otp_obj.is_used = True
-            otp_obj.save(update_fields=["is_used"])
-            return Response({"detail": "Too many attempts. Please request a new code."}, status=429)
-
-        otp_obj.attempts += 1
-        otp_obj.save(update_fields=["attempts"])
-
-        if otp_obj.is_expired():
-            otp_obj.is_used = True
-            otp_obj.save(update_fields=["is_used"])
-            return Response({"detail": "Code has expired. Please request a new one."}, status=401)
-
-        otp_obj.is_used = True
-        otp_obj.save(update_fields=["is_used"])
-
+        # 5. Issue DRF token — identical shape to the retired login flows
         token, _ = Token.objects.get_or_create(user=user)
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])
 
         return Response({
-            "token": token.key,
-            "user_id": user.pk,
-            "email": user.email,
+            "token":    token.key,
+            "user_id":  user.pk,
+            "email":    user.email,
             "username": user.username,
-            "role": user.role,
+            "role":     user.role,
         })
 
 
+
 class CustomAuthToken(ObtainAuthToken):
+    """
+    POST /api/auth/fallback/
+    Hidden username/password fallback for emergency access when Google
+    Sign-In is unavailable. Not linked from the main UI.
+
+    Does NOT check login_access — this is a break-glass route. It checks
+    only is_active (via Django's standard authenticate()).
+    """
     def post(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data,
-                                           context={'request': request})
+        serializer = self.serializer_class(
+            data=request.data, context={'request': request}
+        )
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        token, created = Token.objects.get_or_create(user=user)
+        token, _ = Token.objects.get_or_create(user=user)
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
         return Response({
-            'token': token.key,
-            'user_id': user.pk,
-            'email': user.email,
-            'role': user.role
+            'token':    token.key,
+            'user_id':  user.pk,
+            'email':    user.email,
+            'username': user.username,
+            'role':     user.role,
         })
 
 

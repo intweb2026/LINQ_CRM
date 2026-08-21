@@ -1,23 +1,29 @@
 import { http } from './client';
 
-// Real backend endpoints — see backend/config/urls.py and accounts/views.py.
-// Token responses do not include a display name, only username/email/role;
-// SessionContext derives `name` from whatever identifier is available.
-
-export function login({ username, password }) {
-  return http.post('auth/token/', { username, password }).then((r) => r.data);
+/**
+ * Exchange a Google ID token for a DRF auth token.
+ *
+ * The primary login path. POST /api/auth/google/ returns exactly what the
+ * retired token/OTP endpoints returned — token, user_id, email, username, role —
+ * so SessionContext's toUser() reads it unchanged.
+ *
+ * @param {string} credential the JWT handed to us by Google Identity Services
+ */
+export function googleLogin(credential) {
+  return http.post('auth/google/', { credential }).then((r) => r.data);
 }
 
-export function sendCode(email) {
-  return http.post('auth/request-otp/', { email }).then((r) => r.data);
-}
-
-export function verifyCode(email, code) {
-  return http.post('auth/verify-otp/', { email, otp: code }).then((r) => r.data);
-}
-
-// Backend has no server-side logout endpoint (DRF token auth) — token is
+// Backend has no server-side logout endpoint (DRF token auth) — the token is
 // simply discarded client-side.
 export function logout() {
   return Promise.resolve();
+}
+
+/**
+ * Emergency username/password login when Google Sign-In is unavailable.
+ * Posts to the hidden fallback endpoint, which is reachable in the UI only
+ * through the /170405 gate. Response shape is identical to googleLogin().
+ */
+export function fallbackLogin({ username, password }) {
+  return http.post('auth/fallback/', { username, password }).then((r) => r.data);
 }

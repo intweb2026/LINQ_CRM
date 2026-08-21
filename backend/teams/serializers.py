@@ -1,4 +1,7 @@
 from rest_framework import serializers
+
+from accounts.crm_permissions import has_module_action
+
 from .models import Team, TeamActivityLog
 
 
@@ -25,6 +28,26 @@ class TeamSerializer(serializers.ModelSerializer):
             "is_archived", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "slug", "created_at", "updated_at"]
+
+    def get_fields(self):
+        """
+        `is_all_access` answers to the `roles` right, not to `teams`.
+
+        Renaming a team and deciding what it may reach are different jobs, and
+        only the second is dangerous; TeamViewSet.set_permissions says so and is
+        gated on `roles` for exactly that reason. This field sat writable on a
+        PATCH gated on `teams.update`, so anyone who could rename their own team
+        could also hand it every module in the grid, and the permissions screen
+        that is supposed to own that decision would never see it. Read-only
+        unless the caller holds the right the permissions endpoint demands, and
+        read-only when there is no request in context, since a serializer used
+        without one has nobody to check.
+        """
+        fields = super().get_fields()
+        request = self.context.get("request")
+        if not has_module_action(getattr(request, "user", None), "roles", "update"):
+            fields["is_all_access"].read_only = True
+        return fields
 
     def get_permissions(self, obj):
         # Imported here: accounts.serializers imports nothing from teams, but

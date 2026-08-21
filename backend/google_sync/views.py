@@ -1,23 +1,38 @@
 """
 google_sync/views.py
 ─────────────────────
-GET  /api/google-sync/logs/            — paginated sync history (admin only)
-GET  /api/google-sync/logs/{id}/       — single log detail
-GET  /api/google-sync/status/          — live dashboard summary
-POST /api/google-sync/run/             — trigger manual sync
-POST /api/google-sync/retry/{id}/      — retry a failed sync
-GET  /api/google-sync/catalog/         — modules and columns a target may pick
-     /api/google-sync/targets/         — CRUD for user-defined pushes
-POST /api/google-sync/targets/{id}/run/ — run one target now
+GET    /api/google-sync/logs/            — paginated sync history
+GET    /api/google-sync/logs/{id}/       — single log detail
+DELETE /api/google-sync/logs/{id}/       — delete one log from the history
+GET    /api/google-sync/status/          — live dashboard summary
+POST   /api/google-sync/run/             — trigger manual sync
+POST   /api/google-sync/retry/{id}/      — retry a failed sync
+GET    /api/google-sync/catalog/         — modules and columns a target may pick
+       /api/google-sync/targets/         — CRUD for user-defined pushes
+POST   /api/google-sync/targets/{id}/run/ — run one target now
+
+ACCESS: crm_permission("google_sync"), not IsAdminRole
+This app used to be admin-only, which meant Google Sync could not be granted to
+a team however the grid was filled in, and it shared the "webhooks" cell with a
+page it has nothing to do with. It now has its own module in CRM_MODULES, so
+access is a grant like every other page — admins and all-access teams still get
+in, because their matrix is all-True by construction.
+
+WHICH CELL EACH ACTION READS
+crm_permission maps DRF action names first and the HTTP method second. Nothing
+here is in its action sets, so every read is `view`, every POST — running a sync,
+retrying one, pushing a target — is `create`, and DELETE is `delete`. `create` is
+the honest reading of a sync run: it writes a new GoogleSheetSyncLog and a new
+tab body, and it destroys nothing in the CRM.
 """
 import logging
 from django.db.models import Q
-from rest_framework import viewsets, status
+from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsAdminRole
+from accounts.crm_permissions import crm_permission
 from book_event.models import SyncLog
 from sync import catalog
 from .models import GoogleSheetSyncLog, SheetSyncTarget
@@ -29,9 +44,23 @@ logger = logging.getLogger("book_event")
 VALID_SYNC_TYPES = {"bookings", "events", "full_sync", "crm_mirror"}
 
 
-class GoogleSyncLogViewSet(viewsets.ReadOnlyModelViewSet):
+class GoogleSyncLogViewSet(mixins.DestroyModelMixin,
+                           viewsets.ReadOnlyModelViewSet):
+    """
+    List, read and DELETE sync history.
+
+    Read-only until the history grew a delete button. Delete is the whole reason
+    this is not a plain ReadOnlyModelViewSet: a failed run leaves a row that
+    stays at the top of the page forever once it has been read and acted on, and
+    prune_logs only ages rows out on a schedule measured in months.
+
+    Deleting the log of a RUNNING sync is refused. The row is not history yet —
+    /status/ reads it as `running_log` to tell the page a job is in flight, and
+    removing it mid-run would report the sync as finished while it is still
+    writing to the sheet.
+    """
     serializer_class   = GoogleSheetSyncLogSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def get_queryset(self):
         qs = GoogleSheetSyncLog.objects.all()
@@ -58,13 +87,23 @@ class GoogleSyncLogViewSet(viewsets.ReadOnlyModelViewSet):
 
         return qs
 
+    def destroy(self, request, *args, **kwargs):
+        log = self.get_object()
+        if log.status == "running":
+            return Response(
+                {"error": "This sync is still running. Wait for it to finish before deleting its log."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        logger.info("Sync log #%s deleted by %s", log.pk, request.user.username)
+        return super().destroy(request, *args, **kwargs)
+
 
 class GoogleSyncStatusView(APIView):
     """
     GET /api/google-sync/status/
     Returns live summary: last sync per dataset, is_running flag, latest log.
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def get(self, request):
         result = {"is_running": SyncOrchestrator.is_running()}
@@ -92,7 +131,7 @@ class GoogleSyncRunView(APIView):
     POST /api/google-sync/run/
     Body: { "sync_type": "bookings"|"events"|"full_sync", "full": false }
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def post(self, request):
         sync_type = request.data.get("sync_type", "full_sync")
@@ -127,7 +166,7 @@ class GoogleSyncRetryView(APIView):
     POST /api/google-sync/retry/{id}/
     Re-runs the same sync type as the original log.
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def post(self, request, pk):
         try:
@@ -169,7 +208,7 @@ class SyncCatalogView(APIView):
     picker is drawn from this, so it cannot offer a column the runner would
     reject.
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def get(self, request):
         return Response({"modules": catalog.list_modules()})
@@ -180,7 +219,7 @@ class SheetSyncTargetViewSet(viewsets.ModelViewSet):
     CRUD for user-defined pushes, plus POST {id}/run/ to run one now.
     """
     serializer_class   = SheetSyncTargetSerializer
-    permission_classes = [IsAdminRole]
+    permission_classes = [crm_permission("google_sync")]
 
     def get_queryset(self):
         qs = SheetSyncTarget.objects.select_related("created_by").all()

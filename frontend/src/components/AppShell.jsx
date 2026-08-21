@@ -58,7 +58,7 @@ export default function AppShell() {
 
   // "/" reads as the landing page for the one render before the index route
   // redirects, so the crumb and tab title never flash a page the user is not on.
-  const seg = loc.pathname.split('/')[1] || homeFor(canView).path.slice(1);
+  const seg = loc.pathname.split('/')[1] || homeFor().path.slice(1);
   // Matched on `path`, not on `id`. The two are NOT interchangeable: 'paper_review'
   // is underscored where /paper-review is hyphenated, so an id comparison never
   // matched those entries and they fell through to the fallback below — which used
@@ -69,7 +69,17 @@ export default function AppShell() {
   let group = 'Home', label = titleFromSegment(seg);
   NAV.forEach((g) => g.items.forEach((it) => { if (it.path === '/' + seg) { group = g.g; label = it.l; } }));
 
-  useEffect(() => { document.title = 'IQ-Hub — ' + label; window.scrollTo(0, 0); setMobileOpen(false); }, [label]);
+  // #main is the scroller now (position:fixed with its own overflow-y, see
+  // components.css), not the window — window.scrollTo alone left a page
+  // opened mid-scroll however the previous one was left, because nothing
+  // above ever asks the actual scroll container to reset.
+  useEffect(() => {
+    document.title = 'IQ-Hub — ' + label;
+    window.scrollTo(0, 0);
+    const main = document.getElementById('main');
+    if (main) main.scrollTop = 0;
+    setMobileOpen(false);
+  }, [label]);
 
   return (
     <div id="app">

@@ -4,8 +4,8 @@
 // The sidebar and the command palette both read this array, so an entry here is
 // what makes a page reachable without typing its URL. `mod: null` marks a page
 // that is not module-gated — Dashboard renders for every role and hides the
-// sections a role cannot see, which is also why it is the landing page for roles
-// without Reports access (see homeFor below).
+// sections a role cannot see, which is also why it is the landing page for
+// everybody (see homeFor below).
 //
 // `id` is a badge/lookup key, NOT the route: 'paper_review' is underscored where
 // its path is hyphenated. Anything deriving state from the current URL therefore
@@ -22,7 +22,6 @@ export const NAV = [
   ] },
   { g: 'Insights', items: [
     { id: 'dashboard', l: 'Dashboard', ic: 'grid', mod: null, path: '/dashboard' },
-    { id: 'reports', l: 'Reports', ic: 'chart', mod: 'reports', path: '/reports' },
     { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', path: '/performance' },
   ] },
   { g: 'Admin', items: [
@@ -39,17 +38,16 @@ export const NAV_FLAT = NAV.flatMap((g) => g.items);
 /**
  * Where a session opens, and where every "go home" affordance points.
  *
- * Reports is the landing page. It is module-gated ('reports') and Dashboard is
- * not — DashboardPage renders for anybody and hides sections per permission —
- * so a role without Reports access has to land on Dashboard instead, otherwise
- * signing in would drop the user straight onto "No access to Reports".
+ * Dashboard, unconditionally. It used to be Reports for anyone holding that
+ * module and Dashboard for everyone else; with the Reports page gone there is
+ * one destination, and it is the only page that is not module-gated —
+ * DashboardPage renders for anybody and hides sections per permission — so this
+ * can never resolve to a "No access" screen. The parameter is gone with it.
  *
  * Every caller that used to hardcode '/dashboard' (App routes, LoginPage, the
- * sidebar logo, NoAccessPage) resolves through here, so the landing page is
- * decided in exactly one place.
+ * sidebar logo, NoAccessPage) still resolves through here, so the landing page
+ * is decided in exactly one place.
  */
-export function homeFor(canView) {
-  return canView('reports')
-    ? { path: '/reports', label: 'Reports', ic: 'chart' }
-    : { path: '/dashboard', label: 'Dashboard', ic: 'grid' };
+export function homeFor() {
+  return { path: '/dashboard', label: 'Dashboard', ic: 'grid' };
 }

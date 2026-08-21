@@ -6,7 +6,7 @@ from django.urls import path, include, re_path
 from django.views.generic import TemplateView
 from rest_framework.routers import DefaultRouter
 
-from accounts.views import UserViewSet, CustomAuthToken, RequestOTPView, VerifyOTPView
+from accounts.views import UserViewSet, GoogleTokenLoginView, CustomAuthToken
 from companies.views import CompanyViewSet
 from events.views import EventViewSet
 from book_event.views import BookEventViewSet
@@ -39,6 +39,10 @@ urlpatterns = [
     path("api/webhooks/",        include("webhooks.urls")),
     path("api/google-sync/",     include("google_sync.urls")),
     path("api/reports/",         include("reports.urls")),
+    # Read-only export surface. Authenticated by X-DATA-API-KEY only — see
+    # dataapi/authentication.py. Kept off the router above because it is a
+    # separate credential domain, not part of the session-authenticated API.
+    path("api/data/",            include("dataapi.urls")),
     path("api/event-performance/", include("event_performance.urls")),
     path("api/historical-events/", include("historical_event_registry.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
@@ -47,9 +51,12 @@ urlpatterns = [
     # fetchAllPages requests the browser used to make to compute these.
     path("api/stats/dashboard_aggregate/", DashboardAggregateView.as_view(),
          name="dashboard-aggregate"),
-    path("api/auth/token/",       CustomAuthToken.as_view(), name="api-token"),
-    path("api/auth/request-otp/", RequestOTPView.as_view(),  name="request-otp"),
-    path("api/auth/verify-otp/",  VerifyOTPView.as_view(),   name="verify-otp"),
+    # Google Sign-In is the only login method. This must stay ahead of the React
+    # catch-all, which swallows anything it is allowed to see.
+    path("api/auth/google/",   GoogleTokenLoginView.as_view(), name="google-login"),
+    # Hidden break-glass fallback, reachable only via the /170405 front-end
+    # gate. Unlike the Google path it does not check login_access.
+    path("api/auth/fallback/", CustomAuthToken.as_view(),      name="fallback-login"),
     path("api-auth/",            include("rest_framework.urls")),
     # Serve React frontend for all non-API routes
     re_path(r"^(?!api/|admin/|api-auth/|static/).*$",

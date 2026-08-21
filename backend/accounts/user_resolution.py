@@ -17,7 +17,7 @@ unresolved row then became a silent NULL, so the failure never surfaced as
 anything except a number that looked low.
 
 This is the documented failure mode of this codebase. paper_review/notifications.py
-records the same trap for Event.speaker_sales_team, and events/models.py:112
+records the same trap for the event team columns, and events/models.py:112
 matches sales_team by icontains against first/last name. A related field held
 email addresses while the querying code matched display names, and every count
 read zero.

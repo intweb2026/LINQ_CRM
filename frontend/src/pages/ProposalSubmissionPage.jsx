@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ExtLink, PageHead } from '../components/UI';
+import { ExtLink } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Dot, Who } from '../components/Badge';
@@ -19,7 +19,6 @@ import ProposalFormModal from './proposalSubmission/ProposalFormModal';
 import ProposalImportModal from './proposalSubmission/ProposalImportModal';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
-import DateRangeFilter from '../components/DateRangeFilter';
 
 /**
  * Module scope, evaluated once — the stability DataTable's memoised Row needs to
@@ -91,7 +90,10 @@ export default function ProposalSubmissionPage() {
   // Date range, applied by the SERVER over submission_date falling back to
   // created_at — see accounts/period_filter.py. submission_date is nullable, and
   // the fallback is what stops a window hiding every row that never got one.
-  const [period, setPeriod] = useState('all');
+  //
+  // Fixed at 'all' now — the Date Range control was removed from this page
+  // (kept on Bookings only), so there is no UI left to change it.
+  const period = 'all';
   /**
    * The row count, as its own small aggregate; the table no longer holds the set.
    *
@@ -101,7 +103,7 @@ export default function ProposalSubmissionPage() {
    * ProposalSubmissionViewSet.stats.
    */
   const fetchStats = useCallback(() => proposalApi.stats(period), [period]);
-  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } =
+  const { data: stats, refetchQuiet: reloadStats } =
     useFetch(fetchStats, [period], { initialData: {} });
   const total = stats && stats.total != null ? stats.total : null;
 
@@ -134,24 +136,6 @@ export default function ProposalSubmissionPage() {
 
   return (
     <>
-      <PageHead title="Proposal Submission"
-        actions={<>
-          {can('create', 'proposal_submission') ? (
-            <>
-              <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
-              <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New proposal</button>
-            </>
-          ) : null}
-          {/* Outside the create gate: its audience is the HP account, and nesting it
-              would make that the intersection of two unrelated checks. */}
-          <ClearAllButton noun="proposal submission" count={total}
-            onClear={proposalApi.clearAll} onCleared={refresh}
-            extra="Paper reviews are not touched. Proposals that were generated from a review will be recreated if that review is imported again." />
-        </>} />
-
-      <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
-        count={total} noun="proposals" note="by submission date" />
-
       <DataTable
         /**
          * SERVER MODE, for the reasons set out on the same prop in
@@ -167,6 +151,22 @@ export default function ProposalSubmissionPage() {
         server={{ resource: 'proposal-submissions', live: ['paper-reviews'] }}
         serverParams={{ period }}
         onServerReady={keepRefetch}
+        // No status tabs or date-range row on this page to fold these into
+        // (see BookingsPage / TicketCentralPage), so they ride on the
+        // table's own toolbar row instead of a row of their own.
+        extraToolbar={<>
+          {can('create', 'proposal_submission') ? (
+            <>
+              <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Import</button>
+              <button className="btn btn-p" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} />New proposal</button>
+            </>
+          ) : null}
+          {/* Outside the create gate: its audience is the HP account, and nesting it
+              would make that the intersection of two unrelated checks. */}
+          <ClearAllButton noun="proposal submission" count={total}
+            onClear={proposalApi.clearAll} onCleared={refresh}
+            extra="Paper reviews are not touched. Proposals that were generated from a review will be recreated if that review is imported again." />
+        </>}
         // 100 rather than 50, for the reason given on the same prop in
         // PaperReviewPage: half as many scroll stops, each one a round trip plus a
         // re-layout of everything already rendered.

@@ -347,7 +347,7 @@ function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemov
   const value = cond || { key: col.key, op: 'Contains', values: [] };
   const dir = sort && sort.key === col.key ? sort.dir : null;
   return (
-    <th className={(col.num ? 'num ' : '') + (active ? 'act' : '')}>
+    <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '') + (active ? 'act' : '')}>
       <div className="th-w">
         {/* Balances the filter funnel on the right so the label lands on the
             column's true centre — the same axis the value below it sits on.
@@ -996,8 +996,8 @@ export default function DataTable({
   useEffect(() => {
     if (!sentinelEl || !canLoadMore || typeof IntersectionObserver === 'undefined') return undefined;
     // Root at whatever actually scrolls. `.tsc` is its own scroll box at desktop
-    // widths (max-height: calc(100vh - 300px)) but max-height:none under 880px,
-    // where the PAGE scrolls instead. This matters because rootMargin is measured
+    // widths (flex:1 inside `.dt-tw`, see components.css) but max-height:none
+    // under 880px, where the PAGE scrolls instead. This matters because rootMargin is measured
     // against the ROOT's rect: with a viewport root the margin buys nothing while
     // the sentinel is clipped inside an inner scroller, so the next page would
     // only start loading once the user had already hit the bottom.
@@ -1274,7 +1274,7 @@ export default function DataTable({
           <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
         </>
       ) : pageRows.length ? (
-        <div className="tw">
+        <div className="tw dt-tw">
           <div className="tsc" ref={scrollBoxRef}>
             <table className="dt dt-grid">
               <colgroup>

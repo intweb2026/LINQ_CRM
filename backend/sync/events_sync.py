@@ -30,7 +30,7 @@ def sync_events(full=False):
         # 3. Transform
         headers = [
             "ID", "Event Name", "Event Code", "Event Date", "Event Status",
-            "Sales Team", "Speaker Sales Team", "SpEx Team", "Tele Marketing Team", "Market Research Team",
+            "SCA", "SpEx Team", "Tele Marketing Team", "Market Research Team",
             "City", "Country", "Venue", "End Date", "Capacity", "Expected Revenue"
         ]
         
@@ -47,8 +47,9 @@ def sync_events(full=False):
                 e.event_code,
                 str(e.event_date) if e.event_date else "",
                 e.event_status,
-                get_team_str("sales"),
-                get_team_str("speaker_sales"),
+                # Speaker Sales is merged into SCA, so both team values land in
+                # the one column rather than the sheet keeping a dead one.
+                get_team_str("sales") or get_team_str("speaker_sales"),
                 get_team_str("spex"),
                 get_team_str("tele_market"),
                 get_team_str("market_research"),

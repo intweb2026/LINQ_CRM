@@ -17,7 +17,6 @@ import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
-import DateRangeFilter from '../components/DateRangeFilter';
 
 const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim">—</span> : null);
 const person = (v) => dim(v) || <Who name={v} avatar={false} />;
@@ -101,9 +100,12 @@ export default function TicketCentralPage() {
   // Time"), which is what this table sorts by; see accounts/period_filter.py for
   // why it cannot be a filter_spec criterion. The tab counts take the same
   // window, so a tab and the rows under it never disagree.
-  const [period, setPeriod] = useState('all');
+  //
+  // Fixed at 'all' now — the Date Range control was removed from this page
+  // (kept on Bookings only), so there is no UI left to change it.
+  const period = 'all';
   const fetchStats = useCallback(() => ticketsApi.stats(period), [period]);
-  const { data: stats, loading: statsLoading, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: {} });
+  const { data: stats, refetchQuiet: reloadStats } = useFetch(fetchStats, [period], { initialData: {} });
   const [tableRefetch, setTableRefetch] = useState(null);
   // Wrapped in an updater: React treats a bare function passed to a state setter
   // as an updater and would call it instead of storing it.
@@ -155,9 +157,6 @@ export default function TicketCentralPage() {
             extra="The ticket-number sequences are reset with it, so the next ticket raised numbers from the start again." />
         </div>}
       />
-
-      <DateRangeFilter value={period} onChange={setPeriod} loading={statsLoading}
-        count={S.total} noun="tickets" note="by Added Time" />
 
       <DataTable
         // Renamed from 'tickets' on purpose. Column visibility is persisted per

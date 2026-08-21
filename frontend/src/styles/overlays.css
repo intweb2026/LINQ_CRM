@@ -26,6 +26,7 @@
 .dfl-t{display:flex;flex-direction:column;line-height:1.4;min-width:0}
 .dfl-t .n{font-size:12.5px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
 .dfl-t .s{font-size:10.5px;color:var(--text-4)}
+.dfl-r{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 /* action queue */
 .aq{display:flex;flex-direction:column;gap:1px}
 .aq-i{display:flex;align-items:center;gap:11px;padding:11px 4px;border-bottom:1px solid var(--n-50);cursor:pointer;transition:background .12s;border-radius:var(--r-sm)}
@@ -459,7 +460,15 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
   .top-burger{display:grid}
   .top-crumb{display:none}
   .top-search{width:auto;flex:1;min-width:0}
-  #main{margin-left:0;padding:16px 13px 52px}
+  /* Below this width the same handoff as .md-b.fill just under: #main drops
+     its viewport-pinned position and goes back to a plain block that grows
+     with its content — margin-top (rather than an inset) clears the fixed
+     topbar now, safe from the collapsing-margin bug that used to cause
+     precisely this because #app (base.css) still blocks it — so the OUTER
+     page is what scrolls again, same as .dt-tw's flex:1 goes back to a no-op
+     once its parent is no longer a flex column. */
+  #main{position:static;top:auto;left:auto;right:auto;bottom:auto;margin-top:var(--top-h);padding:16px 13px 52px;display:block;height:auto;overflow-y:visible}
+  #main>.dt-tw{flex:none;min-height:0}
   .scrim{left:0}
   .kpis{grid-template-columns:1fr 1fr}
   .fg,.fg.c3,.fg.c4,.ro{grid-template-columns:1fr}

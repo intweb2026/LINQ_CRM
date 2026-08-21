@@ -6,6 +6,8 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import AppShell from './components/AppShell';
 import { homeFor } from './lib/nav';
 import LoginPage from './pages/LoginPage';
+import FallbackGate from './pages/FallbackGate';
+import FallbackLoginPage from './pages/FallbackLoginPage';
 
 /**
  * EVERY PAGE IS SPLIT OUT OF THE MAIN BUNDLE.
@@ -28,7 +30,6 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const BookingsPage = lazy(() => import('./pages/BookingsPage'));
 const TicketCentralPage = lazy(() => import('./pages/TicketCentralPage'));
 const EventsPage = lazy(() => import('./pages/EventsPage'));
-const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 const EventPerformancePage = lazy(() => import('./pages/EventPerformancePage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
@@ -59,16 +60,13 @@ function LoginRoute() {
 /**
  * The index route — the page a session opens on.
  *
- * This renders INSIDE RequireAuth, which holds the tree until `permsLoaded`, so
- * homeFor() is guaranteed to read a resolved permission matrix. That is why
- * /login and the catch-alls send the user to "/" instead of computing a
- * destination themselves: at those points the matrix may still be in flight, and
- * a not-yet-loaded matrix denies every module — which would bounce a
- * Reports-capable user onto Dashboard on every cold page load.
+ * Dashboard, for everybody. It is the one page that is not module-gated — it
+ * renders for any role and hides the sections that role cannot see — so there is
+ * no permission to wait on and nothing to compute. Resolved through homeFor()
+ * rather than hardcoded here so the landing page stays decided in one place.
  */
 function HomeRedirect() {
-  const { canView } = useSession();
-  return <Navigate to={homeFor(canView).path} replace />;
+  return <Navigate to={homeFor().path} replace />;
 }
 
 export default function App() {
@@ -79,6 +77,11 @@ export default function App() {
           <ConfirmProvider>
             <Routes>
               <Route path="/login" element={<LoginRoute />} />
+              {/* Hidden break-glass login. /170405 sets the gate flag that
+                  /loginpage requires; both sit OUTSIDE RequireAuth, or an
+                  unauthenticated visitor would be bounced to /login first. */}
+              <Route path="/170405" element={<FallbackGate />} />
+              <Route path="/loginpage" element={<FallbackLoginPage />} />
               {/* The Suspense boundary these lazy pages need is INSIDE AppShell,
                   around its <Outlet/>, not here. Wrapping <AppShell/> would put
                   the sidebar and topbar behind the fallback too, so every
@@ -94,8 +97,6 @@ export default function App() {
                 <Route path="paper-review" element={<PaperReviewPage />} />
                 <Route path="proposal-submission" element={<ProposalSubmissionPage />} />
                 <Route path="events" element={<EventsPage />} />
-                <Route path="reports" element={<ReportsPage />} />
-                <Route path="reports/:tab" element={<ReportsPage />} />
                 <Route path="performance" element={<EventPerformancePage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />

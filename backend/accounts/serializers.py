@@ -87,7 +87,7 @@ class UserListSerializer(serializers.ModelSerializer):
         model  = User
         fields = [
             "id", "username", "email", "first_name", "last_name", "full_name",
-            "role", "status", "is_active", "assigned_events", "assigned_events_count",
+            "role", "status", "is_active", "login_access", "assigned_events", "assigned_events_count",
             "date_joined", "last_login", "team_id", "team_name", "is_team_lead",
             "mapped_lead_id", "mapped_lead_name",
             "team_permissions", "permission_overrides", "effective_permissions",
@@ -146,7 +146,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
         model  = User
         fields = [
             "username", "email", "first_name", "last_name",
-            "password", "role", "status", "assigned_event_ids", "team_id", "is_team_lead",
+            "password", "role", "status", "login_access", "assigned_event_ids", "team_id", "is_team_lead",
             "mapped_lead_id",
         ]
 

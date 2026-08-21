@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from 'react';
-import { PageHead } from '../components/UI';
 import Popover from '../components/Popover';
 import { Icon } from '../lib/icons';
 import { Av } from '../components/Badge';
@@ -7,7 +6,7 @@ import { nf } from '../lib/helpers';
 import { TEAM_ROLES, ROLE_LABEL, ROLE_FULL } from '../lib/constants';
 import * as teamsApi from '../api/teams';
 import * as usersApi from '../api/users';
-import * as reportsApi from '../api/reports';
+import * as statsApi from '../api/stats';
 import { useFetch } from '../hooks/useFetch';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
@@ -68,7 +67,7 @@ export default function TeamsManagementPage() {
   const { data: teams, refetchQuiet: reloadTeams } = useFetch(teamsApi.list, [], { initialData: [] });
   const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
   // One aggregate request instead of walking every delegate and every ticket.
-  const { data: memberStats, refetchQuiet: reloadStats } = useFetch(reportsApi.teamMemberStats, [], { initialData: {} });
+  const { data: memberStats, refetchQuiet: reloadStats } = useFetch(statsApi.teamMemberStats, [], { initialData: {} });
   const TEAMS = teams || [];
   const USERS = users || [];
   /**
@@ -159,11 +158,10 @@ export default function TeamsManagementPage() {
 
   return (
     <>
-      <PageHead title="Teams"
-        actions={can('create', 'teams') ? <>
-          <button className="btn btn-s" onClick={() => toast('Roster exported', 'ok')}><Icon name="download" size={15} />Export roster</button>
-          <button className="btn btn-p" onClick={() => setFormTeam(null)}><Icon name="plus" size={15} />Create team</button>
-        </> : null} />
+      {/* No tab strip or table toolbar on this page (it's a hand-rolled board,
+          not a DataTable), so the actions ride directly in this row instead
+          of a PageHead row of their own — one fewer row of height, matching
+          BookingsPage / TicketCentralPage. */}
       <div className="tb">
         <div className="tb-s"><input className="in in-s" placeholder="Find a person…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <div className="chips">
@@ -171,6 +169,10 @@ export default function TeamsManagementPage() {
           {TEAM_ROLES.map((r) => <span key={r} className={'chip' + (roleFilter === r ? ' on' : '')} onClick={() => setRoleFilter(r)}>{ROLE_LABEL[r]}</span>)}
         </div>
         <div className="tb-sp" /><span className="tb-m">{USERS.length} members · {TEAMS.length} teams</span>
+        {can('create', 'teams') ? <>
+          <button className="btn btn-s" onClick={() => toast('Roster exported', 'ok')}><Icon name="download" size={15} />Export roster</button>
+          <button className="btn btn-p" onClick={() => setFormTeam(null)}><Icon name="plus" size={15} />Create team</button>
+        </> : null}
       </div>
       <div className="kb">
         <Column id={0} name="Unassigned" color="var(--n-300)" members={un} isOver={dragOverId === 0} {...columnProps} />

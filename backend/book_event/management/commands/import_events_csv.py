@@ -52,9 +52,11 @@ class Command(BaseCommand):
                         )
 
                         # 3. Handle Teams
+                        # Speaker Sales is merged into SCA, so the sheet ships one
+                        # column for both; 'Sales Team' stays readable for older files.
                         team_mapping = {
+                            'SCA': User.Team.SALES,
                             'Sales Team': User.Team.SALES,
-                            'Speaker Sales Team': User.Team.SPEAKER_SALES,
                             'SpEx Team': User.Team.SPEX,
                             'Tele Marketing Team': User.Team.TELE_MARKET,
                             'Market Research Team': User.Team.MARKET_RESEARCH,

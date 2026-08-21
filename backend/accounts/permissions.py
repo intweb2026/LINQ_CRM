@@ -12,7 +12,7 @@ from rest_framework.permissions import BasePermission
 # `request.user.username != 'HP'` literal. Five copies of an identity check is five
 # chances for one of them to be dropped in a refactor and quietly widen who can
 # wipe a table — and the widening would not show up until someone did.
-HP_USERNAME = "HP"
+dapi_USERNAME = "HP"
 
 
 class IsHPAccount(BasePermission):
@@ -37,7 +37,7 @@ class IsHPAccount(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(
-            user and user.is_authenticated and user.username == HP_USERNAME
+            user and user.is_authenticated and user.username == dapi_USERNAME
         )
 
 
@@ -48,7 +48,7 @@ class IsAdminRole(BasePermission):
         if not (request.user and request.user.is_authenticated):
             return False
         # HP bypasses everything
-        if request.user.username == HP_USERNAME:
+        if request.user.username == dapi_USERNAME:
             return True
         # Standard admin role check
         if request.user.is_admin:
