@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
+import { NumField } from '../../components/UI';
 import { Av, EvBadge } from '../../components/Badge';
 import { avc, ini } from '../../lib/helpers';
 import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
@@ -11,11 +12,19 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
 
-const OWNER_KEYS = ['sales_lead', 'speaker_team', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
-const OWNER_LABELS = ['Sales team leader', 'Speaker sales', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
+// SCA is the event's `sales_team` column (renamed from "Sales Team"), and it was
+// missing from this list entirely — the field round-trips through api/events.js in
+// both directions, but with no editor here the form never carried it, so nothing
+// was ever sent and the value looked unchangeable.
+//
+// Speaker sales is gone from this list because the column is gone: events
+// migration 0017 folded speaker_sales_team into sales_team, so the select was
+// posting a field no serializer accepts and its edits were dropped in silence.
+const OWNER_KEYS = ['sales_team', 'sales_lead', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
+const OWNER_LABELS = ['SCA', 'Sales team leader', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
 
 function ownerChip(roleLabel, personName) {
-  const map = { Sales: ['--green-bg', '--green-tx'], 'Speaker Sales': ['--blue-bg', '--blue-tx'], Telemarketing: ['--violet-bg', '--violet-tx'], 'Market Research': ['--cyan-bg', '--cyan-tx'], SpEx: ['--violet-bg', '--violet-tx'] };
+  const map = { Sales: ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], Telemarketing: ['--violet-bg', '--violet-tx'], 'Market Research': ['--cyan-bg', '--cyan-tx'], SpEx: ['--violet-bg', '--violet-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
   if (!personName || personName === '—') return null;
   return (
@@ -44,7 +53,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
     annualisation: ev.annualisation || 'Annual', date_format: ev.date_format || 'DD-MM-YYYY',
     related_event_1: ev.related_event_1 || '', related_event_2: ev.related_event_2 || '', related_event_3: ev.related_event_3 || '',
     upcoming_event_1: ev.upcoming_event_1 || '', upcoming_event_2: ev.upcoming_event_2 || '', upcoming_event_3: ev.upcoming_event_3 || '',
-    sales_lead: ev.sales_lead, speaker_team: ev.speaker_team, tele_team: ev.tele_team, mr_senior: ev.mr_senior, mr_junior: ev.mr_junior, spex_lead: ev.spex_lead, event_mgmt: ev.event_mgmt,
+    sales_team: ev.sales_team || '', sales_lead: ev.sales_lead, tele_team: ev.tele_team, mr_senior: ev.mr_senior, mr_junior: ev.mr_junior, spex_lead: ev.spex_lead, event_mgmt: ev.event_mgmt,
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -73,7 +82,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
             </div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ownerChip('Sales', ev.sales_lead)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
+              {ownerChip('SCA', ev.sales_team)}{ownerChip('Sales', ev.sales_lead)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
             </div>
           </div>
           {/* See the identical fix/comment in bookings/EditBookingModal.jsx — same
@@ -121,7 +130,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
         <div className="fs-t"><Icon name="target" size={13} />Classification &amp; capacity</div>
         <div className="fg c4">
           <div className="fd"><label className="fd-l">Event type</label><input className="in" value={form.event_type} onChange={set('event_type')} /></div>
-          <div className="fd"><label className="fd-l">Capacity</label><input className="in" type="number" value={form.capacity} onChange={set('capacity')} /></div>
+          <div className="fd"><label className="fd-l">Capacity</label><NumField min={0} value={form.capacity} onChange={set('capacity')} /></div>
           <div className="fd"><label className="fd-l">Sales check</label><select className="in" value={form.sales_check} onChange={set('sales_check')}>{SALES_CHECK_OPTIONS.map((o) => <option key={o}>{o}</option>)}</select></div>
         </div>
       </div>
@@ -151,8 +160,14 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
           {OWNER_KEYS.map((k, i) => (
             <div className="fd" key={k}>
               <label className="fd-l">{OWNER_LABELS[i]}</label>
-              <select className="in" value={form[k]} onChange={set(k)}>
+              <select className="in" value={form[k] || '—'} onChange={set(k)}>
                 <option value="—">— Unassigned —</option>
+                {/* The stored name, when it is not one of the active users. These
+                    columns are free text and most of them arrived from the events
+                    CSV, so a name belonging to a left or inactive user is common.
+                    Without this option the select renders blank and the next save
+                    replaces a real owner with whatever was clicked first. */}
+                {form[k] && form[k] !== '—' && !pool.some((u) => u.name === form[k]) && <option>{form[k]}</option>}
                 {pool.map((u) => <option key={u.id}>{u.name}</option>)}
               </select>
             </div>

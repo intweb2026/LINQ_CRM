@@ -482,6 +482,36 @@ export function transferDelegate(delegateId, { targetEventCode, invoiceNumber })
   }).then((r) => r.data);
 }
 
+/**
+ * Move SEVERAL of one invoice's delegates to another event — a PARTIAL transfer.
+ *
+ * Five delegates on an invoice where only two are moving is the ordinary case. It
+ * was expressible before this by calling transferDelegate() twice, the second call
+ * reusing the invoice number the first one created, but as separate requests:
+ *
+ *   - a failure on the second left one delegate moved and one behind, with nothing
+ *     in the data saying that was not the intent;
+ *   - the source invoice's status flipped to Credit Transferred on whichever call
+ *     happened to empty it, so the outcome depended on the order they were sent in.
+ *
+ * One request decides both over the whole set. See BookDelegateViewSet.transfer_batch.
+ *
+ * Every id must be a delegate on the SAME invoice — the operation is "split this
+ * invoice" and the server refuses a mixed set rather than guessing.
+ *
+ * Resolves with { source, created, count, delegates } — `source.left_behind` is how
+ * many stayed, and `source.scope` is 'invoice' when the transfer emptied the invoice
+ * (its own status becomes Credit Transferred) or 'delegate' when it did not (only
+ * the moved rows carry that status, as overrides).
+ */
+export function transferDelegates(delegateIds, { targetEventCode, invoiceNumber }) {
+  return http.post('delegates/transfer/', {
+    delegate_ids: delegateIds,
+    target_event_code: targetEventCode,
+    invoice_number: invoiceNumber,
+  }).then((r) => r.data);
+}
+
 /** The number the transfer modal offers for the new booking. */
 export const suggestTransferInvoiceNumber = (invoiceNumber) => `${invoiceNumber || 'INV'}-T`;
 

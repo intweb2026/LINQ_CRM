@@ -1,21 +1,19 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
-import { NAV, homeFor } from '../lib/nav';
+import { NAV, canAccess, homeFor } from '../lib/nav';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
 import * as eventsApi from '../api/events';
 import * as usersApi from '../api/users';
 import { useFetch } from '../hooks/useFetch';
 import { useSession } from '../context/SessionContext';
-import { useToast } from '../context/ToastContext';
 
 export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   const { canView } = useSession();
-  const toast = useToast();
   const nav = useNavigate();
   const loc = useLocation();
-  const home = homeFor();
+  const home = homeFor(canView);
   // Compared against each item's `path`, not its `id` — see nav.js: 'paper_review'
   // is underscored where /paper-review is hyphenated, so the id comparison this
   // replaces left Paper Review and Proposal Submission permanently unhighlighted
@@ -26,10 +24,14 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   // The bookings badge is a COUNT — one row off the paginator, not every page of
   // ~35k delegates length-filtered in the browser. This component mounts in the
   // app shell, so the old version re-ran that walk on every route change.
-  const { data: pendingBookings } = useFetch(bookingsApi.countPending, [], { initialData: 0 });
-  const { data: ticketStats } = useFetch(ticketsApi.stats, [], { initialData: {} });
-  const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
+  //
+  // Each one is also gated on the module it counts. The sidebar now renders only
+  // permitted modules, so a role without Ticket Central never sees that badge;
+  // firing its request anyway would just spend a round trip on a 403.
+  const { data: pendingBookings } = useFetch(bookingsApi.countPending, [], { initialData: 0, immediate: canView('bookings') });
+  const { data: ticketStats } = useFetch(ticketsApi.stats, [], { initialData: {}, immediate: canView('ticket_central') });
+  const { data: events } = useFetch(eventsApi.list, [], { initialData: [], immediate: canView('events') });
+  const { data: users } = useFetch(usersApi.list, [], { initialData: [], immediate: canView('users') });
   const badges = {
     bookings: pendingBookings || 0,
     tickets: (ticketStats || {}).mr_submitted || 0,
@@ -52,9 +54,12 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
       </div>
       <div className="rail-nav">
         {NAV.map((g) => {
-          const vis = g.items.filter((i) => !i.mod || canView(i.mod));
-          const locked = g.items.filter((i) => i.mod && !canView(i.mod));
-          if (!vis.length && !locked.length) return null;
+          // Permitted modules only. Modules the role cannot view are absent, not
+          // greyed out: a "No access" row still tells the user the module exists,
+          // and a role holding only Bookings should see only Bookings. The whole
+          // group header goes with them when nothing in it is visible.
+          const vis = g.items.filter((i) => canAccess(i, canView));
+          if (!vis.length) return null;
           return (
             <div className="rail-group" key={g.g}>
               <div className="rail-glabel">{g.g}</div>
@@ -69,14 +74,6 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
                   </button>
                 );
               })}
-              {locked.map((i) => (
-                <button key={i.id} className="rail-item locked" title="No access" onClick={() => toast('You do not have access to ' + i.l, 'wn')}>
-                  <span className="rail-ic"><Icon name={i.ic} size={17} /></span>
-                  <span className="rail-lb">{i.l}</span>
-                  <span className="rail-lock"><Icon name="lock" size={13} /></span>
-                  <span className="rail-tip">{i.l} — no access</span>
-                </button>
-              ))}
             </div>
           );
         })}

@@ -406,7 +406,7 @@ table.dt td.st{font-weight:650;color:var(--text)}
 table.dt td.usr-name{text-align:left}
 th.usr-name .th-w{justify-content:flex-start}
 th.usr-name .th-sp{display:none}
-th.usr-name .th-sort{justify-content:flex-start;padding-left:12px}
+th.usr-name .th-sort{justify-content:flex-start;padding-left:71px}
 table.dt td.ck,table.dt th.ck{width:40px;text-align:center;padding:0 0 0 13px}
 table.dt th.ck{padding:9px 0 9px 13px}
 /* Pinned leading cells — the delegate rows in the Bookings modals.

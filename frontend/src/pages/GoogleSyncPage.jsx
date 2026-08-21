@@ -85,7 +85,8 @@ export default function GoogleSyncPage() {
   // backend, which is precisely the case a poll exists for.
   const { refreshNow: refresh } = useLiveData(reloadLogs, { resources: ['google-sync'] });
 
-  if (!canView('webhooks')) return <NoAccessPage module="Google Sync" />;
+  // 'google_sync' — its own module since the webhooks split; see lib/nav.js.
+  if (!canView('google_sync')) return <NoAccessPage module="Google Sync" />;
 
   const rows = GSYNC_LOGS.filter((l) => (!statusFilter || l.status === statusFilter) && (!typeFilter || l.sync_type === typeFilter) && (!triggerFilter || l.trigger_source === triggerFilter)
     && (!q || l.sheet_name.toLowerCase().includes(q.toLowerCase()) || String(l.id).includes(q)));

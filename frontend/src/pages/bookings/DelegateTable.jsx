@@ -115,7 +115,7 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'name', label: 'Name', type: 'text', width: 160, required: true },
   { key: 'company_name', label: 'Delegate Company', type: 'text', width: 170, required: true },
   { key: 'email', label: 'Delegate Email', type: 'email', width: 190, required: true },
-  { key: 'phone_number', label: 'Direct Line', type: 'text', width: 150 },
+  { key: 'phone_number', label: 'Direct Line', type: 'digits', width: 150 },
   { key: 'accounts_contact_email', label: 'Accounts Contact', type: 'email', width: 190 },
   { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, width: 140 },
   { key: 'paid_or_free', label: 'Paid/Free', type: 'select', options: ['Paid', 'Free'], width: 110 },
@@ -187,6 +187,16 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     }
     if (c.type === 'display') {
       return <span className={'dim' + (c.mono ? ' mono' : '')} style={{ fontSize: c.mono ? 11 : 12 }}>{displayValue(c, row)}</span>;
+    }
+    // 'digits' is a text input that only ever holds digits. type="number" is not
+    // the same thing: it still accepts 'e', '+', '-' and '.' as you type, and it
+    // reports those as an empty value, so a typo would silently blank the cell.
+    // Filtering on change keeps the caret usable and drops anything else outright.
+    if (c.type === 'digits') {
+      return (
+        <input className="in in-xs" type="text" inputMode="numeric" value={row[c.key] || ''}
+          onChange={(e) => update(i, c.key, e.target.value.replace(/\D+/g, ''))} />
+      );
     }
     return <input className="in in-xs" type={c.type} value={row[c.key] || ''} onChange={(e) => update(i, c.key, e.target.value)} />;
   }

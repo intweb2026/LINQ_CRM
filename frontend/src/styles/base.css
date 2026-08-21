@@ -121,9 +121,6 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 .rail-lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail-bdg{font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:var(--r-full);background:var(--n-75);color:var(--text-3);flex-shrink:0}
 .rail-item.on .rail-bdg{background:var(--t-100);color:var(--t-700)}
-.rail-lock{width:13px;height:13px;color:var(--n-300);flex-shrink:0}
-.rail-item.locked{opacity:.42;cursor:not-allowed}
-.rail-item.locked:hover{background:none;color:var(--rail-tx)}
 .rail-foot{padding:9px;border-top:1px solid var(--rail-bd);flex-shrink:0}
 .rail-user{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-md);cursor:pointer;transition:background .13s;width:100%;border:none;background:none;text-align:left}
 .rail-user:hover{background:var(--n-50)}
@@ -136,7 +133,7 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 /* collapsed rail */
 body.rail-min{--rail-w:62px}
 body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,
-body.rail-min .rail-utx,body.rail-min .rail-out,body.rail-min .rail-lock{display:none}
+body.rail-min .rail-utx,body.rail-min .rail-out{display:none}
 body.rail-min .rail-head{justify-content:center;padding:13px 0}
 body.rail-min .rail-mark{width:100%;justify-content:center}
 body.rail-min .rail-mark .lg-light,body.rail-min .rail-mark .lg-dark{display:none}

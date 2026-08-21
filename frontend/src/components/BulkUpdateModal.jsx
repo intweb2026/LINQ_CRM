@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Modal from './Modal';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
+import { NumField } from './UI';
 import { useToast } from '../context/ToastContext';
 
 // Just the (possibly pluralised) noun. `plur` from lib/helpers returns the count
@@ -304,12 +305,13 @@ export default function BulkUpdateModal({
             <input className="in" type="date" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
           ) : config.type === 'integer' || config.type === 'decimal' ? (
             /* min/max/step come from the schema, which reads them off the model's
-               own validators and decimal_places. They are a keyboard convenience
-               only — the backend re-checks every one of them, since a number
-               input accepts pasted text and can be bypassed entirely. */
-            <input
-              className="in"
-              type="number"
+               own validators and decimal_places. NumField holds the value inside
+               them as it is typed — on a plain number input they are a spinner
+               hint only, so a bulk update could carry an out-of-range value to
+               every selected row and fail at the API for all of them at once.
+               The backend still re-checks: a number input can be bypassed
+               entirely, and this modal writes to many records. */
+            <NumField
               value={value}
               min={config.min}
               max={config.max}

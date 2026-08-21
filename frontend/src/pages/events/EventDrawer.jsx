@@ -103,10 +103,17 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
       {tab === 'teams' && (
         <>
           <div className="sl">Team ownership</div>
-          {[['Sales team', ev.sales_team], ['Sales team leader', ev.sales_lead], ['Speaker sales', ev.speaker_team], ['Telemarketing', ev.tele_team], ['Market Research Sr.', ev.mr_senior], ['Market Research Jr.', ev.mr_junior], ['SpEx lead', ev.spex_lead], ['Event management', ev.event_mgmt]].map((r) => (
+          {[['SCA', ev.sales_team], ['Sales team leader', ev.sales_lead], ['Telemarketing', ev.tele_team], ['Market Research Sr.', ev.mr_senior], ['Market Research Jr.', ev.mr_junior], ['SpEx lead', ev.spex_lead], ['Event management', ev.event_mgmt]].map((r) => (
             <div key={r[0]} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 0', borderBottom: '1px solid var(--n-50)' }}>
               <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-4)', width: 150, flexShrink: 0 }}>{r[0]}</span>
-              {r[1].indexOf('Team') > -1 ? <span style={{ fontWeight: 650, color: 'var(--text)', fontSize: 12.5 }}>{r[1]}</span> : <Who name={r[1]} />}
+              {/* Coalesced, not asserted. A dropped backend column shows up here as
+                  `undefined`, and calling .indexOf on it threw during render; with no
+                  error boundary in the app that white-screened the whole page rather
+                  than blanking one row. `speaker_sales_team` did exactly this after
+                  events migration 0017 removed it. Missing now degrades to an em dash. */}
+              {!r[1] ? <span className="dim">—</span>
+                : String(r[1]).indexOf('Team') > -1 ? <span style={{ fontWeight: 650, color: 'var(--text)', fontSize: 12.5 }}>{r[1]}</span>
+                : <Who name={r[1]} />}
             </div>
           ))}
           <div className="sl" style={{ marginTop: 18 }}>Naming &amp; metadata</div>

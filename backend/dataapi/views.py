@@ -5,7 +5,7 @@ Read-only viewsets for the Data API.
 
 Every view sets authentication_classes and permission_classes LOCALLY. Nothing
 here is registered in the global REST_FRAMEWORK settings, so a dapi_ key
-reaches exactly these three list/detail endpoints and nothing else.
+reaches exactly these four list/detail endpoints and nothing else.
 """
 import logging
 
@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
+from ticket_central.models import Ticket
 
 from .authentication import DataApiKeyAuthentication, DataApiKeyUser
 from .pagination import DataApiCursorPagination
@@ -24,6 +25,7 @@ from .serializers import (
     DataApiBookingSerializer,
     DataApiDelegateSerializer,
     DataApiEventSerializer,
+    DataApiTicketSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,3 +119,25 @@ class EventDataViewSet(DataApiBaseViewSet):
 
     def _base_queryset(self):
         return Event.objects.order_by("pk")
+
+
+class TicketDataViewSet(DataApiBaseViewSet):
+    resource_name = "tickets"
+    serializer_class = DataApiTicketSerializer
+
+    def _base_queryset(self):
+        qs = (
+            Ticket.objects
+            .select_related("created_by", "mr_submitted_by", "dmd_submitted_by", "returned_by")
+            .order_by("pk")
+        )
+        event_code = self.request.query_params.get("event_code")
+        if event_code:
+            qs = qs.filter(event_code=event_code)
+        updated_since = self.request.query_params.get("updated_since")
+        if updated_since:
+            qs = qs.filter(updated_at__gte=updated_since)
+        status = self.request.query_params.get("status")
+        if status:
+            qs = qs.filter(status=status)
+        return qs

@@ -23,8 +23,8 @@ export const TARGET_FIELDS = {
   // so offering it would silently drop the column. Same for the two aliases it
   // reads, `accepting_web_bookings` and `tele_marketing_team`.
   //
-  // Order is specific-before-generic — speaker_sales_team before sales_team,
-  // website_live_date before website, vr1_sent_status before status. autoMap
+  // Order is specific-before-generic — team_leader's 'Sales Team Leader' before
+  // sales_team, website_live_date before website, vr1_sent_status before status. autoMap
   // resolves exact matches first, but a header with no exact match falls back to
   // a substring scan that takes the first hit in this order.
   events: [
@@ -39,9 +39,11 @@ export const TARGET_FIELDS = {
     ['website_live_date', 'Website Live Date'],
     ['website', 'Website'],
     ['web_bookings', 'Accepting Web Bookings', ['Web Bookings']],
-    ['speaker_sales_team', 'Speaker Sales Team'],
-    ['sales_team', 'Sales Team'],
     ['team_leader', 'Sales Team Leader'],
+    // 'SCA' is the current sheet header; 'Sales Team' and 'Speaker Sales Team'
+    // are the older ones, and the speaker column was folded into this one by
+    // events migration 0017, so both still map here.
+    ['sales_team', 'SCA', ['Sales Team', 'Speaker Sales Team']],
     ['sales_executive', 'Sales Executive (username/email)'],
     ['spex_team', 'SpEx Team'],
     ['telemarketing_team', 'Tele Marketing Team', ['Telemarketing Team']],

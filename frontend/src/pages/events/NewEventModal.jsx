@@ -2,14 +2,20 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
+import { NumField } from '../../components/UI';
 import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import * as eventsApi from '../../api/events';
 
-const OWNER_LABELS = ['Sales team leader', 'Speaker sales', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
-const OWNER_KEYS = ['sales_lead', 'speaker_team', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
+// SCA (the event's `sales_team` column) had no editor here, so a new event was
+// always created without one. Speaker sales is dropped: events migration 0017
+// folded speaker_sales_team into sales_team, and the backend no longer has the
+// column to write. Keep these two lists in the same order — the owners array
+// below is positional. See EditEventModal for the matching list.
+const OWNER_LABELS = ['SCA', 'Sales team leader', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
+const OWNER_KEYS = ['sales_team', 'sales_lead', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
 
 export default function NewEventModal({ onClose, onSaved }) {
   const toast = useToast();
@@ -34,7 +40,11 @@ export default function NewEventModal({ onClose, onSaved }) {
     if (!code || !name || !start) { toast('Event code, name and start date are required', 'er'); return; }
     const end = form.end_date || new Date(new Date(start).getTime() + 2 * 864e5).toISOString().slice(0, 10);
     const ownerFields = {};
-    OWNER_KEYS.forEach((k, i) => { ownerFields[k] = form.owners[i] || '—'; });
+    // Unassigned reads as '—' for the display-only owner columns, but sales_team
+    // must stay EMPTY: Event.save() resolves sales_executive by matching this
+    // text against user names, and the Bookings tab falls back to it for Sales
+    // Executive — a literal '—' would be stored and shown as if it were a name.
+    OWNER_KEYS.forEach((k, i) => { ownerFields[k] = form.owners[i] || (k === 'sales_team' ? '' : '—'); });
     try {
       await eventsApi.create({
         event_code: code, name, location: form.location.trim() || '—', event_date: start, end_date: end,
@@ -93,7 +103,7 @@ export default function NewEventModal({ onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="target" size={13} />Classification &amp; capacity</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Capacity</label><input className="in" type="number" placeholder="300" value={form.capacity} onChange={set('capacity')} /></div>
+          <div className="fd"><label className="fd-l">Capacity</label><NumField min={0} placeholder="300" value={form.capacity} onChange={set('capacity')} /></div>
           <div className="fd"><label className="fd-l">Sales check</label><select className="in" value={form.sales_check} onChange={set('sales_check')}>{SALES_CHECK_OPTIONS.map((o) => <option key={o}>{o}</option>)}</select></div>
         </div>
       </div>

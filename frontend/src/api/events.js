@@ -40,7 +40,6 @@ function toFrontend(e) {
     // `sales_team` the Events tab keeps in step with it. Read by the Bookings tab,
     // where Sales Executive is owned by the event rather than by the booking.
     sales_exec: e.sales_executive_name || e.sales_team || '',
-    speaker_team: e.speaker_sales_team,
     tele_team: e.telemarketing_team,
     mr_senior: e.market_research_senior,
     mr_junior: e.market_research_junior,
@@ -81,7 +80,6 @@ function toBackend(f) {
     vr1_sent_status: f.vr1_status,
     sales_team: f.sales_team,
     team_leader: f.sales_lead,
-    speaker_sales_team: f.speaker_team,
     telemarketing_team: f.tele_team,
     market_research_senior: f.mr_senior,
     market_research_junior: f.mr_junior,

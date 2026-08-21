@@ -12,7 +12,7 @@ import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
 
 function ownerChip(roleLabel, personName) {
-  const map = { 'Sales Exec': ['--green-bg', '--green-tx'], 'Speaker Sales': ['--blue-bg', '--blue-tx'], SpEx: ['--violet-bg', '--violet-tx'], 'Market Research': ['--amber-bg', '--amber-tx'] };
+  const map = { 'Sales Exec': ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], SpEx: ['--violet-bg', '--violet-tx'], 'Market Research': ['--amber-bg', '--amber-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
   if (!personName || personName === '—') return null;
   return (
@@ -134,7 +134,10 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
                   column shows. It used to read ev.sales_lead, which is the event's
                   team LEADER, so the chip labelled "Sales Exec" and the column
                   named Sales Executive could disagree about the same booking. */}
-              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('Speaker Sales', ev.speaker_team)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
+              {/* No SCA chip beside this one: `sales_exec` already falls back to the
+                  event's sales_team, so the two would print the same name twice on
+                  every booking whose event has no sales_executive FK. */}
+              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
             </div>
           </div>
           {/* `.md-h` top-aligns its children (right, for a header whose title+sub
@@ -158,7 +161,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
     >
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
-        <div className="fg c3">
+        <div className="fg c4">
           <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
             <Select className="in mono" value={eventCode} options={eventCodes} onChange={setEventCode} />
             {eventCode !== first.event_code ? (
@@ -167,6 +170,11 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
           </div>
           <div className="fd"><label className="fd-l">Event name</label><input className="in" value={eventName} readOnly /></div>
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
+          {/* SCA, read-only: it belongs to the EVENT (events.sales_team), not to
+              the invoice, so it follows the event code above and is edited in the
+              Events tab. Shown here because it is the owner a booking is
+              attributed to, and reading it used to mean leaving the modal. */}
+          <div className="fd"><label className="fd-l">SCA</label><input className="in" value={ev.sales_team || ev.sales_exec || ''} readOnly placeholder="—" /></div>
         </div>
       </div>
       {/* fs-fill: this section, not the modal body, owns the vertical scroll.

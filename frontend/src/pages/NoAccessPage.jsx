@@ -1,13 +1,16 @@
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
 import { homeFor } from '../lib/nav';
+import { useSession } from '../context/SessionContext';
 
 export default function NoAccessPage({ module }) {
   const nav = useNavigate();
-  // The way out has to be a page this user can actually open, and Dashboard is
-  // the only page that is not module-gated, so homeFor() can never point back at
-  // a module this user just bounced off.
-  const home = homeFor();
+  const { canView } = useSession();
+  // The way out has to be a page this user can actually open. homeFor() resolves
+  // that against the live permission matrix, so the button cannot offer a module
+  // this user just bounced off — and cannot offer Dashboard either, now that
+  // Dashboard is itself gated.
+  const home = homeFor(canView);
   return (
     <div className="card">
       <div className="mt">

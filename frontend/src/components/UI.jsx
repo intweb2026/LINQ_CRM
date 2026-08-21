@@ -147,3 +147,74 @@ export function Seg({ options, value, onChange }) {
     </div>
   );
 }
+
+/**
+ * A number input that cannot hold a number outside its bounds.
+ *
+ * `<input type="number" min max>` does NOT restrict what can be entered. The
+ * attributes drive the spinner and mark the field :invalid, which is why the
+ * paper-review rubric — six criteria capped at 5 or 10 — happily accepted 99999
+ * in every box and totalled 364994 / 45, grading it an A. Nothing was wrong with
+ * the maxima; the input simply was not enforcing them, and the only thing that
+ * did was the browser's validation bubble on submit, which the form's own
+ * save() never consulted.
+ *
+ * So the value is clamped as it is typed. Three rules:
+ *
+ *   OUT OF RANGE IS PULLED BACK IN. Typing "99" into a field capped at 10 leaves
+ *   10, not 99. Clamping beats rejecting the keystroke: reject leaves "9" on
+ *   screen after typing "99", which reads as a dropped character, where 10 reads
+ *   as the cap doing its job — and the label already states it.
+ *
+ *   NON-NUMERIC TEXT IS NOT ACCEPTED. A number input's value is "" for anything
+ *   unparseable ("e", "1e5", a pasted word), and treating that as "cleared"
+ *   would silently wipe a scored field when a stray key hits it. Empty stays
+ *   empty only when the box really is empty.
+ *
+ *   INTEGER FIELDS STAY INTEGERS. step=1 (the default) truncates toward zero, so
+ *   a pasted "7.9" lands as 7 rather than as a decimal the backend rejects.
+ *
+ * The backend still validates — MinValueValidator/MaxValueValidator on the model
+ * (backend/paper_review/models.py _criterion) and the serializer bounds. This is
+ * not a substitute for that; it is what stops the user reaching a 400 at all.
+ *
+ * Signature matches the plain input it replaces: `onChange` receives an event
+ * whose `target.value` is the clamped string, so existing `set(key)` handlers
+ * work unchanged.
+ */
+export function NumField({ value, onChange, min, max, step = 1, className = 'in', ...rest }) {
+  function handle(e) {
+    const raw = e.target.value;
+    let next = raw;
+    if (raw !== '') {
+      let n = Number(raw);
+      // Number('') is 0 and Number('abc') is NaN. The input has already refused
+      // to give us a value for text it cannot parse, so NaN here means the box
+      // holds something that is not a number — keep what was there.
+      if (Number.isNaN(n)) return;
+      if (step === 1) n = Math.trunc(n);
+      if (min !== undefined && n < min) n = min;
+      if (max !== undefined && n > max) n = max;
+      next = String(n);
+    }
+    if (next === value) return;
+    // A hand-built event, not `{...e, target: {...e.target}}`: spreading a DOM
+    // node copies nothing (its properties live on the prototype), so that form
+    // silently dropped `name` while appearing to preserve the event. `name` is
+    // forwarded because handlers keyed on it are the other common shape.
+    onChange({ target: { name: e.target.name, value: next } });
+  }
+  return (
+    <input
+      className={className}
+      type="number"
+      inputMode={step === 1 ? 'numeric' : 'decimal'}
+      value={value ?? ''}
+      min={min}
+      max={max}
+      step={step}
+      onChange={handle}
+      {...rest}
+    />
+  );
+}

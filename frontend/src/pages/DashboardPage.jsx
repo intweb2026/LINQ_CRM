@@ -5,6 +5,7 @@ import { Donut, Sparkline } from '../components/UI';
 import { Who, RoleBadge, EvBadge } from '../components/Badge';
 import { nf, pc, plur, rel, MON } from '../lib/helpers';
 import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
+import { DASH_MODULES } from '../lib/nav';
 import * as eventsApi from '../api/events';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
@@ -16,6 +17,7 @@ import { useSession } from '../context/SessionContext';
 import NewBookingModal from './bookings/NewBookingModal';
 import TicketFormModal from './tickets/TicketFormModal';
 import ImportWizard from '../components/ImportWizard';
+import NoAccessPage from './NoAccessPage';
 
 const EMPTY_LINE = { total: 0, paid: 0, pending: 0, free: 0, credit: 0, unpaid: 0, cancelled: 0, invoices: 0, companies: 0 };
 const EMPTY_STATS = {
@@ -118,6 +120,16 @@ export default function DashboardPage() {
       poll: 120_000,
     },
   );
+
+  // Every panel below is an aggregate over another module's tables, and each one
+  // is already hidden by its own canView() check. Holding none of DASH_MODULES
+  // therefore rendered a page of nothing but the greeting — so this says so
+  // instead. The rail and the command palette hide the entry on the same list
+  // (see lib/nav.js), which leaves this guard for a typed URL.
+  //
+  // Below the hooks on purpose: an early return above them would change the hook
+  // count between renders as the permission matrix resolves.
+  if (!DASH_MODULES.some((m) => canView(m))) return <NoAccessPage module="Dashboard" />;
 
   const EVENTS = events || [];
   const RECENT_BOOKINGS = recentBookings || [];

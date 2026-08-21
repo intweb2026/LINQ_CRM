@@ -56,10 +56,11 @@ export default function LoginPage() {
     try {
       const user = await loginWithGoogle(response.credential);
       toast('Signed in as ' + user.name, 'ok');
-      // "/" resolves to the landing page inside the router — Reports, or
-      // Dashboard for roles without Reports access; see HomeRedirect in
-      // App.jsx. Deciding it here would read a `canView` captured BEFORE
-      // loginWithGoogle awaited and replaced the permission matrix.
+      // "/" resolves to the landing page inside the router — the first entry in
+      // NAV order this role can see; see HomeRedirect in App.jsx. Deciding it
+      // here would read a `canView` captured BEFORE loginWithGoogle awaited and
+      // replaced the permission matrix, which now decides the destination rather
+      // than merely which sections it shows.
       //
       // replace: true because a signed-in user who presses Back onto /login is
       // only bounced forward again, which traps the button on the landing page.

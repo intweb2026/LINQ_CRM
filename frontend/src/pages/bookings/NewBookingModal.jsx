@@ -59,7 +59,7 @@ export default function NewBookingModal({ onClose, onCreated }) {
       footer={<><span className="tb-m" style={{ marginRight: 'auto' }}><b>{delegates.length}</b> delegate{delegates.length === 1 ? '' : 's'}</span><button className="btn btn-s" onClick={onClose}>Cancel</button><button className="btn btn-p" onClick={create}><Icon name="check" size={15} />Save booking</button></>}>
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
-        <div className="fg c3">
+        <div className="fg c4">
           <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
             <Select className="in mono" value={eventCode} placeholder="Select an event…"
               options={openEvents.map((e) => e.event_code).filter(Boolean).sort((a, b) => a.localeCompare(b))}
@@ -67,6 +67,11 @@ export default function NewBookingModal({ onClose, onCreated }) {
           </div>
           <div className="fd"><label className="fd-l">Event name</label><input className="in" value={ev?.name || ''} readOnly /></div>
           <div className="fd"><label className="fd-l">Invoice number<span className="req">*</span></label><input className="in mono" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} /></div>
+          {/* SCA, read-only: it belongs to the EVENT (events.sales_team), not to
+              the invoice, so it follows the event code above and is edited in the
+              Events tab. Shown here because it is the owner a booking is
+              attributed to, and reading it used to mean leaving the modal. */}
+          <div className="fd"><label className="fd-l">SCA</label><input className="in" value={ev.sales_team || ev.sales_exec || ''} readOnly placeholder="—" /></div>
         </div>
       </div>
       {/* fs-fill: this section, not the modal body, owns the vertical scroll.

@@ -14,6 +14,7 @@ from rest_framework import serializers
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
+from ticket_central.models import Ticket
 
 
 class DataApiBookingSerializer(serializers.ModelSerializer):
@@ -113,3 +114,46 @@ class DataApiEventSerializer(serializers.ModelSerializer):
             "web_bookings",
             "created_at", "updated_at",
         ]
+
+
+class DataApiTicketSerializer(serializers.ModelSerializer):
+    created_by = serializers.SerializerMethodField()
+    mr_submitted_by = serializers.SerializerMethodField()
+    dmd_submitted_by = serializers.SerializerMethodField()
+    returned_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ticket
+        fields = [
+            "id", "ticket_number", "external_id", "event_code", "event_name", "status",
+            "purpose", "link_url", "linkedin_keywords", "duplicate_tickets",
+            "competitor_event_name", "organizer", "event_month_year", "event_location",
+            "relationship", "type_of_ticket", "priority", "estimate", "mr_comments",
+            "assigned_mr",
+            "assign_name", "assign_date", "actual_number", "new_contacts_created",
+            "source_spreadsheet_id", "source_tab", "source_row_number", "ticket_type",
+            "complete_date", "hubspot_entry_date", "mined_count", "dm_comments",
+            "assign_name_lx2", "actual_count_lx2", "complete_date_lx2", "dm_comments_lx2",
+            "added_user_text", "created_by", "mr_submitted_by", "mr_submitted_at",
+            "dmd_submitted_by", "dmd_submitted_at", "returned_by", "returned_at",
+            "return_reason", "created_at", "updated_at",
+        ]
+
+    @staticmethod
+    def _user_label(user):
+        if user is None:
+            return None
+        full = f"{user.first_name} {user.last_name}".strip()
+        return f"{full} ({user.username})" if full else user.username
+
+    def get_created_by(self, obj):
+        return self._user_label(obj.created_by)
+
+    def get_mr_submitted_by(self, obj):
+        return self._user_label(obj.mr_submitted_by)
+
+    def get_dmd_submitted_by(self, obj):
+        return self._user_label(obj.dmd_submitted_by)
+
+    def get_returned_by(self, obj):
+        return self._user_label(obj.returned_by)

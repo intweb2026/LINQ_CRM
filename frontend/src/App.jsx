@@ -60,13 +60,19 @@ function LoginRoute() {
 /**
  * The index route — the page a session opens on.
  *
- * Dashboard, for everybody. It is the one page that is not module-gated — it
- * renders for any role and hides the sections that role cannot see — so there is
- * no permission to wait on and nothing to compute. Resolved through homeFor()
- * rather than hardcoded here so the landing page stays decided in one place.
+ * The first page in NAV order this role can see; homeFor() decides, so the
+ * landing page stays defined in one place. It used to be Dashboard for everybody
+ * on the grounds that Dashboard was the one ungated page — no longer true, so
+ * this now depends on the permission matrix.
+ *
+ * Which is safe here and only here: RequireAuth wraps this route and returns
+ * null until permsLoaded, so canView() cannot be asked before the matrix has
+ * resolved. Rendered outside that guard it would redirect on a deny-all matrix
+ * and send every session to the fallback.
  */
 function HomeRedirect() {
-  return <Navigate to={homeFor().path} replace />;
+  const { canView } = useSession();
+  return <Navigate to={homeFor(canView).path} replace />;
 }
 
 export default function App() {

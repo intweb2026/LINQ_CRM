@@ -453,129 +453,278 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         """
         POST /api/delegates/{id}/transfer/  {"target_event_code", "invoice_number"}
 
-        Move one delegate's credit to another event: the row transferred away
-        becomes "Credit Transferred", and a NEW booking appears on the target event
-        as "Paid (Transferred)". Both rows survive — the pair IS the audit trail, and
-        it is the shape ~200 transfers already in the database take, done by hand in
-        Zoho (book_delegate/tests_delegate_transfer.py pins the chain this mirrors).
+        Move ONE delegate's credit to another event. Kept as its own route because
+        the table's per-row Transfer button has a single row and nothing else, and
+        because ~200 existing transfers in the data are single-delegate moves.
 
-        ONE ENDPOINT, NOT THREE CALLS
-        A transfer is a create plus two updates. Driven from the browser as separate
-        requests, a failure between them leaves a delegate credited on two events at
-        once, or transferred away to nowhere. It is therefore one atomic action.
-
-        WHAT IS NOT DERIVED HERE
-        The target invoice number. Existing transfers use the destination event's own
-        numbering (AIU25HOU-2804 → FAU25USA-2587), which this code has no way to
-        generate, so the caller supplies it and the collision rules below decide
-        whether it may be used.
+        The work happens in _perform_transfer(), shared with transfer_batch below —
+        a partial transfer of 2 delegates out of 5 must behave exactly like two
+        single transfers onto the same invoice, and one implementation is the only
+        way to guarantee that.
         """
-        from datetime import date
-        from django.db.utils import IntegrityError
-        from events.models import Event
-
         delegate = self.get_object()          # RBAC-scoped by rbac_filter_invoice
-        source_invoice = delegate.invoice
+        return _perform_transfer(
+            request,
+            [delegate],
+            (request.data.get("target_event_code") or "").strip(),
+            (request.data.get("invoice_number") or "").strip(),
+        )
 
-        # Gated on create by the permission class (POST falls through to
-        # can_create); the update half has to be asserted here. See
-        # accounts/crm_permissions.has_module_action.
-        if not has_module_action(request.user, "bookings", "update"):
+    @action(detail=False, methods=["post"], url_path="transfer")
+    def transfer_batch(self, request):
+        """
+        POST /api/delegates/transfer/
+            {"delegate_ids": [..], "target_event_code": "...", "invoice_number": "..."}
+
+        Move SOME of an invoice's delegates to another event, in one transaction.
+
+        WHY THIS EXISTS
+        An invoice carrying five delegates where only two are moving is the ordinary
+        case, not an edge case. It was already expressible — transfer the first
+        delegate, then transfer the second onto the invoice number the first one
+        created (the modal's hint said as much) — but as N separate requests it had
+        three problems this endpoint fixes:
+
+          NOT ATOMIC. A failure on delegate 4 of 5 leaves four moved and one behind,
+          with no way to tell from the data whether that was the intent.
+
+          THE SOURCE INVOICE'S STATUS FLIPPED TOO EARLY. The rule is "the invoice
+          reads Credit Transferred when nothing is left on it". Run one delegate at a
+          time, and the LAST call is the one that empties the invoice — so the
+          invoice's status depended on transfer order, and an interrupted run left it
+          holding a status that described a move that had not finished.
+
+          IT LOOKED LIKE FIVE UNRELATED TRANSFERS in the action log.
+
+        SAME SOURCE INVOICE, ONE DESTINATION INVOICE
+        Every id must name a delegate on ONE invoice: the operation is "split this
+        invoice", and the whole-invoice question above cannot be answered for a mixed
+        set. Mixing two source invoices is a 400 rather than a silent guess.
+        """
+        ids = request.data.get("delegate_ids")
+        if not isinstance(ids, list) or not ids:
             return Response(
-                {"detail": "Transferring a booking also changes the booking it leaves, "
-                           "which needs update permission on bookings."},
-                status=status.HTTP_403_FORBIDDEN,
+                {"detail": "delegate_ids must be a non-empty list of delegate ids."},
+                status=400,
+            )
+        try:
+            ids = [int(i) for i in ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "delegate_ids must be integers."}, status=400)
+
+        # Ordered by delegate_number so the rows land on the destination invoice in
+        # the order they were listed on the source one, not in id order.
+        # get_queryset() is RBAC-scoped (rbac_filter_invoice), so ids outside this
+        # user's scope simply do not come back and are reported as not found —
+        # never as a permission error naming a record they may not know exists.
+        delegates = list(
+            self.get_queryset()
+            .filter(id__in=set(ids))
+            .select_related("invoice")
+            .order_by("delegate_number", "id")
+        )
+        missing = set(ids) - {d.id for d in delegates}
+        if missing:
+            return Response(
+                {"detail": "No booking found for id "
+                           + ", ".join(str(i) for i in sorted(missing)) + "."},
+                status=404,
             )
 
-        target_code = (request.data.get("target_event_code") or "").strip()
-        new_number  = (request.data.get("invoice_number") or "").strip()
-        if not target_code:
-            return Response({"detail": "target_event_code is required."}, status=400)
-        if not new_number:
-            return Response({"detail": "invoice_number is required."}, status=400)
-
-        target_event = Event.objects.filter(event_code=target_code).first()
-        if target_event is None:
+        invoice_ids = {d.invoice_id for d in delegates}
+        if len(invoice_ids) > 1:
             return Response(
-                {"detail": f"No event with code '{target_code}'."}, status=400)
-        if target_code == source_invoice.event_code:
-            return Response(
-                {"detail": f"This booking is already on {target_code}."}, status=400)
+                {"detail": "These bookings are on "
+                           f"{len(invoice_ids)} different invoices. Transfer one "
+                           "invoice's delegates at a time."},
+                status=400,
+            )
 
-        # An invoice number already in use may be REUSED, but only when it is the
-        # same event — that is how a second delegate joins a transfer already made.
-        # Anywhere else it would silently file this delegate under another event.
-        existing = BookEvent.objects.filter(invoice_number=new_number).first()
-        if existing is not None:
-            if existing.event_code != target_code:
-                return Response(
-                    {"detail": f"Invoice {new_number} already exists on "
-                               f"{existing.event_code}. Use a different number."},
-                    status=409,
-                )
-            if existing.delegates.filter(email__iexact=delegate.email).exists():
-                return Response(
-                    {"detail": f"{delegate.email} is already on invoice {new_number}."},
-                    status=409,
-                )
-
-        # The destination edition is the TARGET event's year, not the source's:
-        # BookEvent.save() only derives an edition from trailing digits in the code,
-        # and catalogue codes carry none, so an unset edition would stay null and the
-        # booking would be missing from every per-edition report.
-        target_edition = (
-            target_event.event_date.year if target_event.event_date else source_invoice.edition
+        return _perform_transfer(
+            request,
+            delegates,
+            (request.data.get("target_event_code") or "").strip(),
+            (request.data.get("invoice_number") or "").strip(),
         )
-        today = date.today()
 
-        try:
-            with transaction.atomic():
-                if existing is None:
-                    dest_invoice = BookEvent.objects.create(
-                        invoice_number = new_number,
-                        event_code     = target_code,
-                        edition        = target_edition,
-                        event_date     = target_event.event_date,
-                        # Dates are the TRANSFER's, not the original booking's —
-                        # matching the existing pairs, where the destination carries
-                        # the date the transfer was made.
-                        request_date   = today,
-                        invoice_date   = today,
-                        booking_code   = delegate.booking_code or source_invoice.booking_code,
-                        company_name   = source_invoice.company_name,
-                        contact_name   = source_invoice.contact_name,
-                        contact_email  = source_invoice.contact_email,
-                        contact_phone  = source_invoice.contact_phone,
-                        accounts_contact_email = source_invoice.accounts_contact_email,
-                        currency       = source_invoice.currency,
-                        ticket_tier    = delegate.delegate_ticket_tier or source_invoice.ticket_tier,
-                        payment_type   = delegate.delegate_payment_type or source_invoice.payment_type,
-                        payment_date   = delegate.delegate_payment_date or source_invoice.payment_date,
-                        paid_or_free   = delegate.delegate_paid_or_free or source_invoice.paid_or_free,
-                        payment_status = BookEvent.PaymentStatus.PAID_TRANSFERRED,
-                        # Created by hand in the CRM, whatever the original arrived as.
-                        source         = BookEvent.Source.MANUAL,
-                        sales_executive = BookEvent.auto_assign_sales(target_code),
-                        # reference is NOT copied: in the existing pairs the
-                        # destination carries only the "Transferred from" breadcrumb,
-                        # never the source's payment reference, which belongs to the
-                        # money received against the OTHER invoice.
-                        #
-                        # parent_code is left alone too. It is empty on all 11,042
-                        # invoices and nothing reads it, so what it was meant to hold
-                        # ("parent event code"? parent invoice?) is a guess — and a
-                        # link recorded in the wrong field is worse than one recorded
-                        # only in the references and the action log, as here.
-                    )
-                else:
-                    dest_invoice = existing
 
-                # Reusing someone else's invoice must not silently change what THIS
-                # row promises. The invoice's own status is left alone — other
-                # delegates are booked against it — so where it is not already
-                # Paid (Transferred), this delegate carries the transferred status as
-                # an override. Without this, joining a Pending invoice would land the
-                # transfer as Pending, which is not what the transfer said it would do.
+def _invoice_level_value(delegates, field, fallback):
+    """
+    The value a DESTINATION invoice should carry for one of the fields a delegate
+    can override.
+
+    Every delegate agreeing on a non-empty override means the group really does
+    share that value, so it belongs on the invoice. Anything else — nobody set it,
+    only some did, or they disagree — falls back to the source invoice's column and
+    the differences ride along as per-delegate overrides.
+
+    With a single delegate this reduces exactly to the `delegate.x or invoice.x`
+    the one-delegate transfer used before this was factored out, which is what
+    keeps the existing behaviour (and its tests) intact.
+    """
+    values = [getattr(d, field) for d in delegates]
+    present = [v for v in values if v not in (None, "")]
+    if len(present) == len(values) and len(set(present)) == 1:
+        return present[0]
+    return fallback
+
+
+def _perform_transfer(request, delegates, target_code, new_number):
+    """
+    Move `delegates` — all on one invoice — onto `target_code` under `new_number`.
+
+    Every row transferred away reads "Credit Transferred" and a new booking appears
+    on the target event reading "Paid (Transferred)". Both rows survive: the pair IS
+    the audit trail, and it is the shape ~200 transfers already in the database take,
+    made by hand in Zoho (book_delegate/tests_delegate_transfer.py pins the chain
+    this mirrors).
+
+    ONE REQUEST, NOT THREE PER DELEGATE
+    A transfer is a create plus two updates. Driven from the browser as separate
+    requests, a failure between them leaves a delegate credited on two events at
+    once, or transferred away to nowhere. So the whole set is one transaction.
+
+    WHERE THE SOURCE STATUS LANDS — AND WHY IT IS DECIDED ONCE, FOR THE SET
+    "Credit Transferred" belongs ON the source invoice when the transfer empties it,
+    and on the moved delegates as per-delegate overrides when it does not, or the
+    delegates staying behind would be relabelled as transferred along with the ones
+    that left. The test is therefore whether any delegate is LEFT, counted against
+    the whole set at once — not per delegate, which would make the answer depend on
+    the order they were processed in.
+
+    WHAT IS NOT DERIVED HERE
+    The target invoice number. Existing transfers use the destination event's own
+    numbering (AIU25HOU-2804 -> FAU25USA-2587), which this code has no way to
+    generate, so the caller supplies it and the collision rules below decide whether
+    it may be used.
+    """
+    from datetime import date
+    from django.db.utils import IntegrityError
+    from events.models import Event
+
+    source_invoice = delegates[0].invoice
+
+    # Gated on create by the permission class (POST falls through to can_create);
+    # the update half has to be asserted here. See
+    # accounts/crm_permissions.has_module_action.
+    if not has_module_action(request.user, "bookings", "update"):
+        return Response(
+            {"detail": "Transferring a booking also changes the booking it leaves, "
+                       "which needs update permission on bookings."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    if not target_code:
+        return Response({"detail": "target_event_code is required."}, status=400)
+    if not new_number:
+        return Response({"detail": "invoice_number is required."}, status=400)
+
+    target_event = Event.objects.filter(event_code=target_code).first()
+    if target_event is None:
+        return Response({"detail": f"No event with code '{target_code}'."}, status=400)
+    if target_code == source_invoice.event_code:
+        return Response(
+            {"detail": f"This booking is already on {target_code}."}, status=400)
+
+    # No duplicate-email check over the selection itself. Every delegate here is on
+    # ONE invoice (the caller enforces that), and BookDelegate declares
+    # unique_together = [("invoice", "email")] — so two rows for the same person on
+    # one invoice cannot exist to be selected. The reuse check below is still needed:
+    # it compares against a DIFFERENT invoice's delegates.
+
+    # An invoice number already in use may be REUSED, but only when it is the same
+    # event — that is how a second delegate joins a transfer already made. Anywhere
+    # else it would silently file these delegates under another event.
+    existing = BookEvent.objects.filter(invoice_number=new_number).first()
+    if existing is not None:
+        if existing.event_code != target_code:
+            return Response(
+                {"detail": f"Invoice {new_number} already exists on "
+                           f"{existing.event_code}. Use a different number."},
+                status=409,
+            )
+        taken = set(
+            e.lower() for e in existing.delegates.values_list("email", flat=True) if e
+        )
+        clash = [d.email for d in delegates if (d.email or "").lower() in taken]
+        if clash:
+            return Response(
+                {"detail": f"{clash[0]} is already on invoice {new_number}."
+                           + (f" ({len(clash) - 1} more of the selected bookings are "
+                              "too.)" if len(clash) > 1 else "")},
+                status=409,
+            )
+
+    # The destination edition is the TARGET event's year, not the source's:
+    # BookEvent.save() only derives an edition from trailing digits in the code, and
+    # catalogue codes carry none, so an unset edition would stay null and the booking
+    # would be missing from every per-edition report.
+    target_edition = (
+        target_event.event_date.year if target_event.event_date else source_invoice.edition
+    )
+    today = date.today()
+
+    # Decided BEFORE anything is written, over the set as a whole. Counting after
+    # the fact would see the new rows this transfer creates.
+    moved_ids = {d.id for d in delegates}
+    left_behind = source_invoice.delegates.exclude(pk__in=moved_ids).count()
+    scope = "delegate" if left_behind else "invoice"
+
+    created_delegates = []
+    try:
+        with transaction.atomic():
+            if existing is None:
+                dest_invoice = BookEvent.objects.create(
+                    invoice_number = new_number,
+                    event_code     = target_code,
+                    edition        = target_edition,
+                    event_date     = target_event.event_date,
+                    # Dates are the TRANSFER's, not the original booking's — matching
+                    # the existing pairs, where the destination carries the date the
+                    # transfer was made.
+                    request_date   = today,
+                    invoice_date   = today,
+                    booking_code   = _invoice_level_value(
+                        delegates, "booking_code", source_invoice.booking_code),
+                    company_name   = source_invoice.company_name,
+                    contact_name   = source_invoice.contact_name,
+                    contact_email  = source_invoice.contact_email,
+                    contact_phone  = source_invoice.contact_phone,
+                    accounts_contact_email = source_invoice.accounts_contact_email,
+                    currency       = source_invoice.currency,
+                    ticket_tier    = _invoice_level_value(
+                        delegates, "delegate_ticket_tier", source_invoice.ticket_tier),
+                    payment_type   = _invoice_level_value(
+                        delegates, "delegate_payment_type", source_invoice.payment_type),
+                    payment_date   = _invoice_level_value(
+                        delegates, "delegate_payment_date", source_invoice.payment_date),
+                    paid_or_free   = _invoice_level_value(
+                        delegates, "delegate_paid_or_free", source_invoice.paid_or_free),
+                    payment_status = BookEvent.PaymentStatus.PAID_TRANSFERRED,
+                    # Created by hand in the CRM, whatever the original arrived as.
+                    source         = BookEvent.Source.MANUAL,
+                    sales_executive = BookEvent.auto_assign_sales(target_code),
+                    # reference is NOT copied: in the existing pairs the destination
+                    # carries only the "Transferred from" breadcrumb, never the
+                    # source's payment reference, which belongs to the money received
+                    # against the OTHER invoice.
+                    #
+                    # parent_code is left alone too. It is empty on all 11,042
+                    # invoices and nothing reads it, so what it was meant to hold
+                    # ("parent event code"? parent invoice?) is a guess — and a link
+                    # recorded in the wrong field is worse than one recorded only in
+                    # the references and the action log, as here.
+                )
+            else:
+                dest_invoice = existing
+
+            for delegate in delegates:
+                # Reusing an invoice must not silently change what THIS row promises.
+                # The invoice's own status is left alone — other delegates are booked
+                # against it — so where it is not already Paid (Transferred), the
+                # delegate carries the transferred status as an override. Without
+                # this, joining a Pending invoice would land the transfer as Pending,
+                # which is not what the transfer said it would do.
                 dest_override = (
                     None
                     if dest_invoice.payment_status == BookEvent.PaymentStatus.PAID_TRANSFERRED
@@ -609,67 +758,115 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                     # Paid (Transferred) itself, so the resolved status reads from one
                     # place. See dest_override above for the reuse case.
                     delegate_payment_status = dest_override,
+                    # The per-delegate values that did NOT make it onto the
+                    # destination invoice ride along as overrides, or a group moving
+                    # with different tiers would arrive all on one tier. Only written
+                    # where they actually differ from what the invoice now says, so a
+                    # transfer never invents an override that shadows a matching
+                    # invoice value.
+                    delegate_ticket_tier = (
+                        delegate.delegate_ticket_tier
+                        if delegate.delegate_ticket_tier
+                        and delegate.delegate_ticket_tier != dest_invoice.ticket_tier
+                        else None
+                    ),
+                    delegate_payment_type = (
+                        delegate.delegate_payment_type
+                        if delegate.delegate_payment_type
+                        and delegate.delegate_payment_type != dest_invoice.payment_type
+                        else None
+                    ),
+                    delegate_paid_or_free = (
+                        delegate.delegate_paid_or_free
+                        if delegate.delegate_paid_or_free
+                        and delegate.delegate_paid_or_free != dest_invoice.paid_or_free
+                        else None
+                    ),
+                    delegate_payment_date = (
+                        delegate.delegate_payment_date
+                        if delegate.delegate_payment_date
+                        and delegate.delegate_payment_date != dest_invoice.payment_date
+                        else None
+                    ),
                 )
+                created_delegates.append(new_delegate)
 
                 # ── The row transferred away ─────────────────────────────────
-                # Where it is the invoice's only delegate the status belongs ON the
-                # invoice (which is what the existing transferred pairs look like,
-                # and what every report reading invoice.payment_status sees). With
-                # siblings still booked, only this person moved, so the status has to
-                # be a per-delegate override or it would relabel their bookings too.
-                sibling_count = source_invoice.delegates.exclude(pk=delegate.pk).count()
-                if sibling_count == 0:
-                    source_invoice.payment_status = BookEvent.PaymentStatus.CREDIT_TRANSFERRED
+                if scope == "invoice":
                     # Cleared, not left: an override would shadow the invoice value
                     # and the row would still read as whatever it was before.
                     delegate.delegate_payment_status = None
-                    scope = "invoice"
                 else:
-                    delegate.delegate_payment_status = BookEvent.PaymentStatus.CREDIT_TRANSFERRED
-                    scope = "delegate"
-
+                    delegate.delegate_payment_status = (
+                        BookEvent.PaymentStatus.CREDIT_TRANSFERRED
+                    )
                 delegate.reference = _append_reference(
                     delegate.reference, _transferred_to(target_code, target_edition))
                 delegate.save(update_fields=[
                     "delegate_payment_status", "reference", "updated_at",
                 ])
-                source_invoice.updated_by = request.user
-                source_invoice.save()
 
-                from accounts.models import ActionLog
-                ActionLog.objects.create(
-                    user=request.user,
-                    action=f"Transferred delegate {delegate.email} to {target_code}",
-                    details=(
-                        f"from invoice {source_invoice.invoice_number} "
-                        f"({source_invoice.event_code}) -> {dest_invoice.invoice_number} "
-                        f"({target_code}); source scope={scope}; "
-                        f"new delegate id={new_delegate.id}"
-                    ),
-                )
-        except IntegrityError as exc:
-            # The uniqueness checks above are not a lock: a concurrent transfer can
-            # take the number in between. Reported as a conflict rather than a 500.
-            logger.warning("transfer collision for %s: %s", new_number, exc)
-            return Response(
-                {"detail": f"Invoice {new_number} was just taken. Try another number."},
-                status=409,
+            if scope == "invoice":
+                source_invoice.payment_status = BookEvent.PaymentStatus.CREDIT_TRANSFERRED
+            source_invoice.updated_by = request.user
+            source_invoice.save()
+
+            from accounts.models import ActionLog
+            who = ", ".join(d.email for d in delegates[:5]) + (
+                f" +{len(delegates) - 5} more" if len(delegates) > 5 else "")
+            # A single move keeps the exact wording it has always had
+            # ("Transferred delegate <email> to <code>"): rows written before this
+            # endpoint existed read that way, and the audit log is searched by that
+            # prefix. Only the several-at-once case needs new words.
+            ActionLog.objects.create(
+                user=request.user,
+                action=(
+                    f"Transferred delegate {delegates[0].email} to {target_code}"
+                    if len(delegates) == 1
+                    else f"Transferred {len(delegates)} delegates to {target_code}"
+                ),
+                details=(
+                    f"{who}; from invoice {source_invoice.invoice_number} "
+                    f"({source_invoice.event_code}) -> {dest_invoice.invoice_number} "
+                    f"({target_code}); source scope={scope}; "
+                    f"{left_behind} delegate(s) left on the source invoice; "
+                    f"new delegate ids="
+                    + ",".join(str(d.id) for d in created_delegates)
+                ),
             )
+    except IntegrityError as exc:
+        # The uniqueness checks above are not a lock: a concurrent transfer can take
+        # the number in between. Reported as a conflict rather than a 500.
+        logger.warning("transfer collision for %s: %s", new_number, exc)
+        return Response(
+            {"detail": f"Invoice {new_number} was just taken. Try another number."},
+            status=409,
+        )
 
-        return Response({
-            "source": {
-                "delegate_id": delegate.id,
-                "invoice_number": source_invoice.invoice_number,
-                "event_code": source_invoice.event_code,
-                "payment_status": BookEvent.PaymentStatus.CREDIT_TRANSFERRED,
-                "scope": scope,
-            },
-            "created": {
-                "delegate_id": new_delegate.id,
-                "invoice_id": dest_invoice.id,
-                "invoice_number": dest_invoice.invoice_number,
-                "event_code": dest_invoice.event_code,
-                "payment_status": BookEvent.PaymentStatus.PAID_TRANSFERRED,
-                "reused_invoice": existing is not None,
-            },
-        }, status=status.HTTP_201_CREATED)
+    return Response({
+        # `source` and `created` keep the single-delegate shape they have always
+        # had — the per-row Transfer button reads them — and name the FIRST moved
+        # delegate when several went. `delegates` carries the full pairing, and
+        # `count`/`left_behind` are what a partial transfer needs to report.
+        "source": {
+            "delegate_id": delegates[0].id,
+            "invoice_number": source_invoice.invoice_number,
+            "event_code": source_invoice.event_code,
+            "payment_status": BookEvent.PaymentStatus.CREDIT_TRANSFERRED,
+            "scope": scope,
+            "left_behind": left_behind,
+        },
+        "created": {
+            "delegate_id": created_delegates[0].id,
+            "invoice_id": dest_invoice.id,
+            "invoice_number": dest_invoice.invoice_number,
+            "event_code": dest_invoice.event_code,
+            "payment_status": BookEvent.PaymentStatus.PAID_TRANSFERRED,
+            "reused_invoice": existing is not None,
+        },
+        "count": len(created_delegates),
+        "delegates": [
+            {"source_delegate_id": src.id, "delegate_id": dst.id, "email": dst.email}
+            for src, dst in zip(delegates, created_delegates)
+        ],
+    }, status=status.HTTP_201_CREATED)

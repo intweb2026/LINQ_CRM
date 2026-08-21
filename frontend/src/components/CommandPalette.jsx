@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
-import { NAV_FLAT } from '../lib/nav';
+import { NAV_FLAT, canAccess } from '../lib/nav';
 import * as searchApi from '../api/search';
 import { useSession } from '../context/SessionContext';
 
@@ -48,7 +48,11 @@ export default function CommandPalette({ open, onClose }) {
     const v = q.trim().toLowerCase();
     const res = [];
     NAV_FLAT.forEach((i) => {
-      if (i.mod && !canView(i.mod)) return;
+      // canAccess, not an inline canView: Dashboard is gated on `needsAny`, and
+      // the old check ignored anything that was not a single `mod` — so the
+      // palette would have kept offering Dashboard to a role the rail hides it
+      // from, which is the same page reachable by a different door.
+      if (!canAccess(i, canView)) return;
       if (!v || i.l.toLowerCase().includes(v)) res.push({ t: 'Navigate', l: i.l, s: '', ic: i.ic, go: () => nav(i.path) });
     });
     // Buckets are omitted by the backend when the caller cannot see that type, so

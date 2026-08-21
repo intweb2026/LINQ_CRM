@@ -2,7 +2,8 @@
 Create a Data API key for external consumers.
 
 Usage:
-    python manage.py create_data_api_key "Google Sheets Sync" --scopes bookings,delegates,events
+    python manage.py create_data_api_key "Google Sheets Sync" --scopes bookings,delegates,events,tickets
+    python manage.py create_data_api_key "Ticket Central" --scopes tickets
     python manage.py create_data_api_key "Full Export"
 
 The raw key is printed ONCE and never stored; only its SHA-256 hash is kept.
@@ -24,7 +25,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("name", help="Human-readable label for the key")
         parser.add_argument("--scopes", default="",
-                            help="Comma-separated resource names (empty = all)")
+                            help="Comma-separated resource names: bookings, delegates, "
+                                 "events, tickets (empty = all)")
         parser.add_argument("--rate-limit", type=int, default=60,
                             help="Requests per minute (default: 60)")
         parser.add_argument("--notes", default="", help="Optional notes")

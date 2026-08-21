@@ -3,10 +3,12 @@ import Modal from '../../components/Modal';
 import Select from '../../components/Select';
 import RichTextField from '../../components/RichTextField';
 import { Icon } from '../../lib/icons';
+import { NumField } from '../../components/UI';
 import {
   PARTICIPATION_TYPES, QC_GRADES, SPEAKER_SLOT_STATUSES, SPONSORSHIP_STATUSES, REVENUE_POSSIBILITY,
 } from '../../lib/constants';
 import * as proposalApi from '../../api/proposalSubmission';
+import { apiErrorMessage } from '../../api/client';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -53,7 +55,9 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
       if (isNew) await proposalApi.create(payload);
       else await proposalApi.update(proposal.id, payload);
     } catch (err) {
-      toast(err.response?.data?.detail || 'Could not save — check the form and try again', 'er');
+      // apiErrorMessage, not .detail: DRF field errors carry no detail key, so
+      // every one of them read as the generic fallback and named nothing.
+      toast(apiErrorMessage(err, 'Could not save — check the form and try again'), 'er');
       setSaving(false);
       return;
     }
@@ -111,7 +115,7 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
           <div className="fd"><label className="fd-l">Speaker name<span className="req">*</span></label><input className="in" value={form.speaker_name} onChange={set('speaker_name')} /></div>
           <div className="fd"><label className="fd-l">Email address<span className="req">*</span></label><input className="in" type="email" value={form.email} onChange={set('email')} /></div>
           <div className="fd"><label className="fd-l">Company name</label><input className="in" value={form.company_name} onChange={set('company_name')} /></div>
-          <div className="fd"><label className="fd-l">LinkedIn followers</label><input className="in" type="number" value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
+          <div className="fd"><label className="fd-l">LinkedIn followers</label><NumField min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
           <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">LinkedIn (speaker)</label><input className="in" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
           <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">LinkedIn (company)</label><input className="in" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
         </div>
@@ -122,7 +126,10 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
           <div className="fd"><label className="fd-l">QC grade</label>
             <Select value={form.qc_grade} placeholder="— Select —" options={QC_GRADES} onChange={setSel('qc_grade')} />
           </div>
-          <div className="fd"><label className="fd-l">QC score</label><input className="in" type="number" value={form.qc_score} onChange={set('qc_score')} /></div>
+          <div className="fd">{/* No upper bound: the model deliberately imposes none, because the
+                  scale of this score is unknown (see proposal_submission/models.py).
+                  Lower bound only, matching its MinValueValidator(0). */}
+              <label className="fd-l">QC score</label><NumField min={0} value={form.qc_score} onChange={set('qc_score')} /></div>
           <div className="fd" style={{ gridColumn: '3/-1' }}><label className="fd-l">Presentation theme</label><input className="in" value={form.presentation_theme} onChange={set('presentation_theme')} /></div>
           <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">Sales pitch factor</label><input className="in" value={form.sales_pitch_factor} onChange={set('sales_pitch_factor')} /></div>
         </div>

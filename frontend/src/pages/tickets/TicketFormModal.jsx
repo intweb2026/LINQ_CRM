@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import Modal from '../../components/Modal';
 import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
+import { NumField } from '../../components/UI';
 import { TkBadge, Who } from '../../components/Badge';
 import { extUrl, fdate, nf, rel } from '../../lib/helpers';
 import { TK_PRIORITY, TK_RELATIONSHIPS, TK_TICKET_TYPES, TK_TYPES } from '../../lib/constants';
@@ -314,7 +315,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <Pick value={form.priority} options={Object.keys(TK_PRIORITY)} onChange={pick('priority')} disabled={!mrOpen} />
               </Field>
               <Field label="Estimate">
-                <input className="in" type="number" min="0" placeholder="250" value={form.estimate} onChange={set('estimate')} disabled={!mrOpen} />
+                <NumField min={0} placeholder="250" value={form.estimate} onChange={set('estimate')} disabled={!mrOpen} />
               </Field>
               <Field label="MR Comments">
                 <input className="in" placeholder="Anything Data Mining should know…" value={form.mr_comments} onChange={set('mr_comments')} disabled={!mrOpen} />
@@ -344,10 +345,10 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <input className="in" type="date" value={form.assign_date} onChange={set('assign_date')} disabled={!dmdOpen} />
               </Field>
               <Field label="Actual Number">
-                <input className="in" type="number" min="0" value={form.actual_number} onChange={set('actual_number')} disabled={!dmdOpen} />
+                <NumField min={0} value={form.actual_number} onChange={set('actual_number')} disabled={!dmdOpen} />
               </Field>
               <Field label="New Contacts Created">
-                <input className="in" type="number" min="0" value={form.new_contacts_created} onChange={set('new_contacts_created')} disabled={!dmdOpen} />
+                <NumField min={0} value={form.new_contacts_created} onChange={set('new_contacts_created')} disabled={!dmdOpen} />
               </Field>
               <Field label="Source_Spreadsheet_ID">
                 <input className="in" value={form.source_spreadsheet_id} onChange={set('source_spreadsheet_id')} disabled={!dmdOpen} />
@@ -356,7 +357,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <input className="in" value={form.source_tab} onChange={set('source_tab')} disabled={!dmdOpen} />
               </Field>
               <Field label="Source_Row_Number">
-                <input className="in" type="number" min="0" value={form.source_row_number} onChange={set('source_row_number')} disabled={!dmdOpen} />
+                <NumField min={0} value={form.source_row_number} onChange={set('source_row_number')} disabled={!dmdOpen} />
               </Field>
               <Field label="Idempotency_Key">
                 <input className="in" value={form.idempotency_key} onChange={set('idempotency_key')} disabled={!dmdOpen} />
@@ -373,7 +374,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <input className="in" type="date" value={form.hubspot_entry_date} onChange={set('hubspot_entry_date')} disabled={!dmdOpen} />
               </Field>
               <Field label="Mined Count">
-                <input className="in" type="number" min="0" value={form.mined_count} onChange={set('mined_count')} disabled={!dmdOpen} />
+                <NumField min={0} value={form.mined_count} onChange={set('mined_count')} disabled={!dmdOpen} />
               </Field>
               <Field label="DM Comments">
                 <input className="in" value={form.dm_comments} onChange={set('dm_comments')} disabled={!dmdOpen} />
@@ -384,7 +385,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <input className="in" value={form.assign_name_lx2} onChange={set('assign_name_lx2')} disabled={!dmdOpen} />
               </Field>
               <Field label="Actual Count (LX-2)">
-                <input className="in" type="number" min="0" value={form.actual_count_lx2} onChange={set('actual_count_lx2')} disabled={!dmdOpen} />
+                <NumField min={0} value={form.actual_count_lx2} onChange={set('actual_count_lx2')} disabled={!dmdOpen} />
               </Field>
               <Field label="Complete Date - LX2">
                 <input className="in" type="date" value={form.complete_date_lx2} onChange={set('complete_date_lx2')} disabled={!dmdOpen} />
