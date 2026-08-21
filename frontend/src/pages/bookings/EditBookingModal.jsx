@@ -3,6 +3,7 @@ import Modal from '../../components/Modal';
 import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
 import { Av, StatusBadge } from '../../components/Badge';
+import { ownerOf } from '../../lib/owners';
 import * as eventsApi from '../../api/events';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
@@ -11,16 +12,27 @@ import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
 
-function ownerChip(roleLabel, personName) {
+/**
+ * `owner` may be a plain name string or an ownerOf() result. The SpEx and Market
+ * Research chips take the latter: those two event columns are blank on every
+ * event in the live data, so both chips were unconditionally suppressed and the
+ * header showed only Sales Exec. An inherited name is italicised and says which
+ * team it came from in its tooltip, so it is not mistaken for a value someone
+ * set on this event.
+ */
+function ownerChip(roleLabel, owner) {
   const map = { 'Sales Exec': ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], SpEx: ['--violet-bg', '--violet-tx'], 'Market Research': ['--amber-bg', '--amber-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
+  const personName = typeof owner === 'string' ? owner : (owner && owner.name) || '';
+  const inherited = typeof owner === 'object' && owner && owner.inherited;
+  const team = (typeof owner === 'object' && owner && owner.team) || '';
   if (!personName || personName === '—') return null;
   return (
-    <span key={roleLabel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
+    <span key={roleLabel} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
       <Av name={personName} size="xs" />
       <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
         <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)' }}>{personName}</span>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
       </span>
     </span>
   );
@@ -137,7 +149,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
               {/* No SCA chip beside this one: `sales_exec` already falls back to the
                   event's sales_team, so the two would print the same name twice on
                   every booking whose event has no sales_executive FK. */}
-              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
+              {ownerChip('Sales Exec', ev.sales_exec)}{ownerChip('SpEx', ownerOf(ev, 'spex_lead'))}{ownerChip('Market Research', ownerOf(ev, 'mr_senior'))}
             </div>
           </div>
           {/* `.md-h` top-aligns its children (right, for a header whose title+sub

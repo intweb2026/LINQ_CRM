@@ -457,15 +457,22 @@ class ScoreHandlingTests(ImportBase):
         self.assertEqual(p.data["rows"][0]["classification"], "CREATE")
         self.assertNotIn("warning", p.data["rows"][0])
 
-    def test_grade_imports_as_recorded_and_is_never_derived(self):
+    def test_an_imported_grade_is_replaced_by_the_derived_one(self):
         """
-        B5 — grade is manual, so what MR recorded stands. 27/45 is 60%, which the
-        form's own bands would call "B"; importing "D" must store "D".
+        Option B — grade is DERIVED, and the importer commits through obj.save()
+        like every other write, so the recorded value does not survive the load.
+        27/45 is 60%, so importing "D" stores "B".
+
+        CONSEQUENCE, stated rather than discovered: the Grade column is still
+        accepted and still maps (importer.py FIELD_MAP), but it no longer
+        decides anything. A Zoho row carrying B+ or E — 355 of 3492 rows for B+
+        alone — lands as whatever its criteria derive to, so those two letters
+        cannot enter the table through an import either.
         """
         r = self.import_rows([self.row(**{"Grade": "D"})])
         review = PaperReview.objects.get(id=r.data["created_ids"][0])
-        self.assertEqual(review.grade, "D")
         self.assertEqual(review.proposal_score, 27)
+        self.assertEqual(review.grade, "B")
 
 
 # ══ B6. CLASSIFICATION ═══════════════════════════════════════════════════════

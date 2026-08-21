@@ -50,6 +50,30 @@ export function Av({ name, size = 'md' }) {
  * Defaulting to `true` keeps every existing caller rendering exactly as it
  * did; the table call sites opt out explicitly with `avatar={false}`.
  */
+/**
+ * One team-ownership cell, for the dense listing tables.
+ *
+ * Takes the result of lib/owners.js `ownerOf`. An INHERITED name — one that
+ * belongs to the team that owns the role rather than to this row — is muted and
+ * carries the attribution in its tooltip, because a table row has no space for a
+ * second line and a column of identical names with nothing marking them would
+ * read as real per-event data. The drawer shows the same fact as a sub-line,
+ * where there is room for it.
+ */
+export function OwnerName({ owner }) {
+  if (!owner || !owner.name) return <span className="dim">—</span>;
+  if (!owner.inherited) return <Who name={owner.name} avatar={false} />;
+  return (
+    <span
+      className="dim"
+      style={{ fontStyle: 'italic' }}
+      title={`Inherited from ${owner.team || 'the owning team'} — no value set on this event`}
+    >
+      {owner.name}
+    </span>
+  );
+}
+
 export function Who({ name, sub, size = 'sm', mono = false, avatar = true }) {
   return (
     <span className="who">

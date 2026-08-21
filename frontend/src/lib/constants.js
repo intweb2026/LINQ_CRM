@@ -97,7 +97,18 @@ export const TEAM_ROLES = ['admin', 'sales', 'market_research', 'data_mining', '
 export const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', market_research: 'MR', data_mining: 'DMD', telemarketing: 'Tele', speaker_sales: 'Spkr Sales', spex: 'SpEx', operations: 'Ops' };
 export const ROLE_FULL = { admin: 'Administrator', sales: 'Sales', market_research: 'Market Research', data_mining: 'Data Mining', telemarketing: 'Telemarketing', speaker_sales: 'Speaker Sales', spex: 'SpEx', operations: 'Operations' };
 export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue', data_mining: 'amber', telemarketing: 'violet', speaker_sales: 'green', spex: 'cyan', operations: 'neutral' };
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance' }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
+// MUST hold every key in CRM_MODULES in backend/accounts/models.py, in the same
+// order. This is the permission grid, and savePermissions sends the WHOLE grid to
+// an endpoint that deletes the team's rows and rebuilds them from the payload —
+// so a module missing here is a module the grid can never grant AND one that every
+// save of any team's grid silently revokes.
+//
+// 'google_sync' was missing exactly that way after the backend split it out of
+// 'webhooks' (models.py:377-381, migration 0027). The grid had no Google Sync row
+// to tick, and saving any team's permissions deleted whatever google_sync row it
+// had, so the page was unreachable for everyone but the all-access Admin team and
+// no amount of clicking in the UI could change that.
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance' }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
 export const PERM_ACTIONS = ['view', 'create', 'update', 'delete'];
 export const PAGE_SIZE = 50;
 export const ALL_MODULES = CRM_MODULES.map((m) => m.k);

@@ -23,8 +23,10 @@ from .models import CRITERIA_MAX, PaperReview
 _MR_ONLY_FIELDS = frozenset(["internal_footnotes"])
 MR_ONLY_FIELDS = _MR_ONLY_FIELDS
 
-# Set by the server, never by the client.
-COMPUTED_FIELDS = ["proposal_score"]
+# Set by the server, never by the client. Both are recomputed in
+# PaperReview.save(), so a client-supplied value is not merely refused — it
+# is overwritten.
+COMPUTED_FIELDS = ["proposal_score", "grade"]
 # Cached notification recipients, resolved from the event by a later pass.
 SERVER_OWNED_FIELDS = ["speaker_email_ref", "research_email_ref"]
 
@@ -35,7 +37,7 @@ EDITABLE_FIELDS = [
     "closeness_to_topic", "closeness_to_region", "clear_solution_to_challenges",
     "case_study_results_examples", "not_obvious_sales_pitch",
     "company_profile_score",
-    "grade", "session_location_on_agenda",
+    "session_location_on_agenda",
     "internal_footnotes", "feedback_to_speaker",
     "proposal_received", "theme", "agenda_addition",
 ]

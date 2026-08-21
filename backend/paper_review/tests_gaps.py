@@ -303,28 +303,92 @@ class ScoreAndGradeTests(_Base):
         self.assertEqual(r.status_code, 400, r.content)
         self.assertIn("closeness_to_topic", r.data)
 
-    def test_grade_is_accepted_as_submitted(self):
-        r = self.create_review(grade="A")
-        self.assertEqual(r.status_code, 201, r.content)
-        self.assertEqual(PaperReview.objects.get(id=r.data["id"]).grade, "A")
-
-    def test_grade_is_never_overwritten_by_a_derived_value(self):
+    def test_grade_is_derived_not_accepted_from_client(self):
         """
-        The score computed here (27/45 = 60%) would derive to "B" under the
-        form's OWN gradeFor() bands, were grade derived server-side. It is not —
-        submitting "D" alongside a 60% score must store "D" verbatim.
+        Option B: grade is fully server-derived. A client-supplied value is
+        read-only on the serializer AND overwritten in save(), so it cannot
+        survive either way.
         """
-        r = self.create_review(grade="D")
+        # The base payload's criteria sum to 27/45 = 60% → "B".
+        r = self.create_review(grade="X")
         self.assertEqual(r.status_code, 201, r.content)
         review = PaperReview.objects.get(id=r.data["id"])
-        self.assertEqual(review.proposal_score, 27)
-        self.assertEqual(review.grade, "D")
+        self.assertEqual(review.grade, "B")             # derived from 60%, not "X"
+        self.assertEqual(r.data["grade"], "B")
 
-    def test_grade_survives_a_rescoring_update_unless_explicitly_changed(self):
-        rid = self.create_review(grade="C").data["id"]
+    def test_grade_is_derived_from_score_on_every_save(self):
+        """
+        Option B: a row written straight through the ORM with a manual grade —
+        an import, say — still has it replaced by the derived value.
+        """
+        review = PaperReview.objects.create(
+            event_code=self.event.event_code,
+            speaker_name="Override",
+            email="override@example.com",
+            paper_submission_date="2026-08-01",
+            closeness_to_topic=9,
+            closeness_to_region=2,
+            clear_solution_to_challenges=9,
+            case_study_results_examples=1,
+            not_obvious_sales_pitch=1,
+            company_profile_score=5,
+            grade="D",                                  # simulating an import
+        )
+        self.assertEqual(review.proposal_score, 27)
+        self.assertEqual(review.grade, "B")             # 27/45 = 60% → B
+
+    def test_rescoring_moves_the_grade_with_the_score(self):
+        """
+        The inverse of the old contract: grade no longer survives a rescoring,
+        it tracks it. 27 → 36 crosses 60% → 80%, so B becomes A.
+        """
+        rid = self.create_review().data["id"]
         r = self.client.patch(f"{self.LIST}{rid}/",
-                              {"closeness_to_topic": 10}, format="json")
+                              {"closeness_to_topic": 10,
+                               "closeness_to_region": 5,
+                               "case_study_results_examples": 5,
+                               "not_obvious_sales_pitch": 5,
+                               "company_profile_score": 2}, format="json")
         self.assertEqual(r.status_code, 200, r.content)
         review = PaperReview.objects.get(id=rid)
-        self.assertEqual(review.grade, "C")             # untouched by the rescoring
-        self.assertEqual(review.proposal_score, 28)
+        self.assertEqual(review.proposal_score, 36)     # 10+5+9+5+5+2
+        self.assertEqual(review.grade, "A")             # 36/45 = 80% → A
+
+    def test_grade_band_boundaries(self):
+        """Each band boundary, and the point just below it, produces its letter."""
+        cases = [
+            (45, "A"),   # 100%
+            (36, "A"),   # 80% — the boundary itself
+            (35, "B"),   # 77.8%
+            (27, "B"),   # 60%
+            (26, "C"),   # 57.8%
+            (18, "C"),   # 40%
+            (17, "D"),   # 37.8%
+            (0,  "D"),   # 0%
+        ]
+        for score, expected in cases:
+            with self.subTest(score=score, expected=expected):
+                self.assertEqual(
+                    PaperReview(proposal_score=score).computed_grade(), expected)
+
+    def test_grade_is_none_when_score_is_none(self):
+        self.assertIsNone(PaperReview(proposal_score=None).computed_grade())
+
+    def test_an_unscored_review_stores_a_blank_grade(self):
+        """
+        computed_grade() returns None, but the column is NOT NULL — save()
+        coerces to "". An unscored review must not raise, and must not read as D.
+        """
+        review = PaperReview.objects.create(
+            event_code=self.event.event_code,
+            speaker_name="Unscored", email="unscored@example.com",
+        )
+        self.assertIsNone(review.proposal_score)
+        self.assertEqual(review.grade, "")
+
+    def test_grade_is_read_only_on_the_serializer(self):
+        """A PATCH naming only grade is accepted and changes nothing."""
+        rid = self.create_review().data["id"]
+        r = self.client.patch(f"{self.LIST}{rid}/", {"grade": "E"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(PaperReview.objects.get(id=rid).grade, "B")

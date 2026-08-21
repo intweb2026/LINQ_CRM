@@ -8,14 +8,19 @@ import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import * as eventsApi from '../../api/events';
+import { OWNER_FIELDS } from '../../lib/owners';
 
-// SCA (the event's `sales_team` column) had no editor here, so a new event was
-// always created without one. Speaker sales is dropped: events migration 0017
-// folded speaker_sales_team into sales_team, and the backend no longer has the
-// column to write. Keep these two lists in the same order — the owners array
-// below is positional. See EditEventModal for the matching list.
-const OWNER_LABELS = ['SCA', 'Sales team leader', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
-const OWNER_KEYS = ['sales_team', 'sales_lead', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
+// The row list lives in lib/owners.js now. It was written out by hand here, in
+// EditEventModal, in the Events table and in the drawer's Teams tab — four copies
+// of one list, and the two here were POSITIONAL, so a label and a key could drift
+// apart silently and the form would write the wrong column.
+//
+// The selects below deliberately keep reading form values RAW rather than through
+// ownerOf(): an inherited name is the owning team's answer, and writing it into
+// the event would freeze "whoever leads Telemarketing" into one person's name on
+// the next unrelated save.
+const OWNER_LABELS = OWNER_FIELDS.map((f) => f.label);
+const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
 
 export default function NewEventModal({ onClose, onSaved }) {
   const toast = useToast();

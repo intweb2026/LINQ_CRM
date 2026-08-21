@@ -20,8 +20,14 @@ may not equal the sum of their six criteria — the criteria were edited after t
 score was written, or the score was typed by hand. The rule here is: RECOMPUTE
 from the criteria, import the computed value, and classify the row
 CREATE_WITH_WARNING naming both numbers. Never silently trust the file, never
-silently overwrite it without saying so. `grade` is NOT reconciled — it is manual
-and unrelated to the score by design (see models.py), so what MR recorded stands.
+silently overwrite it without saying so.
+
+`grade` is also NOT reconciled, but for the opposite reason it used to be: it is
+DERIVED (models.py computed_grade()), and the commit writes through obj.save()
+like every other path, so the file's Grade column is overwritten by the value the
+criteria imply. It is still mapped and still accepted — refusing the column would
+break every existing export round-trip — but it decides nothing, and no warning is
+raised for it. B+ and E therefore cannot enter the table through an import.
 
 WHY IMPORTED ROWS MAY BE MORE INCOMPLETE THAN FORM ROWS
 The serializer's REQUIRED_FIELDS marks all six criteria required; the MODEL keeps

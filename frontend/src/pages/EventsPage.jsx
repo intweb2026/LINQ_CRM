@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
-import { EvBadge, Who } from '../components/Badge';
+import { EvBadge, OwnerName } from '../components/Badge';
+import { ownerOf } from '../lib/owners';
 import { fdate, nf, uniq } from '../lib/helpers';
 import { EVENT_STATUSES } from '../lib/constants';
 import * as eventsApi from '../api/events';
@@ -92,13 +93,20 @@ export default function EventsPage() {
           { key: 'website', label: 'Website', group: 'web', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v || '—'}</span> },
           { key: 'web_bookings_enabled', label: 'Web Bookings Enabled', group: 'web', opts: () => ['Yes', 'No'] },
           { key: 'vr1_status', label: 'VR1 Sent Status', group: 'web', opts: () => uniq(EVENTS.map((e) => e.vr1_status)) },
+          // The owner columns read through ownerOf (lib/owners.js), so a column with
+          // no value of its own shows the lead of the team that owns the role,
+          // muted and attributed in its tooltip. Six of these seven are blank on
+          // every event in the live data, which is why they were seven empty
+          // columns before. SCA keeps a plain filter list: it is the one owner that
+          // is genuinely per-event, so there is nothing for it to inherit and its
+          // values are worth filtering on.
           { key: 'sales_team', label: 'SCA', group: 'own', opts: () => uniq(EVENTS.map((e) => e.sales_team)) },
-          { key: 'sales_lead', label: 'Sales Team Leader', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
-          { key: 'tele_team', label: 'Telemarketing', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
-          { key: 'mr_senior', label: 'Market Research Sr.', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
-          { key: 'mr_junior', label: 'Market Research Jr.', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
-          { key: 'spex_lead', label: 'SpEx Lead', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
-          { key: 'event_mgmt', label: 'Event Management', group: 'own', cell: (v) => <Who name={v} avatar={false} /> },
+          { key: 'sales_lead', label: 'Sales Team Leader', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'sales_lead')} /> },
+          { key: 'tele_team', label: 'Telemarketing', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'tele_team')} /> },
+          { key: 'mr_senior', label: 'Market Research Sr.', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'mr_senior')} /> },
+          { key: 'mr_junior', label: 'Market Research Jr.', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'mr_junior')} /> },
+          { key: 'spex_lead', label: 'SpEx Lead', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'spex_lead')} /> },
+          { key: 'event_mgmt', label: 'Event Management', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'event_mgmt')} /> },
           { key: 'email_marketing', label: 'Email Marketing Campaign', group: 'meta', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
           { key: 'email_marketing_name', label: 'Name for Email Marketing', group: 'meta' },
           { key: 'branding_name', label: 'Name for Branding', group: 'meta' },

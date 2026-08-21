@@ -214,14 +214,14 @@ class BulkUpdateTests(_Base):
         from paper_review.views import PaperReviewViewSet
         wired = set(PaperReviewViewSet.bulk_update_fields)
         required = {
-            "grade", "session_location_on_agenda", "nos", "feedback_to_speaker",
+            "session_location_on_agenda", "nos", "feedback_to_speaker",
             "internal_footnotes",
             *[f for f, _ in CRITERIA],
         }
         self.assertTrue(required <= wired, required - wired)
         for forbidden in ("event_code", "speaker_name", "email", "company_name",
                           "speaker_email_ref", "research_email_ref",
-                          "proposal_score", "import_batch_id",
+                          "proposal_score", "grade", "import_batch_id",
                           "created_by", "updated_by", "id"):
             self.assertNotIn(forbidden, wired)
 
@@ -237,17 +237,6 @@ class BulkUpdateTests(_Base):
             self.assertEqual(cfg["max"], maximum, name)
             self.assertEqual(cfg["min"], 0, name)
             self.assertTrue(cfg["nullable"], name)
-
-    def test_grade_accepts_the_vocabulary_the_data_actually_uses(self):
-        """
-        'B+' is the third most common grade in the Zoho export, 355 of 3492
-        rows. An A-D allow-list would refuse a value the column legitimately
-        holds and the importer writes.
-        """
-        preview, commit = self._run("grade", "B+")
-        self.assertEqual(commit.status_code, 200, commit.content)
-        for row in PaperReview.objects.filter(id__in=self.ids):
-            self.assertEqual(row.grade, "B+")
 
     def test_a_theme_longer_than_the_column_is_a_400_not_a_dataerror(self):
         r = self.client.post(self.URL, {
@@ -265,11 +254,20 @@ class BulkUpdateTests(_Base):
             "commit": False}, format="json")
         self.assertEqual(r.status_code, 400, r.content)
 
-    def test_grade_bulk_updates(self):
-        preview, commit = self._run("grade", "A")
-        self.assertEqual(commit.status_code, 200, commit.content)
-        for row in PaperReview.objects.filter(id__in=self.ids):
-            self.assertEqual(row.grade, "A")
+    def test_grade_is_not_bulk_writable(self):
+        """
+        DERIVED, like proposal_score — save() recomputes it from the criteria
+        on every write, so a bulk write would be overwritten in the same
+        statement and read as a silent no-op. Offering it in the picker would
+        be a lie. Bulk-updating a CRITERION moves the grade instead; see
+        test_bulk_updating_a_criterion_recomputes_the_score_on_every_row.
+        """
+        from paper_review.views import PaperReviewViewSet
+        self.assertNotIn("grade", PaperReviewViewSet.bulk_update_fields)
+        r = self.client.post(self.URL, {
+            "ids": self.ids, "field": "grade", "value": "A",
+            "commit": False}, format="json")
+        self.assertEqual(r.status_code, 400, r.content)
 
     def test_nos_bulk_updates_as_a_boolean(self):
         preview, commit = self._run("nos", True)
@@ -352,7 +350,7 @@ class BulkUpdateTests(_Base):
     def test_the_schema_hides_internal_footnotes_from_a_non_mr_user(self):
         fields = self.client.get(self.SCHEMA).data["fields"]
         self.assertNotIn("internal_footnotes", fields)
-        self.assertIn("grade", fields)
+        self.assertIn("session_location_on_agenda", fields)
 
     def test_the_schema_shows_internal_footnotes_to_mr(self):
         self.client.force_authenticate(user=self.mr)
@@ -365,7 +363,8 @@ class BulkUpdateTests(_Base):
         outside = make_event("BULKOUT - ZZ")
         hidden = make_review("BULKOUT - ZZ", "Hidden")
         r = self.client.post(self.URL, {
-            "ids": [hidden.id], "field": "grade", "value": "A",
+            "ids": [hidden.id], "field": "session_location_on_agenda",
+            "value": "Day 1, Afternoon Session",
             "commit": False}, format="json")
         self.assertEqual(r.status_code, 404, r.content)
 
@@ -373,15 +372,18 @@ class BulkUpdateTests(_Base):
         make_event("BULKOUT2 - ZZ")
         hidden = make_review("BULKOUT2 - ZZ", "Hidden Two")
         r = self.client.post(self.URL, {
-            "ids": [self.ids[0], hidden.id], "field": "grade", "value": "A",
+            "ids": [self.ids[0], hidden.id],
+            "field": "session_location_on_agenda",
+            "value": "Day 1, Afternoon Session",
             "commit": False}, format="json")
         self.assertEqual(r.status_code, 404, r.content)
         self.rows[0].refresh_from_db()
-        self.assertEqual(self.rows[0].grade, "")
+        self.assertEqual(self.rows[0].session_location_on_agenda, "")
 
     def test_one_actionlog_per_batch_with_the_full_id_list(self):
         before = ActionLog.objects.count()
-        preview, commit = self._run("grade", "C")
+        preview, commit = self._run("session_location_on_agenda",
+                                    "Day 2, Keynote")
         self.assertEqual(commit.status_code, 200, commit.content)
         self.assertEqual(ActionLog.objects.count(), before + 1)
         log = ActionLog.objects.latest("id")
@@ -405,15 +407,20 @@ class ExportTests(_Base):
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
-        make_review("AFS - JS", "Alpha", grade="A",
+        # grade is DERIVED, so the ?grade=A filter below only finds this row if
+        # it actually scores one: 10+5+10+5+5+1 = 36/45 = 80%, the A boundary.
+        # Passing grade="A" here would be discarded by save().
+        make_review("AFS - JS", "Alpha",
                     internal_footnotes="hidden notes",
-                    closeness_to_topic=9, closeness_to_region=2,
-                    clear_solution_to_challenges=9,
-                    case_study_results_examples=1, not_obvious_sales_pitch=1,
-                    company_profile_score=5,
+                    closeness_to_topic=10, closeness_to_region=5,
+                    clear_solution_to_challenges=10,
+                    case_study_results_examples=5, not_obvious_sales_pitch=5,
+                    company_profile_score=1,
                     session_location_on_agenda="Day 1, Afternoon Session",
                     theme="rail", nos=True, linkedin_followers=417)
-        make_review("BIUK - PM", "Beta", grade="B")
+        # Unscored, so its derived grade is "" — which is what makes it the
+        # negative case for the ?grade=A filter.
+        make_review("BIUK - PM", "Beta")
 
     def body(self, response):
         return b"".join(response.streaming_content).decode("utf-8")
@@ -535,9 +542,15 @@ class FilterOptionsTests(_Base):
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
-        make_review("AFS - JS", "Opt One", grade="A",
+        # A full 45/45 derives to "A"; the second row is unscored so its grade
+        # derives to "" — the blank the assertions below require to be excluded.
+        make_review("AFS - JS", "Opt One",
+                    closeness_to_topic=10, closeness_to_region=5,
+                    clear_solution_to_challenges=10,
+                    case_study_results_examples=5, not_obvious_sales_pitch=5,
+                    company_profile_score=10,
                     session_location_on_agenda="Day 1, Afternoon Session")
-        make_review("BIUK - PM", "Opt Two", grade="",
+        make_review("BIUK - PM", "Opt Two",
                     session_location_on_agenda="Day 2, Keynote")
 
     def test_returns_only_values_actually_stored(self):

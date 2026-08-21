@@ -5,6 +5,7 @@ import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
 import { Av, EvBadge } from '../../components/Badge';
 import { avc, ini } from '../../lib/helpers';
+import { OWNER_FIELDS, ownerOf } from '../../lib/owners';
 import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
@@ -12,27 +13,37 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
 
-// SCA is the event's `sales_team` column (renamed from "Sales Team"), and it was
-// missing from this list entirely — the field round-trips through api/events.js in
-// both directions, but with no editor here the form never carried it, so nothing
-// was ever sent and the value looked unchangeable.
+// The row list lives in lib/owners.js now. It was written out by hand here, in
+// EditEventModal, in the Events table and in the drawer's Teams tab — four copies
+// of one list, and the two here were POSITIONAL, so a label and a key could drift
+// apart silently and the form would write the wrong column.
 //
-// Speaker sales is gone from this list because the column is gone: events
-// migration 0017 folded speaker_sales_team into sales_team, so the select was
-// posting a field no serializer accepts and its edits were dropped in silence.
-const OWNER_KEYS = ['sales_team', 'sales_lead', 'tele_team', 'mr_senior', 'mr_junior', 'spex_lead', 'event_mgmt'];
-const OWNER_LABELS = ['SCA', 'Sales team leader', 'Telemarketing', 'Market research sr.', 'Market research jr.', 'SpEx lead', 'Event management'];
+// The selects below deliberately keep reading form values RAW rather than through
+// ownerOf(): an inherited name is the owning team's answer, and writing it into
+// the event would freeze "whoever leads Telemarketing" into one person's name on
+// the next unrelated save.
+const OWNER_LABELS = OWNER_FIELDS.map((f) => f.label);
+const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
 
-function ownerChip(roleLabel, personName) {
+/**
+ * `owner` is either a plain name or an ownerOf() result — see the twin of this
+ * function in bookings/EditBookingModal.jsx. Chips whose column is blank on
+ * every event now show the owning team's lead, italicised and attributed in the
+ * tooltip rather than passed off as this event's own value.
+ */
+function ownerChip(roleLabel, owner) {
   const map = { Sales: ['--green-bg', '--green-tx'], SCA: ['--blue-bg', '--blue-tx'], Telemarketing: ['--violet-bg', '--violet-tx'], 'Market Research': ['--cyan-bg', '--cyan-tx'], SpEx: ['--violet-bg', '--violet-tx'] };
   const c = map[roleLabel] || ['--n-75', '--text-3'];
+  const personName = typeof owner === 'string' ? owner : (owner && owner.name) || '';
+  const inherited = typeof owner === 'object' && owner && owner.inherited;
+  const team = (typeof owner === 'object' && owner && owner.team) || '';
   if (!personName || personName === '—') return null;
   return (
-    <span key={roleLabel} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
+    <span key={roleLabel} title={inherited ? `${roleLabel}: inherited from ${team || 'the owning team'} — no value set on this event` : undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '3px 11px 3px 3px', borderRadius: 999, background: `var(${c[0]})` }}>
       <Av name={personName} size="xs" />
       <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
         <span style={{ fontSize: 8, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '.06em', color: `var(${c[1]})` }}>{roleLabel}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)' }}>{personName}</span>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', fontStyle: inherited ? 'italic' : undefined }}>{personName}</span>
       </span>
     </span>
   );
@@ -82,7 +93,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
             </div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ownerChip('SCA', ev.sales_team)}{ownerChip('Sales', ev.sales_lead)}{ownerChip('SpEx', ev.spex_lead)}{ownerChip('Market Research', ev.mr_senior)}
+              {ownerChip('SCA', ev.sales_team)}{ownerChip('Sales', ownerOf(ev, 'sales_lead'))}{ownerChip('SpEx', ownerOf(ev, 'spex_lead'))}{ownerChip('Market Research', ownerOf(ev, 'mr_senior'))}
             </div>
           </div>
           {/* See the identical fix/comment in bookings/EditBookingModal.jsx — same

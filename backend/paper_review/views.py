@@ -162,10 +162,12 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     #   speaker_email_ref, research_email_ref — NOT user-entered. They cache the
     #       notification recipients resolved from the event, are read-only in the
     #       serializer and absent from the form (models.py:66-69).
-    #   proposal_score — COMPUTED. save() recomputes it from the six criteria on
-    #       every write, so a bulk write would be overwritten in the same
-    #       statement and read as a silent no-op. Bulk-updating any CRITERION
-    #       moves the score instead, which is the point — see
+    #   proposal_score, grade — COMPUTED. save() recomputes both from the six
+    #       criteria on every write (grade via computed_grade()), and
+    #       accounts/bulk_update.py writes through obj.save() precisely so derived
+    #       fields stay derived — so a bulk write to either would be overwritten in
+    #       the same statement and read as a silent no-op. Bulk-updating any
+    #       CRITERION moves both instead, which is the point — see
     #       get_bulk_update_side_effects below.
     #   import_batch_id, created_by, updated_by, created_at, updated_at, id —
     #       DEFAULT_EXCLUDES in accounts/bulk_update.py.
@@ -179,15 +181,8 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         exclude=(
             "event_code", "speaker_name", "email", "company_name",
             "speaker_email_ref", "research_email_ref",
-            "proposal_score",
+            "proposal_score", "grade",
         ),
-        # grade has no choices= at the DB level. The real vocabulary is not one
-        # letter per row: the Zoho export carries A, B, B+, C, D and E, with 'B+'
-        # the third most common at 355 of 3492 rows (models.py:106-115). Offering
-        # only A-D here would refuse a value the column legitimately holds and
-        # that the importer writes. Kept identical to qc_grade's list in
-        # proposal_submission, which proposal_bridge copies this column into.
-        choices={"grade": ["A", "B", "B+", "C", "D", "E"]},
         # The importer's column names, reused verbatim: a field must not be
         # called one thing in the import wizard, the CSV header and the export,
         # and something else in the mass-update picker. It already carries the

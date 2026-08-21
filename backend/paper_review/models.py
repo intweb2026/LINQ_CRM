@@ -44,6 +44,17 @@ CRITERIA_FIELDS = tuple(name for name, _ in CRITERIA)
 CRITERIA_MAX = dict(CRITERIA)
 RUBRIC_TOTAL = sum(CRITERIA_MAX.values())      # 45
 
+# Confirmed grade bands, highest threshold first. Grade is DERIVED from the score
+# percentage — see PaperReview.computed_grade(). B+ and E existed in the Zoho data
+# but are unreachable for new records; existing imported values are overwritten on
+# the next save, which is the documented and intended consequence of Option B.
+GRADE_BANDS = (
+    (80, "A"),
+    (60, "B"),
+    (40, "C"),
+    (0,  "D"),
+)
+
 
 def _criterion(maximum):
     return models.PositiveSmallIntegerField(
@@ -99,20 +110,22 @@ class PaperReview(models.Model):
     # as 0/45.
     proposal_score = models.PositiveSmallIntegerField(null=True, blank=True)
 
-    # MANUAL, typed by the reviewer. Deliberately NOT derived from a percentage:
-    # the ≥80/≥60/≥40 bands are inferred from a single record and are not
-    # confirmed business rules. Matches the standing decision that
-    # proposal_submission's qc_grade and qc_score are independent and manual.
+    # DERIVED. Computed server-side from proposal_score / RUBRIC_TOTAL via
+    # computed_grade() on every save. The bands are confirmed business rules — see
+    # GRADE_BANDS. A client-supplied grade is ignored: it is read-only on the
+    # serializer, and save() overwrites the column regardless of how the instance
+    # was built, so direct ORM writes and the importer derive it too.
     #
-    # WIDTH. This was max_length=1, written on the assumption that a grade is a
-    # single letter. The real vocabulary is not. The Zoho export carries A, B, B+,
-    # C, D and E, and 'B+' is the third most common grade in it, 355 of 3492 rows.
-    # At one character every one of those rows raised a DataError on import;
-    # because the commit writes a chunk inside one transaction.atomic(), that
-    # failure discarded the other 499 rows with it. 5 leaves room for a modifier on
-    # any letter without inviting free text, and stays under qc_grade's 10; see the
-    # assertion in tests_paper_to_proposal.py that this column must not be wider
-    # than the one proposal_bridge copies it into.
+    # WIDTH stays max_length=5 for backward compatibility with imported data that
+    # carries B+ (355 of 3492 rows in the Zoho export). New records only ever
+    # produce A, B, C or D, but an imported row keeps its B+ until it is next
+    # saved. Still under qc_grade's 10; see the assertion in
+    # tests_paper_to_proposal.py that this column must not be wider than the one
+    # proposal_bridge copies it into.
+    #
+    # db_index and the Meta index are retained: grade is a filter dropdown and a
+    # sort column, and dropping either would need a migration this change does not
+    # carry.
     grade = models.CharField(max_length=5, blank=True, default="", db_index=True)
 
     # ── Outcome ───────────────────────────────────────────────────────────────
@@ -215,8 +228,29 @@ class PaperReview(models.Model):
         filled = [v for v in values if v is not None]
         return sum(filled) if filled else None
 
+    def computed_grade(self):
+        """
+        The letter for this score, from GRADE_BANDS.
+
+        Returns None when proposal_score is None — an unscored review has no
+        grade, the same distinction computed_score() draws between "scored 0"
+        and "not yet scored". Only reachable via direct ORM or import; the form
+        requires all six criteria.
+        """
+        if self.proposal_score is None:
+            return None
+        pct = round((self.proposal_score / RUBRIC_TOTAL) * 100)
+        for threshold, letter in GRADE_BANDS:
+            if pct >= threshold:
+                return letter
+        return "D"   # defensive — the 0 threshold already catches everything
+
     def save(self, *args, **kwargs):
         self.proposal_score = self.computed_score()
+        # "" not None: the column is blank=True/default="" and NOT nullable, so an
+        # unscored review stores the empty string. computed_grade() returns None
+        # there to keep "no grade" distinguishable in Python.
+        self.grade = self.computed_grade() or ""
         return super().save(*args, **kwargs)
 
     def __str__(self):
