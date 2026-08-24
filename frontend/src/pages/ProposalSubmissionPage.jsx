@@ -170,7 +170,7 @@ export default function ProposalSubmissionPage() {
         // 100 rather than 50, for the reason given on the same prop in
         // PaperReviewPage: half as many scroll stops, each one a round trip plus a
         // re-layout of everything already rendered.
-        noun="proposals" pageSize={100} infinite defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        noun="proposals" pageSize={1000} infinite defaultSort={{ key: 'submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
         select={can('update', 'proposal_submission')}
         groups={PROPOSAL_GROUPS}
         hiddenDefault={PROPOSAL_HIDDEN}

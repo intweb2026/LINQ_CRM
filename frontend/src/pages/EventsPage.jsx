@@ -48,7 +48,7 @@ export default function EventsPage() {
           `server` instead, because those tables are too large to hold at once;
           this one is the catalogue. */}
       <DataTable
-        rows={EVENTS} noun="events" infinite pageSize={50} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
+        rows={EVENTS} noun="events" infinite pageSize={1000} defaultSort={{ key: 'event_date', dir: 'asc' }} searchPlaceholder="Search event or code…"
         select={can('update', 'events')}
         // No tab strip on this page to fold these into (see BookingsPage /
         // TicketCentralPage), so they ride on the table's own toolbar row

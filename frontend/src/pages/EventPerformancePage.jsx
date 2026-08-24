@@ -53,7 +53,7 @@ export default function EventPerformancePage() {
   return (
     <>
       <DataTable
-        rows={rows} noun="events" pageSize={50} defaultSort={{ key: 'offset', dir: 'asc' }} searchPlaceholder="Search event…"
+        rows={rows} noun="events" pageSize={1000} defaultSort={{ key: 'offset', dir: 'asc' }} searchPlaceholder="Search event…"
         // No tab strip here to fold this into (see BookingsPage /
         // TicketCentralPage), so it rides on the table's own toolbar row
         // instead of a PageHead row of its own — one fewer row of height.

@@ -163,7 +163,7 @@ export default function PaperReviewPage() {
         // scroll to the end is 141 separate stops. Each stop is a round trip and a
         // browser re-layout of everything already rendered, so halving their number
         // is the cheapest part of making it scroll smoothly.
-        noun="reviews" pageSize={100} infinite defaultSort={{ key: 'paper_submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
+        noun="reviews" pageSize={1000} infinite defaultSort={{ key: 'paper_submission_date', dir: 'desc' }} searchPlaceholder="Search speaker, company, event…"
         select={can('update', 'paper_review')}
         /* The label carries no count any more. It was counted off the loaded
            rows, and asking the server for it costs a per-row Subquery evaluation

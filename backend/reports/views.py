@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class StandardPagination(PageNumberPagination):
     page_size            = 100
     page_size_query_param = "page_size"
-    max_page_size        = 500
+    max_page_size        = 1000
     # Same memoised COUNT(*) as config.pagination.StandardPagination.
     django_paginator_class = CachedCountPaginator
 

@@ -312,7 +312,7 @@ export const delay = (value, ms = 120) => new Promise((resolve) => setTimeout(()
 
 /**
  * Every list endpoint on this backend is wrapped in DRF's PageNumberPagination
- * (page_size=50 by default, page_size_query_param="page_size", max 500 — see
+ * (page_size=50 by default, page_size_query_param="page_size", max 1000 — see
  * config/pagination.py). A plain `http.get(url).then(r => r.data.results)`
  * silently returns only the first page — on tables with thousands of rows
  * (delegates, tickets, ...) that reads as "there's only ~50 records" with no

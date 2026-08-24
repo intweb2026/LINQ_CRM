@@ -55,7 +55,7 @@ export default function UsersPage() {
   return (
     <>
       <DataTable
-        rows={USERS} noun="users" pageSize={50} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
+        rows={USERS} noun="users" pageSize={1000} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
         // No tabs or date-range row on this page to fold these into (see
         // BookingsPage / TicketCentralPage, PaperReviewPage / ProposalSubmissionPage),
         // so they ride on the table's own toolbar row instead of a PageHead row

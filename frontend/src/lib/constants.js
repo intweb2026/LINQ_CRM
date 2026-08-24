@@ -126,7 +126,7 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // no amount of clicking in the UI could change that.
 export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance' }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
 export const PERM_ACTIONS = ['view', 'create', 'update', 'delete'];
-export const PAGE_SIZE = 50;
+export const PAGE_SIZE = 1000;
 export const ALL_MODULES = CRM_MODULES.map((m) => m.k);
 
 export const GSYNC_TYPE_LABEL = { bookings: 'Bookings', events: 'Events', full_sync: 'Full Sync', crm_mirror: 'CRM Data Sheet', sheet_target: 'Sheet Push' };

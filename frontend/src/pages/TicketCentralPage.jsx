@@ -169,7 +169,7 @@ export default function TicketCentralPage() {
         serverCriteria={serverCriteria}
         serverParams={{ period }}
         onServerReady={keepRefetch}
-        noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={50}
+        noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={1000}
         defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}

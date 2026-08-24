@@ -16,7 +16,7 @@ import useLiveData from '../hooks/useLiveData';
 import useVirtualRows from '../hooks/useVirtualRows';
 import { apiErrorMessage, fetchAllIds, fetchPage } from '../api/client';
 
-const PAGE_SIZE_DEFAULT = 50;
+const PAGE_SIZE_DEFAULT = 1000;
 
 /**
  * Measured row height, in pixels: 44.
@@ -83,7 +83,7 @@ function colWidth(col) {
 
 /**
  * Ceiling on the one-request reload a background refresh uses in infinite mode
- * (see liveReload). config/pagination.py caps page_size at 500, so a user who has
+ * (see liveReload). config/pagination.py caps page_size at 1000, so a user who has
  * scrolled past that many rows cannot have the whole span refreshed in a single
  * request — and refreshing only PART of it would silently drop the rest off the
  * screen. Past this point background refresh stands down and the explicit

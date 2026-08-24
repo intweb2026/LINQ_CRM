@@ -298,7 +298,7 @@ export default function BookingsPage() {
         serverCriteria={serverCriteria}
         serverParams={{ period }}
         onServerReady={keepRefetch}
-        noun="bookings" select={can('delete', 'bookings') || can('update', 'bookings')} infinite pageSize={50}
+        noun="bookings" select={can('delete', 'bookings') || can('update', 'bookings')} infinite pageSize={1000}
         defaultSort={{ key: 'request_date', dir: 'desc' }} searchPlaceholder="Search invoice, delegate, company…"
         groups={[
           { key: 'id', label: 'Identification' }, { key: 'del', label: 'Delegate' }, { key: 'pay', label: 'Payment & logistics' },

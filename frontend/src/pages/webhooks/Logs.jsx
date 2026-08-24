@@ -173,7 +173,7 @@ export default function WebhookLogs() {
         server={{ resource: 'webhooks/logs', mapRow: webhooksApi.fromApi }}
         onServerReady={keepRefetch}
         onRow={(r) => setDrawerRow(r)}
-        noun="deliveries" pageSize={50} defaultSort={{ key: 'received_at', dir: 'desc' }} searchPlaceholder="Search invoice, event, key…"
+        noun="deliveries" pageSize={1000} defaultSort={{ key: 'received_at', dir: 'desc' }} searchPlaceholder="Search invoice, event, key…"
         extraToolbar={(
           <>
             <button className="btn btn-s btn-sm" onClick={refetch} title="Re-fetch the newest deliveries">

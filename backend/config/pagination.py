@@ -63,7 +63,7 @@ class CachedCountPaginator(Paginator):
 class StandardPagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = "page_size"
-    max_page_size = 500
+    max_page_size = 1000
     django_paginator_class = CachedCountPaginator
 
     def get_paginated_response(self, data):
