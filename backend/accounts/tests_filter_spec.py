@@ -23,6 +23,7 @@ from events.views import EventViewSet
 from ticket_central.models import Ticket
 from ticket_central.views import TicketViewSet
 from teams.models import Team
+from webhooks.views import WebhookLogViewSet
 
 User = get_user_model()
 
@@ -286,6 +287,26 @@ class SchemaTests(_Base):
         self.assertEqual(ps["empty_shape"], "resolved")
         self.assertIn("none_of", ps["operators"])
 
+    def test_date_fields_declare_whether_they_carry_a_time(self):
+        """
+        A DateTimeField is typed "date" so it filters with the date vocabulary,
+        but `lte '2026-08-24'` against one is `lte midnight` and drops the whole
+        of the day the user asked for. The schema says which columns need the
+        end-of-day edge instead of leaving the client to guess from the name.
+        """
+        r = self._get(DELEG_SCHEMA)
+        fields = json.loads(r.content)["fields"]
+        # A DateField: the bare date is the whole answer.
+        self.assertFalse(fields["request_date"]["has_time"])
+
+        req = self.factory.get("/")
+        force_authenticate(req, user=self.user)
+        r = WebhookLogViewSet.as_view({"get": "filter_schema"})(req)
+        r.render()
+        wl = json.loads(r.content)["fields"]
+        self.assertEqual(wl["received_at"]["type"], "date")
+        self.assertTrue(wl["received_at"]["has_time"])
+
     def test_user_fk_fields_carry_active_user_choices(self):
         """
         A user FK stores an id but must display a name, so its choices are
@@ -401,6 +422,50 @@ class TicketAndEventFilterTests(_Base):
         self.assertEqual(
             self._eids([{"field": "event_date", "op": "between",
                          "values": ["2026-01-01", "2026-06-01"]}]), {self.e1.id})
+
+    def test_not_between_is_the_negation_of_between(self):
+        """
+        The operator the Advanced Filter's "Is Not / Last 30 Days" is built on.
+        It cannot be assembled client-side from two criteria: "outside this
+        window" is before OR after, and `match` is "all".
+        """
+        window = ["2026-01-01", "2026-06-01"]
+        self.assertEqual(
+            self._eids([{"field": "event_date", "op": "not_between", "values": window}]),
+            {self.e2.id})
+        # Complementary over these two rows, which is what makes it a usable
+        # negation rather than a second, differently-wrong filter.
+        self.assertEqual(
+            self._eids([{"field": "event_date", "op": "between", "values": window}])
+            | self._eids([{"field": "event_date", "op": "not_between", "values": window}]),
+            {self.e1.id, self.e2.id})
+
+    def test_not_between_needs_exactly_two_values(self):
+        r = self._get(EVENTS, spec_qs(
+            [{"field": "event_date", "op": "not_between", "values": ["2026-01-01"]}]))
+        self.assertEqual(r.status_code, 400)
+
+    def test_not_between_treats_an_undated_row_exactly_as_is_not_does(self):
+        """
+        An undated row comes BACK from the negation: Django compiles a negated
+        lookup on a nullable column to NOT(... AND col IS NOT NULL), so NULL
+        survives it. Pinned rather than merely observed, because the frontend's
+        local evaluator is written to match, and the one thing that must not
+        drift is the two of them disagreeing about empty cells.
+        """
+        Event.objects.filter(pk=self.e1.pk).update(website_live_date="2026-02-01")
+        Event.objects.filter(pk=self.e2.pk).update(website_live_date="2026-09-01")
+        undated = Event.objects.create(
+            event_code="FSE3 - CC", event_date="2026-03-02", status=Event.Status.DRAFT)
+        self.assertIsNone(undated.website_live_date)
+        window = ["2026-01-01", "2026-06-01"]
+        got = self._eids([{"field": "website_live_date", "op": "not_between",
+                           "values": window}])
+        self.assertEqual(got, {self.e2.id, undated.id})
+        # The same answer is_not gives on the same undated row.
+        self.assertIn(
+            undated.id,
+            self._eids([{"field": "website_live_date", "op": "is_not", "value": "2026-02-01"}]))
 
     # boolean + choice
     def test_boolean_and_choice_operators(self):

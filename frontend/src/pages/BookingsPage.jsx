@@ -5,7 +5,7 @@ import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Av, StatusBadge, Dot, Who } from '../components/Badge';
 import { fdate, ftime, nf, plur, rel } from '../lib/helpers';
-import { PAYMENT_STATUSES, ATTENDANCE, TICKET_TIERS, PAYMENT_TYPES, BOOKING_CODES } from '../lib/constants';
+import { PAYMENT_STATUSES, ATTENDANCE, TICKET_TIERS, PAYMENT_TYPES, BOOKING_CODES, PAID_OR_FREE, paidOrFreeLabel } from '../lib/constants';
 import { useBulkUpdate } from '../hooks/useBulkUpdate';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
@@ -81,8 +81,8 @@ const bkCols = ({ onTransfer } = {}) => [
   // column (book_delegate/views.py) — the same value this cell renders.
   { key: 'booking_code', label: 'Booking Code', group: 'id', serverField: 'booking_code',
     cell: (v) => <span className="mono">{v}</span>, opts: () => BOOKING_CODES },
-  { key: 'request_date', label: 'Request Date', group: 'id', serverField: 'request_date', serverOrdering: '_sort_request_date', cell: (v) => fdate(v) },
-  { key: 'invoice_date', label: 'Invoice Date', group: 'id', serverField: 'invoice_date', serverOrdering: '_sort_date', cell: (v) => fdate(v) },
+  { key: 'request_date', label: 'Request Date', type: 'date', group: 'id', serverField: 'request_date', serverOrdering: '_sort_request_date', cell: (v) => fdate(v) },
+  { key: 'invoice_date', label: 'Invoice Date', type: 'date', group: 'id', serverField: 'invoice_date', serverOrdering: '_sort_date', cell: (v) => fdate(v) },
   { key: 'invoice_number', label: 'Invoice Number', group: 'id', serverField: 'invoice_number', serverOrdering: '_sort_invoice', cell: (v) => <span className="mono lnk">{v}</span> },
   // Name only — the company had been repeated here as a sub-line directly
   // beside the Delegate Company column that already holds it.
@@ -92,8 +92,13 @@ const bkCols = ({ onTransfer } = {}) => [
   { key: 'phone_number', label: 'Direct Line', group: 'del', serverField: 'phone_number', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
   { key: 'accounts_contact_email', label: 'Accounts Contact', group: 'del', cell: (v) => <span className="dim" style={{ fontSize: 11.5 }}>{v}</span> },
   { key: 'delegate_number', label: 'Delegate Number', group: 'del', cell: (v) => <span className="mono">{v}</span> },
-  { key: 'paid_or_free', label: 'Paid/Free', group: 'pay', serverField: 'paid_or_free', serverOrdering: '_sort_effective_paid_or_free', opts: () => ['Paid', 'Free'] },
-  { key: 'payment_date', label: 'Date Paid', group: 'pay', serverField: 'payment_date', serverOrdering: '_sort_effective_payment_date', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  // Displayed as "Payable"/"Free" and filtered by the STORED values — paidOrFreeLabel
+  // is a rename of the wording only, so `optLabel` relabels the filter checkboxes
+  // while the value posted to ?paid_or_free= stays what the server's choice field
+  // accepts. See lib/constants.js.
+  { key: 'paid_or_free', label: 'Payable/Free', group: 'pay', serverField: 'paid_or_free', serverOrdering: '_sort_effective_paid_or_free',
+    cell: (v) => paidOrFreeLabel(v), opts: () => PAID_OR_FREE, optLabel: paidOrFreeLabel },
+  { key: 'payment_date', label: 'Date Paid', type: 'date', group: 'pay', serverField: 'payment_date', serverOrdering: '_sort_effective_payment_date', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
   { key: 'payment_type', label: 'Payment Type', group: 'pay', serverField: 'payment_type', serverOrdering: '_sort_effective_payment_type', opts: () => PAYMENT_TYPES },
   { key: 'ticket_tier', label: 'Ticket Tier', group: 'pay', serverField: 'ticket_tier', serverOrdering: '_sort_effective_ticket_tier', cell: (v) => <span className="tg bg-neutral">{v}</span>,
     opts: () => TICKET_TIERS },

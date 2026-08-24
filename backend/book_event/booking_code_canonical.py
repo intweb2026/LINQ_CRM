@@ -126,10 +126,29 @@ def is_canonical(code):
     return canonicalize(code) == code
 
 
+def with_default(code):
+    """
+    `code` when it carries a value, DEFAULT_BOOKING_CODE when it does not.
+
+    WHY A BLANK CODE IS NOT A MEANINGFUL VALUE
+    booking_code.classify() already treats "" as DELEGATE, so filling a blank
+    with "Delegate" moves no revenue between categories; it only stops the
+    column presenting the same meaning in two ways. A blank code did show as an
+    empty cell and an empty select in the Bookings table, which read as missing
+    data rather than as the delegate booking it always was.
+
+    Whitespace-only counts as blank; None becomes the default too, so callers
+    never have to special-case it.
+    """
+    if code is None or not str(code).strip():
+        return DEFAULT_BOOKING_CODE
+    return code
+
+
 def canonicalize_on_save(instance, args, kwargs):
     """
-    Canonicalise `instance.booking_code` IN PLACE, and make sure the corrected
-    value is actually written.
+    Default a blank `instance.booking_code`, canonicalise it IN PLACE, and make
+    sure the corrected value is actually written.
 
     THE SUBTLETY THIS EXISTS FOR
     Fixing the attribute in save() is not enough on its own. The webhook updates
@@ -152,7 +171,12 @@ def canonicalize_on_save(instance, args, kwargs):
     straightforward passthrough if that ever changes.
     """
     before = instance.booking_code
-    after = canonicalize(before)
+    # with_default() FIRST, so a blank column is filled and then spelled
+    # canonically by the same pass, and the fill travels through the same
+    # update_fields widening below as a spelling correction does. This is what
+    # makes "never empty" hold on every writer — serializers, importers, the
+    # webhook and the bulk-update engine all reach this line.
+    after = canonicalize(with_default(before))
     if after == before:
         return args, kwargs
 

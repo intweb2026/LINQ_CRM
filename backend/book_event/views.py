@@ -76,7 +76,11 @@ BOOKING_IMPORT_FIELDS = (
     ("invoice_date", "Invoice Date", ()),
     ("payment_date", "Payment Date", ()),
     ("payment_status", "Payment Status", ("Status",)),
-    ("paid_or_free", "Paid / Free", ("Paid or Free",)),
+    # "Paid / Free" is the OLD label, kept as an alias. autoMap resolves a
+    # spreadsheet header by key, label or alias, and the loose fallback compares
+    # against the key ("paidorfree"), which a "Paid/Free" column does not contain
+    # — dropping the old spelling would leave every existing export unmapped.
+    ("paid_or_free", "Payable / Free", ("Paid or Free", "Paid / Free")),
     ("payment_type", "Payment Type", ("Payment Method",)),
     ("ticket_tier", "Ticket Tier", ("Tier",)),
     ("currency", "Currency", ()),

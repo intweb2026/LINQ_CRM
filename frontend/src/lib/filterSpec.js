@@ -30,6 +30,11 @@
  * 400ing every list request.
  */
 
+import {
+  DATE_NO_VALUE_OPS,
+  dateCondActive, dateCondBound, dateCondWindow, isDateOp,
+} from './dateFilter';
+
 // UI operator -> backend operator. `multi` names the operator to use when the
 // user supplied more than one value, because the backend's arity rules differ:
 // `is` takes a single `value`, `any_of` takes a `values` list.
@@ -56,6 +61,99 @@ const OP_MAP = {
 
 const NO_VALUE_UI_OPS = ['Is Empty', 'Is Not Empty'];
 
+// ── Date conditions ──────────────────────────────────────────────────────────
+/**
+ * Date operator -> backend operator. Separate from OP_MAP because the operators
+ * collide by NAME and not by meaning: a date "Is" is a whole-day (or whole-
+ * window) containment test, so it maps to `between`, not to `is`.
+ *
+ * `not_between` is the one entry that is not merely a rename. "Is not in this
+ * window" is `before OR after`, and filter_spec's match mode is `all` — an AND
+ * — so it cannot be assembled from two criteria. Without the operator the whole
+ * condition falls back to filtering the fetched page, which on a 130,000-row
+ * table means a count that describes the page rather than the table. It is
+ * registered in accounts/filter_spec.py alongside `between`; deny-by-default
+ * still applies, so a backend that does not offer it degrades to local
+ * filtering rather than 400ing.
+ *
+ * Is and Is Not map to the PAIR operators rather than to `is` / `is_not`
+ * because a picked day is a window: on a DateTimeField, `is '2026-08-25'` means
+ * the instant of midnight and matches almost nothing, where the day's two edges
+ * match the day. One mapping that is right for both column kinds beats two that
+ * are each right for one.
+ */
+const DATE_OP_MAP = {
+  Is: 'between',
+  'Is Not': 'not_between',
+  Between: 'between',
+  Before: 'before',
+  After: 'after',
+  'Is Empty': 'is_empty',
+  'Is Not Empty': 'is_not_empty',
+};
+
+/** Does this UI condition carry a date payload? Mirrors DataTable's isDateCond. */
+function isDateCondition(cond) {
+  return !!(cond && cond.date && isDateOp(cond.op));
+}
+
+/**
+ * A calendar date as the value the backend should compare against.
+ *
+ * On a DateField, the date itself is the whole answer. On a DateTimeField it is
+ * not: `lte '2026-08-24'` is `lte 2026-08-24 00:00`, which excludes everything
+ * that happened during the day the user asked for — the same trap
+ * accounts/period_filter.day_bounds() documents. So a datetime field gets an
+ * explicit instant at the requested EDGE of the day, offset stated rather than
+ * naive: `TIME_ZONE` is UTC, and a naive string would be interpreted by Django
+ * under a warning instead of by this file's intent.
+ *
+ * `has_time` comes from the field's own schema entry, which build_filter_spec_
+ * fields() sets from the Django field class. Absent (an older backend), the bare
+ * date is sent, which is exactly the behaviour that existed before.
+ */
+function dateEdge(iso, edge, hasTime) {
+  if (!hasTime) return iso;
+  return edge === 'end' ? `${iso}T23:59:59.999999+00:00` : `${iso}T00:00:00+00:00`;
+}
+
+function dateCriterion(cond, field, cfg) {
+  const op = DATE_OP_MAP[cond.op];
+  if (!op) return { ok: false, reason: `date operator '${cond.op}' has no backend equivalent` };
+  if (!(cfg.operators || []).includes(op)) {
+    return { ok: false, reason: `'${op}' not allowed on '${field}'` };
+  }
+  const hasTime = !!cfg.has_time;
+
+  if (DATE_NO_VALUE_OPS.includes(cond.op)) return { ok: true, criterion: { field, op } };
+
+  // Named one by one rather than by list membership: these two are the only
+  // date operators whose backend form takes a single `value`, and everything
+  // else — Is and Is Not included, since a picked day is a window of one — takes
+  // a two-element `values`. A list that drifted by one entry would send an
+  // arity the backend answers with a 400 on every list request.
+  if (cond.op === 'Before' || cond.op === 'After') {
+    const bound = dateCondBound(cond);
+    if (!bound) return { ok: false, reason: 'no date' };
+    // `before` is a strict <, so the boundary is the START of the named day and
+    // the day itself is excluded; `after` is a strict >, so its boundary is the
+    // END of the named day. Both then mean what the words mean.
+    const value = dateEdge(bound, cond.op === 'Before' ? 'start' : 'end', hasTime);
+    return { ok: true, criterion: { field, op, value } };
+  }
+
+  const win = dateCondWindow(cond);
+  if (!win) return { ok: false, reason: 'no date window' };
+  return {
+    ok: true,
+    criterion: {
+      field,
+      op,
+      values: [dateEdge(win.from, 'start', hasTime), dateEdge(win.to, 'end', hasTime)],
+    },
+  };
+}
+
 /** Every value the condition should match: committed chips plus the live draft. */
 export function condValues(cond) {
   const live = cond._live ? [cond._live] : [];
@@ -64,6 +162,7 @@ export function condValues(cond) {
 
 /** Mirrors DataTable's condActive: does this condition constrain anything? */
 export function condIsActive(cond) {
+  if (isDateCondition(cond)) return dateCondActive(cond);
   if (NO_VALUE_UI_OPS.includes(cond.op)) return true;
   return condValues(cond).length > 0;
 }
@@ -90,11 +189,16 @@ export function toCriterion(cond, col, schema) {
   const field = serverFieldFor(col);
   if (!field) return { ok: false, reason: 'column has no server-side field' };
 
-  const map = OP_MAP[cond.op];
-  if (!map) return { ok: false, reason: `operator '${cond.op}' has no backend equivalent` };
-
+  // Read the schema BEFORE the operator map: a date condition's operator names
+  // collide with the text ones, and only the condition's own shape distinguishes
+  // them.
   const cfg = schema?.fields?.[field];
   if (!cfg) return { ok: false, reason: `field '${field}' is not filterable on this resource` };
+
+  if (isDateCondition(cond)) return dateCriterion(cond, field, cfg);
+
+  const map = OP_MAP[cond.op];
+  if (!map) return { ok: false, reason: `operator '${cond.op}' has no backend equivalent` };
 
   if (map.noValue) {
     if (!(cfg.operators || []).includes(map.single)) {
@@ -120,7 +224,7 @@ export function toCriterion(cond, col, schema) {
   // Membership operators must name a real choice; the backend rejects anything
   // else with a 400. Substring and ordinal operators are deliberately exempt
   // (filter_spec.py _UNCONSTRAINED_VALUE_OPS), so a "contains" fragment is fine.
-  const unconstrained = ['contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'between', 'before', 'after'];
+  const unconstrained = ['contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'between', 'not_between', 'before', 'after'];
   if (cfg.choices && !unconstrained.includes(op)) {
     const allowed = cfg.choices.map((c) => (typeof c === 'object' ? c.value : c));
     const bad = values.find((v) => !allowed.includes(v));

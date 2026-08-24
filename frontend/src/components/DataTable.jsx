@@ -6,6 +6,11 @@ import { EmptyState, Seg } from './UI';
 import {
   MAX_SPEC_BYTES, orderingParam, partitionConds, specByteLength, specToJson,
 } from '../lib/filterSpec';
+import DateFilterEditor from './DateFilterEditor';
+import {
+  DATE_NO_VALUE_OPS, DATE_OPS, dateCondActive, dateCondPasses, dateCondText,
+  dateForOp, emptyDateCond, isDateOp,
+} from '../lib/dateFilter';
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
 import useVirtualRows from '../hooks/useVirtualRows';
@@ -108,8 +113,34 @@ const SERVER_POLL_MS = 60_000;
 const FILTER_OPS = ['Contains', 'Not Contains', 'Is', 'Is Not', 'Starts With', 'Ends With', 'Like', 'Is Empty', 'Is Not Empty'];
 const NO_VALUE_OPS = ['Is Empty', 'Is Not Empty'];
 
+/**
+ * A column whose filter is a DATE filter rather than a text one.
+ *
+ * Declared per column (`type: 'date'`) rather than sniffed from the key name or
+ * from what the first loaded row happens to hold. A column called `date_format`
+ * holds the string "DD/MM/YYYY", and a name-based rule would offer it a
+ * calendar; a data-based rule would answer differently before and after the
+ * first fetch. Declaring it is the same posture `serverField` already takes.
+ */
+function isDateCol(col) {
+  return !!col && col.type === 'date';
+}
+
+/**
+ * Is this condition a date condition?
+ *
+ * Asked of the CONDITION, not of the column, because condActive and condPasses
+ * are called from places that hold no column. `Is` and `Is Empty` appear in both
+ * operator vocabularies, so the operator alone cannot answer it — the `date`
+ * payload can, and only a date condition ever carries one.
+ */
+function isDateCond(cond) {
+  return !!(cond && cond.date && isDateOp(cond.op));
+}
+
 function condActive(cond) {
-  return NO_VALUE_OPS.includes(cond.op) || cond.values.length > 0 || !!cond._live;
+  if (isDateCond(cond)) return dateCondActive(cond);
+  return NO_VALUE_OPS.includes(cond.op) || (cond.values || []).length > 0 || !!cond._live;
 }
 
 function opLabel(op) {
@@ -120,7 +151,9 @@ function opLabel(op) {
   }[op] || op.toLowerCase();
 }
 
-function fmtValues(values) {
+function fmtValues(values, optLabel) {
+  const text = optLabel || ((v) => v);
+  values = values.map((v) => text(v));
   if (!values.length) return '""';
   if (values.length === 1) return `"${values[0]}"`;
   // The separators carry their own spaces. Without them this rendered
@@ -134,6 +167,7 @@ function likeTest(val, pattern) {
 }
 
 function condPasses(row, cond) {
+  if (isDateCond(cond)) return dateCondPasses(row, cond);
   const val = String(row[cond.key] == null ? '' : row[cond.key]).trim();
   if (cond.op === 'Is Empty') return val === '' || val === '—';
   if (cond.op === 'Is Not Empty') return val !== '' && val !== '—';
@@ -192,6 +226,35 @@ function writeStored(tableId, { conds, sort, hidden }) {
   }
 }
 
+/**
+ * Stored conditions, re-read against the columns as they are DEFINED NOW.
+ *
+ * Restoring is not simply parsing: a column that used to filter as text and now
+ * filters as a date comes back holding `{op: 'Contains', values: ['2026']}`,
+ * which no date operator list offers and no date evaluator understands. Left
+ * alone that condition renders an operator the dropdown cannot show as selected
+ * and narrows nothing while still counting as an active filter — a table that
+ * says "Filter (1)" over unfiltered rows.
+ *
+ * Only the mismatched conditions are rebuilt, and the operator survives when
+ * both vocabularies have it, so a saved "Is Empty" on a date column stays "Is
+ * Empty". Everything else about the table's stored state — sort, hidden columns
+ * — is untouched, which is why this exists at all rather than a bumped
+ * STORE_VERSION throwing every user's layout away to fix a filter.
+ */
+function reconcileConds(conds, cols) {
+  return (conds || []).map((c) => {
+    const col = cols.find((x) => x.key === c.key);
+    if (!col) return c;                       // unknown column: left for removeCond
+    const wantDate = isDateCol(col);
+    const hasDate = !!c.date;
+    if (wantDate === hasDate) return c;
+    if (wantDate) return emptyDateCond(c.key, DATE_OPS.includes(c.op) ? c.op : 'Is');
+    const { date, ...rest } = c;
+    return { ...rest, op: FILTER_OPS.includes(c.op) ? c.op : 'Contains', values: rest.values || [] };
+  });
+}
+
 // `onLive` (optional) reports every keystroke immediately, so the table filters as
 // you type instead of only once Enter/blur commits the text as a removable chip —
 // otherwise a typed-but-uncommitted value silently filters nothing, which reads as
@@ -229,7 +292,7 @@ function ValueTagInput({ values, onChange, onLive, pill }) {
 // input — a native <select>'s open-state option list can't be restyled with CSS, so
 // it always looks like a foreign control next to the value field; this is fully
 // custom markup instead, guaranteeing pixel-identical box model, border and type.
-function OperatorSelect({ value, onChange }) {
+function OperatorSelect({ value, onChange, ops = FILTER_OPS }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -253,7 +316,7 @@ function OperatorSelect({ value, onChange }) {
       </button>
       {open ? (
         <div className="flt-op-menu">
-          {FILTER_OPS.map((o) => (
+          {ops.map((o) => (
             <button type="button" className="pop-i" key={o} onClick={() => { onChange(o); setOpen(false); }}>
               {o === value ? <Icon name="check" size={14} /> : <span style={{ width: 14 }} />}
               {o}
@@ -269,17 +332,30 @@ function OperatorSelect({ value, onChange }) {
 // expands its operator + value editor directly beneath it (spreadsheet-search style).
 function FilterListItem({ col, cond, onToggle, onChangeCond }) {
   const checked = !!cond;
-  const value = cond || { key: col.key, op: 'Contains', values: [] };
-  const needsValue = checked && !NO_VALUE_OPS.includes(value.op);
+  const isDate = isDateCol(col);
+  const value = cond || (isDate ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
+  const ops = isDate ? DATE_OPS : FILTER_OPS;
+  const noValueOps = isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS;
+  const needsValue = checked && !noValueOps.includes(value.op);
   const opts = col.opts ? col.opts() : null;
+  // Filter values are the STORED ones; `optLabel` only changes how they read.
+  const optText = col.optLabel || ((o) => o);
+  // A date condition carries its value in `date`, and the payload the new
+  // operator needs is derived from the old one rather than blanked — see
+  // dateForOp for why switching operator must not silently empty the filter.
+  const changeOp = (op) => onChangeCond(isDate
+    ? { ...value, op, date: dateForOp(value, op) }
+    : { ...value, op });
   return (
     <div className="flt-item">
       <label className="pop-i"><input type="checkbox" checked={checked} onChange={onToggle} />{col.label}</label>
       {checked ? (
         <div className="flt-editor">
-          <OperatorSelect value={value.op} onChange={(op) => onChangeCond({ ...value, op })} />
+          <OperatorSelect ops={ops} value={value.op} onChange={changeOp} />
           {needsValue ? (
-            opts ? (
+            isDate ? (
+              <DateFilterEditor pill cond={value} onChange={onChangeCond} />
+            ) : opts ? (
               <div className="vti-opts">
                 {opts.map((o) => (
                   <label className="pop-i" key={o} style={{ padding: '3px 6px' }}>
@@ -287,7 +363,7 @@ function FilterListItem({ col, cond, onToggle, onChangeCond }) {
                       const has = value.values.includes(o);
                       onChangeCond({ ...value, values: has ? value.values.filter((v) => v !== o) : [...value.values, o] });
                     }} />
-                    {o}
+                    {optText(o)}
                   </label>
                 ))}
               </div>
@@ -304,18 +380,27 @@ function FilterListItem({ col, cond, onToggle, onChangeCond }) {
 
 function FilterRow({ col, cond, onChange, onRemove }) {
   const opts = col.opts ? col.opts() : null;
-  const needsValue = !NO_VALUE_OPS.includes(cond.op);
+  // Filter values are the STORED ones; `optLabel` only changes how they read.
+  const optText = col.optLabel || ((o) => o);
+  const isDate = isDateCol(col);
+  const ops = isDate ? DATE_OPS : FILTER_OPS;
+  const needsValue = !(isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS).includes(cond.op);
+  const changeOp = (op) => onChange(isDate
+    ? { ...cond, op, date: dateForOp(cond, op) }
+    : { ...cond, op });
   return (
     <div className="flt-row">
       <div className="flt-row-h"><span className="flt-row-f">{col.label}</span><button type="button" onClick={onRemove} aria-label="Remove filter"><Icon name="x" size={12} /></button></div>
       <label className="flt-row-l">Operator</label>
-      <select className="in in-xs" value={cond.op} onChange={(e) => onChange({ ...cond, op: e.target.value })}>
-        {FILTER_OPS.map((o) => <option key={o}>{o}</option>)}
+      <select className="in in-xs" value={cond.op} onChange={(e) => changeOp(e.target.value)}>
+        {ops.map((o) => <option key={o}>{o}</option>)}
       </select>
       {needsValue ? (
         <>
           <label className="flt-row-l">Value</label>
-          {opts ? (
+          {isDate ? (
+            <DateFilterEditor cond={cond} onChange={onChange} />
+          ) : opts ? (
             <div className="vti-opts">
               {opts.map((o) => (
                 <label className="pop-i" key={o} style={{ padding: '3px 6px' }}>
@@ -323,7 +408,7 @@ function FilterRow({ col, cond, onChange, onRemove }) {
                     const has = cond.values.includes(o);
                     onChange({ ...cond, values: has ? cond.values.filter((v) => v !== o) : [...cond.values, o] });
                   }} />
-                  {o}
+                  {optText(o)}
                 </label>
               ))}
             </div>
@@ -344,7 +429,7 @@ function FilterRow({ col, cond, onChange, onRemove }) {
  */
 function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove }) {
   const active = cond ? condActive(cond) : false;
-  const value = cond || { key: col.key, op: 'Contains', values: [] };
+  const value = cond || (isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
   const dir = sort && sort.key === col.key ? sort.dir : null;
   return (
     <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '') + (active ? 'act' : '')}>
@@ -532,7 +617,7 @@ export default function DataTable({
   // to keep across a reload, even though it is exactly as deliberate an action as
   // choosing a column.
   const [sort, setSort] = useState(() => (stored ? stored.sort : defaultSort));
-  const [conds, setConds] = useState(() => (stored ? stored.conds : []));
+  const [conds, setConds] = useState(() => reconcileConds(stored ? stored.conds : [], cols));
   const [page, setPage] = useState(1);
   const [shown, setShown] = useState(pageSize);
   const [sel, setSel] = useState(new Set());
@@ -1103,7 +1188,11 @@ export default function DataTable({
     else selectEverything();
   }
   function clearAll() { setConds([]); setQ(''); resetPaging(); }
-  function addCond(col) { setConds((cs) => [...cs, { key: col.key, op: 'Contains', values: [] }]); resetPaging(); }
+  function addCond(col) {
+    const blank = isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] };
+    setConds((cs) => [...cs, blank]);
+    resetPaging();
+  }
   function updateCond(key, next) { setConds((cs) => cs.map((c) => (c.key === key ? next : c))); resetPaging(); }
   function removeCond(key) { setConds((cs) => cs.filter((c) => c.key !== key)); resetPaging(); }
   function setColFilter(key, next) {
@@ -1251,7 +1340,9 @@ export default function DataTable({
           {q ? <span className="fc"><span className="k">search</span><span className="fc-txt">{q}</span><button onClick={() => setQ('')} aria-label="Clear search"><Icon name="x" size={11} /></button></span> : null}
           {conds.filter(condActive).map((cond) => {
             const c = cols.find((x) => x.key === cond.key);
-            const text = NO_VALUE_OPS.includes(cond.op) ? opLabel(cond.op) : `${opLabel(cond.op)} ${fmtValues(cond.values)}`;
+            const text = isDateCond(cond) ? dateCondText(cond)
+              : NO_VALUE_OPS.includes(cond.op) ? opLabel(cond.op)
+                : `${opLabel(cond.op)} ${fmtValues(cond.values, c && c.optLabel)}`;
             const local = serverMode && split.unsupported.some((u) => u.key === cond.key);
             return (
               <span className={'fc' + (local ? ' fc-local' : '')} key={cond.key} title={`${c ? c.label : cond.key} ${text}${local ? ' — filtered in the browser' : ''}`}>

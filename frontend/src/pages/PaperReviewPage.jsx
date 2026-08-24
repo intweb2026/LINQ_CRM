@@ -35,7 +35,7 @@ const REVIEW_COLS = [
      every row. grade and session_location_on_agenda keep theirs; those
      lists are constants, not a scan of the data. */
   { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-  { key: 'paper_submission_date', serverOrdering: 'paper_submission_date', label: 'Paper Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'paper_submission_date', serverOrdering: 'paper_submission_date', label: 'Paper Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
   { key: 'speaker_email_ref', serverOrdering: 'speaker_email_ref', label: 'Speaker Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
   { key: 'research_email_ref', serverOrdering: 'research_email_ref', label: 'Research Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
   // C1 — the row marker. Advisory only: a resubmission is legitimate, so

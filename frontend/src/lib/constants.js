@@ -195,3 +195,27 @@ export const PAPER_REVIEW_MAX_SCORE = PAPER_REVIEW_CRITERIA.reduce((s, c) => s +
 export const PAPER_GRADES = ['A', 'B', 'B+', 'C', 'D', 'E'];
 export const PAPER_GRADE_TONE = { A: 'green', B: 'blue', 'B+': 'blue', C: 'amber', D: 'red', E: 'red' };
 export const PAPER_SESSION_OPTIONS = ['Day 1, Morning Session', 'Day 1, Afternoon Session', 'Day 2, Morning Session', 'Day 2, Afternoon Session'];
+
+/**
+ * Payable/Free, as the STORED values plus the wording the UI shows for them.
+ *
+ * The dropdown reads "Payable"; the database still holds "Paid". This is a LABEL,
+ * not a rename. The stored value is matched on by name in too many places for a
+ * rename to be a display change: BookEvent.PaidOrFree (book_event/models.py) backs
+ * the choice field and the server-side filter, the Zoho webhook and the CSV/Excel
+ * importers map incoming values through {v.lower(): v} over those same choices, and
+ * the Google Sheets export writes the value verbatim. Keeping the value means every
+ * one of the existing rows shows the new wording immediately, with no migration and
+ * nothing to re-map on the Zoho side.
+ *
+ * Anything to display a paid_or_free value goes through paidOrFreeLabel, so an
+ * off-list value a row happens to hold still renders as itself.
+ *
+ * The COLUMN is titled 'Payable/Free' for the same reason and in the same places
+ * (the booking modal, the Bookings list, the bulk-update picker and the import
+ * wizard); the field key stays paid_or_free, and the importer keeps 'Paid / Free'
+ * as a header alias so existing spreadsheets still map.
+ */
+export const PAID_OR_FREE = ['Paid', 'Free'];
+export const PAID_OR_FREE_LABEL = { Paid: 'Payable' };
+export const paidOrFreeLabel = (v) => PAID_OR_FREE_LABEL[v] ?? v;

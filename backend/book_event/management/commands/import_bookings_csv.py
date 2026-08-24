@@ -1,9 +1,9 @@
 import csv
 import os
-from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.utils.timezone import make_aware
 from django.db import transaction, models
+from accounts.import_common import parse_import_date, parse_import_datetime
 from book_event.models import BookEvent
 from book_delegate.models import BookDelegate
 from accounts.models import User
@@ -29,6 +29,11 @@ class Command(BaseCommand):
             
             success_count = 0
             error_count = 0
+            # Every date this run could not read. An unreadable date does NOT
+            # fail its row — the booking and its delegates are worth more than
+            # one column — but it is summarised at the end so a bad date column
+            # cannot pass for an empty one.
+            date_warnings = []
             
             for row in reader:
                 invoice_num = row.get('Invoice Number', '').strip()
@@ -59,15 +64,27 @@ class Command(BaseCommand):
                             )
 
                         # 2. Parse Dates and Numbers
+                        # Both of these used to accept exactly ONE format,
+                        # "%d-%b-%Y", and return None for anything else — so a
+                        # column of dates written any other way imported as a
+                        # column of blanks, indistinguishable from a column the
+                        # source left empty. They now go through
+                        # accounts.import_common, this codebase's single
+                        # authority on reading a date out of an import file, and
+                        # a value that still cannot be read is REPORTED rather
+                        # than silently dropped.
                         def parse_date(d):
-                            if not d or d.lower() == 'nan': return None
-                            try: return datetime.strptime(d, "%d-%b-%Y").date()
-                            except: return None
+                            parsed, error = parse_import_date(d)
+                            if error:
+                                date_warnings.append(error)
+                            return parsed
 
                         def parse_datetime(dt):
-                            if not dt or dt.lower() == 'nan': return None
-                            try: return make_aware(datetime.strptime(dt, "%d-%b-%Y %H:%M:%S"))
-                            except: return None
+                            parsed, error = parse_import_datetime(dt)
+                            if error:
+                                date_warnings.append(error)
+                            # Naive by contract; the CSV is written in local time.
+                            return make_aware(parsed) if parsed else None
 
                         def parse_float(val):
                             if not val: return 0.0
@@ -142,3 +159,16 @@ class Command(BaseCommand):
                     error_count += 1
 
             self.stdout.write(self.style.SUCCESS(f"Finished. Success: {success_count}, Errors: {error_count}"))
+
+            if date_warnings:
+                self.stdout.write(self.style.WARNING(
+                    f"{len(date_warnings)} date value(s) could not be read and were "
+                    f"stored as empty. Distinct values:"
+                ))
+                for value in sorted(set(date_warnings))[:20]:
+                    self.stdout.write(self.style.WARNING(f"  {value}"))
+                distinct = len(set(date_warnings))
+                if distinct > 20:
+                    self.stdout.write(self.style.WARNING(
+                        f"  ... and {distinct - 20} more distinct value(s)."
+                    ))

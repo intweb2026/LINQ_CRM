@@ -97,7 +97,7 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "ticket_tier":    ("delegate_ticket_tier", "invoice__ticket_tier",
                            "choice", "Ticket Tier", list(BookEvent.TicketTier.values)),
         "paid_or_free":   ("delegate_paid_or_free", "invoice__paid_or_free",
-                           "choice", "Paid / Free", list(BookEvent.PaidOrFree.values)),
+                           "choice", "Payable / Free", list(BookEvent.PaidOrFree.values)),
         "payment_date":   ("delegate_payment_date", "invoice__payment_date",
                            "date", "Payment Date", None),
     }
@@ -199,7 +199,7 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 "delegate_payment_status": "Payment Status (override)",
                 "delegate_payment_type":   "Payment Type (override)",
                 "delegate_ticket_tier":    "Ticket Tier (override)",
-                "delegate_paid_or_free":   "Paid / Free (override)",
+                "delegate_paid_or_free":   "Payable / Free (override)",
                 "delegate_payment_date":   "Payment Date (override)",
                 "company_name_raw":        "Company (raw)",
                 "add_ons":                 "Add-ons",
@@ -232,7 +232,7 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 "pre_tax_amount":         "Pre-tax Amount",
                 "parent_code":            "Parent Code",
                 "add_ons":                "Add-ons",
-                "paid_or_free":           "Paid / Free",
+                "paid_or_free":           "Payable / Free",
                 "delegate_count":         "Delegate Count (invoice)",
                 "attendance":             "Attendance (invoice)",
                 "discount_code":          "Discount Code",
@@ -455,6 +455,9 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         with transaction.atomic():
             qs = BookDelegate.objects.filter(id__in=permitted_ids)
             count = qs.count()
+            # The invoices these delegates hang off, read BEFORE the delete,
+            # because afterwards no row points at them any more.
+            touched_invoices = set(qs.values_list("invoice_id", flat=True))
             ActionLog.objects.create(
                 user    = request.user,
                 action  = f"Bulk deleted {count} booking delegates",
@@ -466,9 +469,40 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 ),
             )
             qs.delete()
+
+            # DELETE THE INVOICE ITS LAST DELEGATE JUST LEFT.
+            #
+            # Without this, deleting every delegate on an invoice cleared the rows
+            # from the Bookings table and left the BookEvent behind: invisible in
+            # the UI, still counted by the dashboard aggregates that read BookEvent
+            # (config/views.py), still exported by the Data API's `bookings`
+            # resource, and still holding its unique invoice_number. That last part
+            # is what made a delete look undone. The webhook and every importer
+            # upsert on invoice_number, so the next payload carrying that number
+            # UPDATED the surviving invoice and re-created its delegates. Nothing
+            # was soft-deleted and nothing was backed up; the invoice was simply
+            # never deleted in the first place.
+            #
+            # Only invoices that lost a delegate in THIS request are considered, and
+            # only those with none left, so an invoice that legitimately has no
+            # delegates yet — a website booking whose delegates have not arrived —
+            # is untouched unless this request is what emptied it.
+            orphaned = [
+                number for number in touched_invoices
+                if number and not BookDelegate.objects.filter(invoice_id=number).exists()
+            ]
+            if orphaned:
+                BookEvent.objects.filter(invoice_number__in=orphaned).delete()
+                ActionLog.objects.create(
+                    user    = request.user,
+                    action  = f"Deleted {len(orphaned)} emptied invoices",
+                    details = f"invoice_numbers={sorted(orphaned)}",
+                )
+                logger.info("bulk_delete: removed %d invoices left with no delegates",
+                            len(orphaned))
         return Response({
             "deleted": count, "requested": len(ids), "permitted": count,
-            "out_of_scope": skipped,
+            "out_of_scope": skipped, "invoices_deleted": len(orphaned),
         })
 
     @action(detail=True, methods=["patch"], url_path="update_attendance")

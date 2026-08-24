@@ -73,7 +73,16 @@ class BookDelegateListSerializer(serializers.ModelSerializer):
     event_name             = serializers.CharField(source="invoice.event_name",      read_only=True)
     ticket_tier            = serializers.CharField(source="invoice.ticket_tier",     read_only=True)
     source                 = serializers.CharField(source="invoice.source",          read_only=True)
-    accounts_contact_email = serializers.EmailField(source="invoice.accounts_contact_email", read_only=True)
+    # RESOLVED, not raw: the invoice's own accounts contact, falling back to this
+    # delegate's own email where the invoice has none. Accounts Contact is who the
+    # invoice is chased with, and a blank one is not a different person — it is a
+    # gap, and the delegate is the only address anybody had for that booking. The
+    # fallback is computed on READ so it always follows the delegate's current
+    # email; nothing is written, and `accounts_contact_email_raw` below still
+    # reports what is actually stored so the booking modal can edit the real
+    # column rather than saving its own fallback back over it.
+    accounts_contact_email     = serializers.SerializerMethodField()
+    accounts_contact_email_raw = serializers.EmailField(source="invoice.accounts_contact_email", read_only=True)
     sales_executive_name   = serializers.SerializerMethodField()
     team_leader_name       = serializers.SerializerMethodField()
     paid_or_free           = serializers.CharField(source="invoice.paid_or_free",       read_only=True)
@@ -98,13 +107,16 @@ class BookDelegateListSerializer(serializers.ModelSerializer):
             "delegate_count", "ticket_tier", "paid_or_free",
             "sales_executive_name", "team_leader_name",
             "paid_free", "add_ons", "reference",
-            "event_name", "accounts_contact_email", "source",
+            "event_name", "accounts_contact_email", "accounts_contact_email_raw", "source",
             "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
             "delegate_paid_or_free", "delegate_ticket_tier",
             "effective_payment_status", "effective_payment_type", "effective_payment_date",
             "effective_paid_or_free", "effective_ticket_tier",
             "created_at", "updated_at",
         ]
+
+    def get_accounts_contact_email(self, obj):
+        return (obj.invoice.accounts_contact_email or "").strip() or (obj.email or "")
 
     def get_sales_executive_name(self, obj):
         if obj.invoice.sales_executive_id:

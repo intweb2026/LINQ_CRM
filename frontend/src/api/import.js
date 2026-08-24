@@ -88,7 +88,9 @@ export const TARGET_FIELDS = {
     ['contact_phone', 'Direct Line', ['Phone', 'Phone Number', 'Mobile']],
     ['request_date', 'Request Date'], ['invoice_date', 'Invoice Date'], ['payment_date', 'Payment Date'],
     ['payment_status', 'Payment Status', ['Status']],
-    ['paid_or_free', 'Paid / Free', ['Paid or Free']],
+    // 'Paid / Free' is the old label, kept as an alias so a spreadsheet still
+    // carrying that header auto-maps. See BOOKING_IMPORT_FIELDS.
+    ['paid_or_free', 'Payable / Free', ['Paid or Free', 'Paid / Free']],
     ['payment_type', 'Payment Type', ['Payment Method']],
     ['ticket_tier', 'Ticket Tier', ['Tier']],
     ['currency', 'Currency'], ['discount_code', 'Discount Code'], ['discount', 'Discount'],

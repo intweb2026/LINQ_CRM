@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from webhooks.models import WebhookLog
@@ -66,14 +65,6 @@ class Command(BaseCommand):
         update_count = 0
         fail_count = 0
 
-        def parse_date(d_str):
-            if not d_str: return None
-            try:
-                # 12-May-2026 -> 2026-05-12
-                return datetime.strptime(d_str, "%d-%b-%Y").strftime("%Y-%m-%d")
-            except:
-                return None
-
         for i, item in enumerate(data):
             # Mapping for Zoho Report format vs standard format
             invoice_number = (item.get("Invoice_Number.Invoice_Number") or item.get("InvoiceNumber") or "").strip()
@@ -89,7 +80,13 @@ class Command(BaseCommand):
                 "InvoiceNumber": invoice_number,
                 "Eventcode": event_code or "UNKNOWN",
                 "Eventname": item.get("Event_Name") or item.get("Eventname", ""),
-                "Date": parse_date(item.get("Invoice_Number.Invoice_Date") or item.get("Date")),
+                # Handed over RAW. This used to be pre-normalised here by a parser that
+                # accepted only "%d-%b-%Y" and returned None for everything else,
+                # which THREW AWAY dates that the receiving end can read perfectly
+                # well — WebhookProcessor.parse_webhook_date now goes through
+                # accounts.import_common.parse_import_date, and it reports what it
+                # cannot read instead of silently blanking it.
+                "Date": item.get("Invoice_Number.Invoice_Date") or item.get("Date") or "",
                 "DelegateCompanyName": item.get("Sub_Company") or item.get("DelegateCompanyName", ""),
                 "AccountsContactEmail": item.get("Account_Emails") or item.get("AccountsContactEmail", ""),
                 "PaymentStatus": item.get("Status") or item.get("PaymentStatus", ""),

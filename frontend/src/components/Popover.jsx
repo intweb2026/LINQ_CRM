@@ -18,9 +18,17 @@ export default function Popover({ trigger, children, align = 'left', width, pane
     const el = anchorRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setPos(align === 'right'
+    const next = align === 'right'
       ? { top: r.bottom + 6, right: window.innerWidth - r.right }
-      : { top: r.bottom + 6, left: r.left });
+      : { top: r.bottom + 6, left: r.left };
+    // Same position in, same object out. `scroll` is listened for in CAPTURE
+    // phase, so this runs for every scroll anywhere in the page — including the
+    // panel's own list — and a fresh object each time re-rendered the entire
+    // panel on every scroll frame. That churn is what made controls inside the
+    // panel shift underneath an open dropdown mid-click.
+    setPos((prev) => (prev
+      && prev.top === next.top && prev.left === next.left && prev.right === next.right
+      ? prev : next));
   }
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import Select from '../../components/Select';
 import { fdate, ftime } from '../../lib/helpers';
 import {
   PAYMENT_STATUSES, TICKET_TIERS, PAYMENT_TYPES, DISCOUNTS,
-  BOOKING_CODES, DELEGATE_NUMBERS,
+  BOOKING_CODES, DELEGATE_NUMBERS, PAID_OR_FREE, paidOrFreeLabel,
 } from '../../lib/constants';
 
 // ── Discount, as the row holds it ───────────────────────────────────────────
@@ -82,7 +82,7 @@ export function blankDelegate(today, defaultOwner = '') {
   return {
     key: 'new-' + Math.random().toString(36).slice(2),
     id: null, payment_status: 'Pending', booking_code: DEFAULT_BOOKING_CODE, request_date: today, invoice_date: today,
-    name: '', company_name: '', email: '', phone_number: '', accounts_contact_email: '',
+    name: '', company_name: '', email: '', phone_number: '', accounts_contact_email_raw: '',
     delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: 'Stripe', ticket_tier: 'Regular',
     discount: 0, add_ons: '', reference: '', added_time: now, modified_time: now,
     owner: defaultOwner, attendance: 'Pending',
@@ -126,9 +126,15 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'company_name', label: 'Delegate Company', type: 'text', width: 170, required: true },
   { key: 'email', label: 'Delegate Email', type: 'email', width: 190, required: true },
   { key: 'phone_number', label: 'Direct Line', type: 'digits', width: 150 },
-  { key: 'accounts_contact_email', label: 'Accounts Contact', type: 'email', width: 190 },
+  // The INVOICE's accounts contact, edited here because this is the only form
+  // that opens a booking. Left blank it falls back to the delegate's own email
+  // everywhere the booking is read (book_delegate/serializers.py), which is what
+  // `placeholderFrom` shows greyed in the empty cell — the fallback is visible
+  // without being stored, and typing over it is all it takes to set a real one.
+  // Editing it on any row sets it for the whole invoice; see splitPersonLevel.
+  { key: 'accounts_contact_email_raw', label: 'Accounts Contact', type: 'email', width: 190, placeholderFrom: 'email' },
   { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, width: 140 },
-  { key: 'paid_or_free', label: 'Paid/Free', type: 'select', options: ['Paid', 'Free'], width: 110 },
+  { key: 'paid_or_free', label: 'Payable/Free', type: 'select', options: PAID_OR_FREE, optionLabel: paidOrFreeLabel, width: 110 },
   { key: 'payment_date', label: 'Date Paid', type: 'date', width: 140 },
   { key: 'payment_type', label: 'Payment Type', type: 'select', options: PAYMENT_TYPES, width: 120 },
   { key: 'ticket_tier', label: 'Ticket Tier', type: 'select', options: TICKET_TIERS, width: 110 },
@@ -160,7 +166,7 @@ const baseCols = ({ onTransfer } = {}) => [
  * one; the credit-pending pair are their own state for the same reason. Only a
  * row that is still waiting for money moves.
  *
- * A FREE delegate is included: Paid/Free records what was charged, not whether
+ * A FREE delegate is included: Payable/Free records what was charged, not whether
  * the paperwork settled, so a date entered against a free row marks it paid like
  * any other.
  */
@@ -213,7 +219,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     if (c.type === 'select') {
       const value = c.percent ? percentLabel(row[c.key]) : (row[c.key] ?? '');
       return (
-        <Select className="in in-xs" value={value} options={optionsWith(c.options, value)} width={Math.max(c.width, 160)}
+        <Select className="in in-xs" value={value} options={optionsWith(c.options, value)} labelOf={c.optionLabel} width={Math.max(c.width, 160)}
           onChange={(v) => update(i, c.key, c.percent ? percentValue(v) : v)} />
       );
     }
@@ -248,7 +254,12 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
           onChange={(e) => update(i, c.key, e.target.value.replace(/\D+/g, ''))} />
       );
     }
-    return <input className="in in-xs" type={c.type} value={row[c.key] || ''} onChange={(e) => update(i, c.key, e.target.value)} />;
+    return (
+      <input className="in in-xs" type={c.type} value={row[c.key] || ''}
+        placeholder={c.placeholderFrom ? (row[c.placeholderFrom] || '') : undefined}
+        title={c.placeholderFrom && !row[c.key] && row[c.placeholderFrom] ? "Blank — the delegate's own email is used" : undefined}
+        onChange={(e) => update(i, c.key, e.target.value)} />
+    );
   }
 
   return (

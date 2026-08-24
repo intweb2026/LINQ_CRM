@@ -13,6 +13,8 @@ from django.utils import timezone
 
 from book_event.booking_code_canonical import canonicalize_on_save
 
+from .accounts_contact import fill_accounts_contact_from_delegate
+
 
 class BookDelegate(models.Model):
     class Attendance(models.TextChoices):
@@ -110,6 +112,13 @@ class BookDelegate(models.Model):
         # Last derivation before the write, so it sees the final invoice_id.
         self.booked_on = self._derive_booked_on()
         super().save(*args, **kwargs)
+        # AFTER the write, and only ever into a BLANK column: an invoice with no
+        # accounts contact of its own takes this delegate's email, so a booking
+        # entered from now on is never left with nobody to bill. Anything already
+        # stored there — including an address a sales exec typed by hand — is left
+        # exactly as it is. See accounts_contact.py; the existing history is
+        # filled by `manage.py backfill_accounts_contact_email`.
+        fill_accounts_contact_from_delegate(self)
 
     def _derive_booked_on(self):
         """

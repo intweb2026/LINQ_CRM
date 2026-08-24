@@ -25,7 +25,7 @@ from django.test import TestCase
 from book_delegate.models import BookDelegate
 from book_event.booking_code_canonical import (
     DEFAULT_BOOKING_CODE, canonical_codes, canonicalize, canonicalize_on_save,
-    comparison_key, is_canonical,
+    comparison_key, is_canonical, with_default,
 )
 from book_event.booking_code_repair import plan, repair
 from book_event.models import BookEvent
@@ -249,3 +249,84 @@ class WebhookIntakeTests(TestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.booking_code, "Delegate")
         self.assertEqual(invoice.company_name, "Acme Holdings")
+
+
+class BlankCodeDefaultTests(TestCase):
+    """
+    A booking_code is never stored blank.
+
+    classify() already reads "" as DELEGATE, so this changes no revenue figure;
+    it stops one meaning being stored two ways, and stops the Bookings table
+    showing an empty select on a row that was always a delegate booking.
+    """
+
+    def test_with_default_fills_only_blank_values(self):
+        for blank in ("", "   ", None):
+            self.assertEqual(with_default(blank), "Delegate", repr(blank))
+        for kept in ("Speaker", "bespoke thing", "delegate"):
+            self.assertEqual(with_default(kept), kept, kept)
+
+    def test_a_booking_created_without_a_code_gets_the_default(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-BLANK",
+                                           event_code="AFS - JS")
+        self.assertEqual(invoice.booking_code, "Delegate")
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.booking_code, "Delegate")
+
+    def test_whitespace_only_is_treated_as_blank(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-WS",
+                                           event_code="AFS - JS",
+                                           booking_code="   ")
+        self.assertEqual(invoice.booking_code, "Delegate")
+
+    def test_a_delegate_created_without_a_code_gets_the_default(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-D-BLANK",
+                                           event_code="AFS - JS")
+        d = BookDelegate.objects.create(invoice=invoice, first_name="A",
+                                        last_name="B", email="blank@b.com")
+        self.assertEqual(d.booking_code, "Delegate")
+
+    def test_a_delegate_with_no_invoice_code_to_inherit_still_gets_the_default(self):
+        # The invoice is blanked behind save()'s back, so the inheritance in
+        # BookDelegate.save() genuinely has nothing to copy.
+        invoice = BookEvent.objects.create(invoice_number="INV-D-EMPTY",
+                                           event_code="AFS - JS")
+        BookEvent.objects.filter(pk=invoice.pk).update(booking_code="")
+        invoice.refresh_from_db()
+        d = BookDelegate.objects.create(invoice=invoice, first_name="A",
+                                        last_name="B", email="empty@b.com")
+        self.assertEqual(d.booking_code, "Delegate")
+
+    def test_clearing_the_code_on_an_update_restores_the_default(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-CLEARED",
+                                           event_code="AFS - JS",
+                                           booking_code="Speaker")
+        invoice.booking_code = ""
+        invoice.save()
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.booking_code, "Delegate")
+
+    def test_a_restricted_save_of_a_stale_blank_row_fills_it(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-STALE-BLANK",
+                                           event_code="AFS - JS",
+                                           booking_code="Speaker")
+        BookEvent.objects.filter(pk=invoice.pk).update(booking_code="")
+        invoice.refresh_from_db()
+        invoice.company_name = "Acme"
+        invoice.save(update_fields=["company_name"])
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.booking_code, "Delegate")
+        self.assertEqual(invoice.company_name, "Acme")
+
+    def test_a_real_code_is_never_replaced_by_the_default(self):
+        invoice = BookEvent.objects.create(invoice_number="INV-KEEP",
+                                           event_code="AFS - JS",
+                                           booking_code="bespoke thing")
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.booking_code, "bespoke thing")
+
+    def test_canonicalize_itself_still_passes_blanks_through(self):
+        # The default lives in the SAVE path, not in canonicalize(): repair()
+        # and plan() must keep leaving blank rows alone.
+        self.assertEqual(canonicalize(""), "")
+        self.assertIsNone(canonicalize(None))

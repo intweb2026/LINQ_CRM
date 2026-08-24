@@ -88,7 +88,15 @@ const patchClientImport = (s) =>
   s.replace(/from ['"]\.\/client['"]/g, `from "file://${clientPath}"`);
 
 const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMod;
-const spec = await load("lib/filterSpec.js");
+// lib/filterSpec.js imports lib/dateFilter.js — the date vocabulary the
+// Advanced Filter's date columns speak. Loaded FIRST and its path substituted
+// in, the same redirection lib/liveData.js gets above, because everything here
+// is flattened into one temp directory and a bare './dateFilter' would resolve
+// to nothing once it lands there.
+const dateFilterMod = await load("lib/dateFilter.js");
+const dateFilterPath = join(dir, "lib_dateFilter.mjs").replace(/\\/g, "/");
+const spec = await load("lib/filterSpec.js", (s) =>
+  s.replace(/from ['"]\.\/dateFilter['"]/g, `from "file://${dateFilterPath}"`));
 const { specToJson, partitionConds, toCriterion } = spec;
 const bookings = await load("api/bookings.js", patchClientImport);
 const tickets = await load("api/tickets.js", patchClientImport);
@@ -173,6 +181,71 @@ check("'Like' has no backend operator and stays client-side",
   JSON.stringify(partition.unsupported));
 check("unsupported conditions are reported, never dropped silently",
   partition.unsupported.length === 2, JSON.stringify(partition.unsupported));
+
+// ── 1b. Date conditions -> date criteria ────────────────────────────────────
+// Every date operator takes dates the user picked, so what goes on the wire is
+// those dates and nothing derived from the clock. "Is" is a window of ONE DAY,
+// which is what lets a datetime column be matched across the whole of that day.
+const DATE_SCHEMA = {
+  fields: {
+    request_date: {
+      type: "date",
+      operators: ["is", "is_not", "before", "after", "between", "not_between", "is_empty", "is_not_empty"],
+    },
+    received_at: {
+      type: "date", has_time: true,
+      operators: ["is", "is_not", "before", "after", "between", "not_between", "is_empty", "is_not_empty"],
+    },
+  },
+};
+const DATE_COLS = [
+  { key: "request_date", type: "date", serverField: "request_date" },
+  { key: "received_at", type: "date", serverField: "received_at" },
+];
+const dateCond = (key, op, date) => ({ key, op, values: [], date });
+
+const datePartition = partitionConds([
+  dateCond("request_date", "Is", { mode: "range", from: "2026-07-27", to: "2026-08-25" }),
+  dateCond("received_at", "Is", { mode: "exact", date: "2026-08-25" }),
+], DATE_COLS, DATE_SCHEMA);
+
+check("a date window is sent as an inclusive two-value between",
+  JSON.stringify(datePartition.criteria[0])
+    === JSON.stringify({ field: "request_date", op: "between", values: ["2026-07-27", "2026-08-25"] }),
+  JSON.stringify(datePartition.criteria[0]));
+
+// The bug this one exists to prevent: a bare date against a DateTimeField is
+// compared with MIDNIGHT, so the whole of the day the user asked for is dropped.
+check("a datetime column gets instants at the edges of the day, not bare dates",
+  JSON.stringify(datePartition.criteria[1])
+    === JSON.stringify({
+      field: "received_at", op: "between",
+      values: ["2026-08-25T00:00:00+00:00", "2026-08-25T23:59:59.999999+00:00"],
+    }),
+  JSON.stringify(datePartition.criteria[1]));
+
+const notBetween = toCriterion(
+  dateCond("request_date", "Is Not", { mode: "range", from: "2026-08-01", to: "2026-08-31" }),
+  DATE_COLS[0], DATE_SCHEMA);
+check("'Is Not' over a window becomes not_between, not two ANDed criteria",
+  notBetween.ok && notBetween.criterion.op === "not_between",
+  JSON.stringify(notBetween));
+
+// Deny-by-default still governs dates: a backend without not_between must send
+// the condition to the browser rather than 400 the whole list request.
+const legacySchema = {
+  fields: {
+    request_date: {
+      type: "date",
+      operators: ["is", "is_not", "before", "after", "between", "is_empty", "is_not_empty"],
+    },
+  },
+};
+const legacy = toCriterion(
+  dateCond("request_date", "Is Not", { mode: "range", from: "2026-08-01", to: "2026-08-31" }),
+  DATE_COLS[0], legacySchema);
+check("a backend without not_between degrades to client-side filtering",
+  legacy.ok === false, JSON.stringify(legacy));
 check("multi-value 'Is Not' maps to none_of with a values list",
   partition.criteria.some((c) => c.field === "payment_status" && c.op === "none_of"
     && Array.isArray(c.values) && c.values.length === 2),

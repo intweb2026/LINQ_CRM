@@ -115,6 +115,20 @@ function splitPersonLevel(delegates) {
   // delegate values are NOT cleared — they are the authoritative ones.
   const agreedCode = agreedValue(delegates, 'booking_code');
   if (agreedCode) invoiceFields.booking_code = agreedCode;
+  // Accounts Contact is an INVOICE column (BookEvent.accounts_contact_email)
+  // shown on every delegate row, so there is one value to write however many
+  // rows it was typed into: the first non-empty one wins, and all-blank writes
+  // blank so the field can be cleared. It was in neither payload before this,
+  // which is why editing that cell in the booking modal did nothing at all.
+  //
+  // Guarded on the key being PRESENT: a caller whose rows never carried it must
+  // not have the invoice's stored contact wiped by its absence.
+  if (delegates.some((d) => d.accounts_contact_email_raw !== undefined)) {
+    const contacts = delegates
+      .map((d) => String(d.accounts_contact_email_raw ?? '').trim())
+      .filter(Boolean);
+    invoiceFields.accounts_contact_email = contacts[0] || '';
+  }
   return { invoiceFields, inherited };
 }
 
@@ -132,7 +146,17 @@ function toFrontend(d) {
     company_name: d.company_display || '',
     email: d.email,
     phone_number: d.phone_number || '',
+    // Two values, deliberately. `accounts_contact_email` is what the API
+    // RESOLVED — the invoice's accounts contact, or this delegate's own email
+    // where the invoice has none — and it is what the Bookings table shows.
+    // `_raw` is what is actually stored, and it is the one the booking modal
+    // edits: showing the resolved value in an input would save the fallback
+    // back into the invoice the first time anybody pressed Save, freezing a
+    // derived address into a real column. The `??` chain keeps this working
+    // against a payload that predates the raw field, where dropping to '' would
+    // have cleared a stored accounts contact on the next save.
     accounts_contact_email: d.accounts_contact_email || '',
+    accounts_contact_email_raw: d.accounts_contact_email_raw ?? d.accounts_contact_email ?? '',
     delegate_number: d.delegate_number,
     paid_or_free: d.effective_paid_or_free,
     payment_date: d.effective_payment_date,
@@ -213,7 +237,7 @@ function invoiceToBackend(meta) {
  *
  * booking_code, delegate_number, delegate_payment_date and delegate_paid_or_free
  * were all missing from this payload, so the modal's Booking Code, Delegate
- * Number, Date Paid and Paid/Free edits were dropped in the browser before the
+ * Number, Date Paid and Payable/Free edits were dropped in the browser before the
  * request was even built.
  *
  * company_name_raw was missing for the same reason and cost more: Delegate

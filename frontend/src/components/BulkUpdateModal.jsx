@@ -40,6 +40,7 @@ import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
 import { NumField } from './UI';
 import { useToast } from '../context/ToastContext';
+import { paidOrFreeLabel } from '../lib/constants';
 
 // Just the (possibly pluralised) noun. `plur` from lib/helpers returns the count
 // as well, and stripping it back off with a regex breaks the moment nf() inserts
@@ -63,12 +64,18 @@ const SEARCH_THRESHOLD = 8;
  */
 const PREVIEW_DEBOUNCE_MS = 350;
 
+// Wording-only overrides for the server's choice VALUES, keyed by field. The
+// <option value> and the value posted stay exactly what the backend declared;
+// only what the reader sees changes. 'Paid' reads as 'Payable' here for the same
+// reason it does in the booking modal — see lib/constants.js.
+const CHOICE_LABELS = { paid_or_free: paidOrFreeLabel, delegate_paid_or_free: paidOrFreeLabel };
+
 // The server sends the distribution keyed by str(value), so a BooleanField
 // arrives as Python's "True"/"False" while the picker offers Yes/No. Showing
 // both spellings for one column reads as two different things.
-function display(value, config) {
+function display(value, config, label) {
   if (value === null || value === 'null' || value === '') return '(none)';
-  if (config?.type !== 'boolean') return String(value);
+  if (config?.type !== 'boolean') return label ? label(String(value)) : String(value);
   const s = String(value);
   if (s === 'True' || s === 'true') return 'Yes';
   if (s === 'False' || s === 'false') return 'No';
@@ -111,6 +118,7 @@ export default function BulkUpdateModal({
 
   const fields = useMemo(() => schema?.fields || {}, [schema]);
   const config = field ? fields[field] : null;
+  const optText = (field && CHOICE_LABELS[field]) || null;
 
   const { rowFields, parentFields } = useMemo(() => {
     const row = [], parent = [];
@@ -245,7 +253,7 @@ export default function BulkUpdateModal({
     return (
       <div className="bu-dist">
         Currently:{' '}
-        {head.map(([k, n]) => `${nf(n)} ${display(k, config)}`).join(' · ')}
+        {head.map(([k, n]) => `${nf(n)} ${display(k, config, optText)}`).join(' · ')}
         {rest > 0 ? ` · ${nf(rest)} across ${all.length - head.length} other values` : ''}
       </div>
     );
@@ -299,7 +307,7 @@ export default function BulkUpdateModal({
           ) : config.type === 'choice' ? (
             <select className="in" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing}>
               <option value="">Choose a value…</option>
-              {(config.choices || []).map((c) => <option key={c} value={c}>{c}</option>)}
+              {(config.choices || []).map((c) => <option key={c} value={c}>{optText ? optText(c) : c}</option>)}
             </select>
           ) : config.type === 'date' ? (
             <input className="in" type="date" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
@@ -349,7 +357,7 @@ export default function BulkUpdateModal({
           {fastPath ? (
             <div className="bu-dist">
               {plan.no_op > 0
-                ? `${nf(plan.permitted - plan.no_op)} will change · ${nf(plan.no_op)} already ${display(value, config)}`
+                ? `${nf(plan.permitted - plan.no_op)} will change · ${nf(plan.no_op)} already ${display(value, config, optText)}`
                 : `All ${nf(plan.permitted)} will change.`}
             </div>
           ) : null}

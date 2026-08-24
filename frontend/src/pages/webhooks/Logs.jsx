@@ -208,7 +208,7 @@ export default function WebhookLogs() {
           // ten ancient rows to the top of page one and hid every new delivery
           // below them. created_at is NOT NULL, indexed, and written in the
           // same request microseconds apart.
-          { key: 'received_at', label: 'Received', serverField: 'received_at', serverOrdering: 'created_at', cell: (v) => rel(v) },
+          { key: 'received_at', label: 'Received', type: 'date', serverField: 'received_at', serverOrdering: 'created_at', cell: (v) => rel(v) },
           { key: '_a', label: '', sortable: false, cell: (v, r) => (r.status === 'failed' ? <button className="btn btn-sm btn-s" onClick={(e) => { e.stopPropagation(); retry(r.id); }}><Icon name="refresh" size={12} />Retry</button> : null) },
         ]}
       />

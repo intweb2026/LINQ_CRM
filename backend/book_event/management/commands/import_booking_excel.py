@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date as Date
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -51,7 +51,9 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
+from accounts.import_common import parse_import_date, parse_import_datetime
 from book_delegate.models import BookDelegate
+from book_event.booking_code_canonical import with_default
 from book_event.models import BookEvent
 from events.models import Event
 from event_performance.active_edition_service import (
@@ -60,8 +62,6 @@ from event_performance.active_edition_service import (
 )
 
 User = get_user_model()
-
-_EXCEL_EPOCH = datetime(1899, 12, 30)
 
 
 def _s(v) -> str:
@@ -72,33 +72,44 @@ def _s(v) -> str:
     return "" if s.lower() in ("nan", "none", "nat") else s
 
 
+# Every date this run could not read, collected as it goes and reported in
+# import_issues.md alongside the unresolved-event rows. A date is never the
+# reason a booking is dropped — pandas returned None here and said nothing, so a
+# workbook column written in an unexpected style imported as a column of blanks
+# that looked exactly like a column the source had left empty.
+_date_warnings: list[str] = []
+
+
 def _parse_date(v) -> Optional[Date]:
-    sv = _s(v)
-    if not sv:
-        return None
-    try:
-        return pd.to_datetime(sv).date()
-    except Exception:
-        return None
+    """
+    A date out of a workbook cell, or None. Never raises.
+
+    Delegates to accounts.import_common.parse_import_date rather than to
+    pandas. pandas is lenient, but its leniency is MONTH-FIRST: it reads
+    "03/04/2026" as 4 March, while every other date parser in this codebase
+    reads it as 3 April. The same slashed date therefore meant two different
+    days depending on which importer had loaded it. parse_import_date is
+    day-first, matching what is already stored.
+    """
+    parsed, error = parse_import_date(v)
+    if error:
+        _date_warnings.append(error)
+    return parsed
 
 
 def _xl_dt(v) -> Optional[datetime]:
-    """Parse an Excel serial number (float string) or date string to datetime."""
-    sv = _s(v)
-    if not sv:
-        return None
-    # Try Excel serial number first (plain float, post-2009 = > 40000 days)
-    try:
-        f = float(sv)
-        if f > 40000:
-            return _EXCEL_EPOCH + timedelta(days=f)
-    except ValueError:
-        pass
-    # Fall back to string-based date parse
-    try:
-        return pd.to_datetime(sv).to_pydatetime()
-    except Exception:
-        return None
+    """
+    An Excel serial or a date string as a naive datetime. Never raises.
+
+    The serial threshold this used to apply was `f > 40000`, which silently
+    accepted any large number in a date column — an id, a row count, an amount —
+    and turned it into a date somewhere after 2009. parse_import_datetime bounds
+    the serial window at both ends and rejects Excel's phantom 29-Feb-1900.
+    """
+    parsed, error = parse_import_datetime(v)
+    if error:
+        _date_warnings.append(error)
+    return parsed
 
 
 def _aware(dt: Optional[datetime]) -> Optional[datetime]:
@@ -128,6 +139,10 @@ class Command(BaseCommand):
 
         if not path.exists():
             raise CommandError(f"File not found: {path}")
+
+        # Module-level, so a second run in the same process would otherwise
+        # inherit the first run's unreadable dates.
+        _date_warnings.clear()
 
         # ── 1. Load Excel ─────────────────────────────────────────────────────
         self.stdout.write(f"Reading {path} ...")
@@ -246,7 +261,10 @@ class Command(BaseCommand):
                 event_name             = _s(first.get("Event Name", "")) or event.name,
                 request_date           = _parse_date(_s(first.get("Request Date", ""))),
                 invoice_date           = _parse_date(_s(first.get("Invoice Date", ""))),
-                booking_code           = _s(first.get("Booking Code", "")),
+                # bulk_create() below bypasses BookEvent.save(), so the default
+                # the save chokepoint applies has to be applied here too; see
+                # book_event/booking_code_canonical.py.
+                booking_code           = with_default(_s(first.get("Booking Code", ""))),
                 company_name           = _s(first.get("Delegate Company", "")),
                 contact_name           = contact_name,
                 contact_email          = contact_email,
@@ -309,6 +327,10 @@ class Command(BaseCommand):
                     company_name_raw = _s(row.get("Delegate Company", "")),
                     delegate_number  = del_num,
                     attendance       = attendance,
+                    # Same reason as the invoice above: bulk_create() skips
+                    # BookDelegate.save(), so neither the inheritance from the
+                    # invoice nor the default runs on its own here.
+                    booking_code     = be.booking_code,
                 )
                 if del_dt:
                     bd.created_at = del_dt
@@ -321,6 +343,33 @@ class Command(BaseCommand):
             .parent.parent.parent.parent.parent
             / "import_issues.md"
         )
+        if _date_warnings:
+            distinct = sorted(set(_date_warnings))
+            issues.append({
+                "invoice_number": "—",
+                "excel_code": "—",
+                "master": "—",
+                "year": "—",
+                "event_name": "—",
+                "delegate_count": len(_date_warnings),
+                "sample_delegates": "; ".join(distinct[:5]),
+                "reason": (
+                    f"{len(_date_warnings)} date value(s) across "
+                    f"{len(distinct)} distinct spelling(s) could not be read and "
+                    "were stored as empty"
+                ),
+            })
+            self.stdout.write(self.style.WARNING(
+                f"{prefix}Unreadable dates: {len(_date_warnings)} "
+                f"({len(distinct)} distinct) -- stored as empty:"
+            ))
+            for value in distinct[:20]:
+                self.stdout.write(self.style.WARNING(f"  {value}"))
+            if len(distinct) > 20:
+                self.stdout.write(self.style.WARNING(
+                    f"  ... and {len(distinct) - 20} more distinct value(s)."
+                ))
+
         if issues:
             lines = [
                 "# Booking Import Issues\n\n",

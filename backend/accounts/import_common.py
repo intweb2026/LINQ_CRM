@@ -60,17 +60,77 @@ _SERIAL_BASE_LATE  = date(1899, 12, 30)
 # ERROR quoting the raw value. 25569 = 1970-01-01, 73415 ≈ 2100-12-31.
 _SERIAL_MIN, _SERIAL_MAX = 25569, 73415
 
-# Order mirrors webhooks/services.py: parse_webhook_date — dd/mm before mm/dd,
-# because these exports are UK/IN-formatted.
+# DAY-FIRST BEFORE MONTH-FIRST, and that ordering is load-bearing. Every date
+# parser this codebase has ever had tried "%d/%m/%Y" before "%m/%d/%Y", so
+# day-first is what the dates already in the database MEAN. "03/04/2026" reads as
+# 3 April. Reversing the pair would not just change new imports, it would change
+# how existing feeds are re-read, silently, with no error anywhere to notice.
+#
+# The list is deliberately long. The alternative — five separate parsers each
+# accepting a different subset, which is what this codebase had — meant an
+# invoice whose date arrived in an unlisted form was stored BLANK, and blank is
+# indistinguishable from "the source sent nothing". Widening acceptance here can
+# only turn an error or a blank into a date; a value that already parsed still
+# parses the same way, because a format is only reached when every format before
+# it has failed.
 _DATE_FORMATS = (
-    "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%b-%Y", "%d-%B-%Y",
-    "%d %b %Y", "%d %B %Y", "%B %d, %Y", "%b %d, %Y", "%d.%m.%Y",
+    # Four-digit year, unambiguous separators.
+    "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d",
+    # Four-digit year, numeric day/month. Day-first first, see above.
+    "%d/%m/%Y", "%m/%d/%Y",
+    "%d-%m-%Y", "%m-%d-%Y",
+    "%d.%m.%Y", "%m.%d.%Y",
+    # Named month, any separator.
+    "%d-%b-%Y", "%d-%B-%Y", "%b-%d-%Y", "%B-%d-%Y",
+    "%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y",
+    "%B %d, %Y", "%b %d, %Y",
+    # Two-digit year. Last, so a four-digit year can never be read as one.
+    "%d/%m/%y", "%m/%d/%y",
+    "%d-%m-%y", "%d-%b-%y", "%d-%B-%y",
+    "%d.%m.%y", "%d %b %y", "%d %B %y",
+    # Compact, as a CSV column typed to text emits it. Not reachable by a real
+    # Excel serial: the widest serial in the window is five digits, and this
+    # needs eight.
+    "%Y%m%d",
 )
 
 # Collapses whitespace hugging a hyphen ("20 - Dec - 2025" -> "20-Dec-2025",
 # "21-February -2026" -> "21-February-2026") so the dd-Mon-yyyy / dd-Month-yyyy
 # formats above still match. See parse_import_date.
 _HYPHEN_SPACING = re.compile(r"\s*-\s*")
+
+# An Excel serial that arrived as TEXT rather than as a number, which is what a
+# CSV export of a workbook produces, and what openpyxl gives for a cell whose
+# column was typed to text. The fractional form ("45785.5104") is a serial
+# carrying a time of day. Anchored at four or five digits because the plausible
+# window (_SERIAL_MIN.._SERIAL_MAX) has no other width; excel_serial_to_date
+# still enforces the window, this only decides what to hand it.
+_SERIAL_TEXT = re.compile(r"^\d{4,5}(?:\.\d+)?$")
+
+# A trailing time of day, with optional fractional seconds and optional timezone.
+# Split off so ONE list of date formats serves both the dated and the timestamped
+# spellings of the same column, rather than a second list with a time suffix
+# bolted onto every entry. The colon is required, which is what stops this from
+# eating the year out of "08 May 2026".
+_TIME_TAIL = re.compile(
+    r"[T\s](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*"
+    r"(?:Z|[+-]\d{2}:?\d{2}|[A-Z]{2,5})?\s*$",
+    re.IGNORECASE,
+)
+
+# A leading weekday, as a calendar export writes it: "Fri, 08 May 2026".
+_WEEKDAY_PREFIX = re.compile(
+    r"^(?:mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)[a-z]*\.?,?\s+",
+    re.IGNORECASE,
+)
+
+# An ordinal suffix on the day: "8th May 2026" -> "8 May 2026".
+_ORDINAL_DAY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
+
+# The spellings a spreadsheet or a JSON export uses to mean "no value". Treated
+# as blank rather than as an error, because they ARE the source saying nothing.
+# "0" is here for the CSV exports that write a zero into an empty date column.
+_BLANK_TEXT = frozenset(("nan", "nat", "none", "null", "n/a", "na", "-", "--", "0"))
 
 
 def excel_serial_to_date(serial):
@@ -88,7 +148,7 @@ def parse_import_date(raw):
     are nullable and an import must NOT apply any create-path default; a row that
     arrived undated stays undated.
 
-    THE THREE PARSERS, AND WHY THIS ONE IS THE AUTHORITY
+    THE PARSERS, AND WHY THIS ONE IS THE AUTHORITY
     (matching note in frontend/src/lib/importParse.js)
 
       frontend/src/lib/importParse.js  reads .xlsx with SheetJS `raw: false`, so
@@ -102,6 +162,16 @@ def parse_import_date(raw):
                                        returns None on failure, so a column of
                                        unreadable dates is indistinguishable from
                                        a column of blanks
+
+    FIVE MORE USED TO EXIST AND NOW CALL THIS
+    webhooks/services.py:parse_webhook_date (ten formats), the sheet sync
+    (five), import_bookings_csv and import_bookings_json (ONE each, "%d-%b-%Y")
+    and import_booking_excel (pandas, and month-first, so it disagreed with
+    every other one about what "03/04/2026" meant). All five returned None on a
+    format they did not know and reported nothing, so an unreadable date column
+    imported as an empty one. They now delegate here and surface the returned
+    error — in the webhook processing notes, in the command output, or in
+    import_issues.md. See the note on _DATE_FORMATS about day-first ordering.
 
     Accepting both representations is what lets `load_zoho_export` read a workbook
     SERVER-side via openpyxl — where serials do arrive raw — without the browser
@@ -118,23 +188,46 @@ def parse_import_date(raw):
     if isinstance(raw, bool):
         return None, f"{raw!r} is not a date"
     if isinstance(raw, (int, float)):
-        if isinstance(raw, float) and not raw.is_integer():
-            # Excel fractional serials carry a time; the date part is what we want.
-            resolved = excel_serial_to_date(int(raw))
-        else:
-            resolved = excel_serial_to_date(raw)
+        # NaN and +-inf are what pandas hands back for an empty or malformed
+        # numeric cell, and int() RAISES on both. This branch used to reach
+        # int(raw) unguarded, so a NaN in a date column crashed the parser
+        # rather than being read as the blank it is.
+        if isinstance(raw, float):
+            if raw != raw:                      # NaN, which equals nothing
+                return None, None
+            if raw in (float("inf"), float("-inf")):
+                return None, f"{raw!r} is not a recognisable date or Excel serial"
+        # Excel fractional serials carry a time; the date part is what we want.
+        resolved = excel_serial_to_date(int(raw))
         if resolved is None:
             return None, f"{raw!r} is not a recognisable date or Excel serial"
         return resolved, None
 
-    text = str(raw).strip()
+    # A non-breaking space is what a copy-paste out of a browser table leaves
+    # behind, and it is not what str.strip() removes.
+    text = " ".join(str(raw).replace(" ", " ").split())
     if not text:
         return None, None
-    # numpy/pandas datetime64 stringifies as "2026-08-10T00:00:00.000000000"
-    if "T" in text:
-        text = text.split("T", 1)[0]
-    if " " in text and len(text) > 10 and text[4:5] == "-":
-        text = text.split(" ", 1)[0]
+    if text.lower() in _BLANK_TEXT:
+        return None, None
+    # A serial that arrived as text rather than as a number, including the
+    # fractional form openpyxl produces for a cell carrying a time. Read here so
+    # the format list below never sees it.
+    if _SERIAL_TEXT.match(text):
+        resolved = excel_serial_to_date(int(float(text)))
+        if resolved is not None:
+            return resolved, None
+    # Strip a trailing time of day. This covers numpy/pandas datetime64, which
+    # stringifies as "2026-08-10T00:00:00.000000000", and equally
+    # "08/05/2026 10:30:00" and "2026-05-08T10:30:00Z", neither of which the
+    # earlier ISO-only handling reached. Done BEFORE the hyphen collapse below,
+    # so a negative timezone offset is gone before that rule can see its hyphen.
+    text = _TIME_TAIL.sub("", text).strip()
+    text = _WEEKDAY_PREFIX.sub("", text).strip()
+    text = _ORDINAL_DAY.sub(r"\1", text)
+    text = text.rstrip(",").strip()
+    if not text:
+        return None, f"{raw!r} is not a recognisable date"
     # Dirty spreadsheet exports from this same Zoho instance carry stray
     # whitespace around the hyphen in dd-Mon-yyyy style dates — "20 - Dec - 2025",
     # "21-February -2026" — which no entry in _DATE_FORMATS matches as typed.
@@ -148,11 +241,77 @@ def parse_import_date(raw):
             return datetime.strptime(text, fmt).date(), None
         except ValueError:
             continue
-    if text.isdigit():
-        resolved = excel_serial_to_date(int(text))
-        if resolved is not None:
-            return resolved, None
     return None, f"{raw!r} is not a recognisable date"
+
+
+def parse_import_datetime(raw):
+    """
+    parse_import_date(), but keeping the time of day where the source sent one.
+
+    Returns (datetime|None, error|None), same contract: blank is (None, None) and
+    nothing raises. The datetime is NAIVE. Making it timezone-aware is the
+    caller's job, because only the caller knows whether its source wrote local
+    time or UTC, and guessing here would shift every backdated created_at by the
+    UTC offset.
+
+    Only the "Added Time" style columns need this — the ones that backdate
+    BookEvent.created_at. Everything else wants the date and should call
+    parse_import_date.
+    """
+    if raw is None:
+        return None, None
+    if isinstance(raw, datetime):
+        return raw, None
+    if isinstance(raw, bool):
+        return None, f"{raw!r} is not a datetime"
+    if isinstance(raw, date):
+        return datetime(raw.year, raw.month, raw.day), None
+
+    if isinstance(raw, (int, float)):
+        # Same NaN/inf guard as parse_import_date; int() raises on both.
+        if isinstance(raw, float):
+            if raw != raw:
+                return None, None
+            if raw in (float("inf"), float("-inf")):
+                return None, f"{raw!r} is not a recognisable datetime or Excel serial"
+        resolved = excel_serial_to_date(int(raw))
+        if resolved is None:
+            return None, f"{raw!r} is not a recognisable datetime or Excel serial"
+        # The fractional part of a serial IS the time of day, as a fraction of a
+        # 24-hour day. parse_import_date discards it; here it is the point.
+        seconds = round((float(raw) - int(raw)) * 86400)
+        return datetime(resolved.year, resolved.month, resolved.day) + timedelta(
+            seconds=seconds
+        ), None
+
+    text = " ".join(str(raw).replace(" ", " ").split())
+    if not text:
+        return None, None
+    if text.lower() in _BLANK_TEXT:
+        return None, None
+    if _SERIAL_TEXT.match(text):
+        return parse_import_datetime(float(text))
+
+    # The date half goes through the one authority; only the time is read here,
+    # so there is no second list of formats to drift out of step with the first.
+    match = _TIME_TAIL.search(text)
+    parsed_date, error = parse_import_date(text)
+    if parsed_date is None:
+        return None, error and error.replace("date", "datetime", 1)
+
+    hour = minute = second = 0
+    if match:
+        hour, minute = int(match.group(1)), int(match.group(2))
+        second = int(match.group(3) or 0)
+        if not (hour <= 23 and minute <= 59 and second <= 59):
+            # A 12-hour clock with an am/pm marker, or plain nonsense. Rather
+            # than guess, keep the date and drop the time — a midnight timestamp
+            # on the right day beats an error that loses the row's date too.
+            hour = minute = second = 0
+
+    return datetime(
+        parsed_date.year, parsed_date.month, parsed_date.day, hour, minute, second
+    ), None
 
 
 # ── Editions ─────────────────────────────────────────────────────────────────

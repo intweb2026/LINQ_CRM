@@ -231,6 +231,73 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .vti-tag button{width:14px;height:14px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:50%}
 .vti-tag button:hover{background:var(--t-100)}
 
+/* ═══ DATE FILTER (Advanced Filters, date columns) ═══ */
+/* The value half of a date condition: one calendar input, or two for Between.
+   `.dflt` stacks the control over the note that spells out what the operator
+   does with the picked date. Everything inside reuses the filter panel's own
+   `.flt-pill` / `.in-xs` boxes, so a date column's editor is the same furniture
+   as every other column's with a calendar behind it rather than a control of
+   its own invention. */
+.dflt{display:flex;flex-direction:column;gap:6px;min-width:0}
+.dflt-pair{display:flex;align-items:center;gap:8px;min-width:0}
+.dflt-pair input{flex:1 1 0;min-width:0}
+.dflt-and{font-size:11px;font-weight:650;color:var(--text-4);flex-shrink:0}
+/* What the operator does with the dates above it. Quiet, and never wider than
+   the control it explains. */
+.dflt-res{font-size:11px;font-weight:600;color:var(--text-4);padding-left:2px;letter-spacing:.01em}
+.pop-lg .dflt-res{font-size:12px}
+/* ═══ DATE PICKER ═══ */
+/* Our own calendar, because the browser's is a native popup drawn outside the
+   page: it could not be positioned against this panel, and re-rendering the
+   panel while it was open made it reset and appear to pick a date by itself.
+   See components/DatePicker.jsx. The closed state reuses `.flt-pill` and
+   `.in-xs` so it is the same box as every other value control. */
+.dpk{position:relative;flex:1 1 auto;min-width:0}
+.dpk-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  width:100%;text-align:left;cursor:pointer}
+.dpk-btn svg{color:var(--text-4);flex-shrink:0}
+.dpk-btn:hover svg{color:var(--t-600)}
+.dpk-empty{color:var(--text-4)}
+.dpk-pop{position:absolute;z-index:30;top:calc(100% + 6px);left:0;width:252px;padding:8px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-lg)}
+/* Right-aligned when the field is the second half of a Between pair, so the
+   calendar cannot hang off the edge of the filter panel. */
+.dflt-pair .dpk:last-of-type .dpk-pop{left:auto;right:0}
+.dpk-nav{display:flex;align-items:center;gap:2px;margin-bottom:6px}
+.dpk-mn{flex:1 1 auto;text-align:center;font-size:12.5px;font-weight:700;color:var(--text);
+  white-space:nowrap;user-select:none}
+.dpk-nb{display:inline-flex;align-items:center;justify-content:center;gap:0;
+  width:26px;height:26px;padding:0;border:none;background:none;border-radius:var(--r-sm);
+  color:var(--text-3);cursor:pointer;flex-shrink:0}
+.dpk-nb:hover{background:var(--n-75);color:var(--text)}
+.dpk-nb svg{width:13px;height:13px}
+/* The double chevrons are the year steppers; overlapping them keeps the control
+   the same width as the single-chevron month buttons beside it. */
+.dpk-nb svg + svg{margin-left:-6px}
+.dpk-wd{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;margin-bottom:2px}
+.dpk-wd span{text-align:center;font-size:9.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--text-4);padding:3px 0}
+.dpk-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px}
+.dpk-d{height:30px;padding:0;border:none;background:none;border-radius:var(--r-sm);
+  font-size:12px;font-weight:550;color:var(--text-2);cursor:pointer;transition:background .1s}
+.dpk-d:hover{background:var(--t-50);color:var(--t-700)}
+/* Days spilling in from the neighbouring months stay clickable — clicking the
+   30th of the previous month in a September grid means the 30th of August, and
+   refusing it would send the user back through the arrows for no reason. */
+.dpk-d.out{color:var(--text-4);opacity:.55}
+.dpk-d.now{box-shadow:inset 0 0 0 1px var(--t-200);color:var(--t-700)}
+.dpk-d.on{background:var(--t-500);color:#fff;font-weight:700}
+.dpk-d.on:hover{background:var(--t-600);color:#fff}
+.dpk-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;
+  margin-top:6px;padding-top:6px;border-top:1px solid var(--border)}
+.dpk-fb{border:none;background:none;padding:4px 6px;border-radius:var(--r-xs);cursor:pointer;
+  font-size:11px;font-weight:650;color:var(--text-3)}
+.dpk-fb:hover{background:var(--n-75);color:var(--text)}
+.dpk-fb:disabled{opacity:.4;cursor:default;background:none;color:var(--text-4)}
+.dpk-clear:hover:not(:disabled){color:var(--red);background:var(--red-bg)}
+.pop-lg .dpk-pop{width:272px}
+.pop-lg .dpk-d{height:33px;font-size:12.5px}
+
 /* ═══ SEARCH / FILTER PANEL (toolbar) ═══ */
 .pop-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
 .pop-hd h3{font-size:16px;font-weight:650;color:var(--text);margin:0}

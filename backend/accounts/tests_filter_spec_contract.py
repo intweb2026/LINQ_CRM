@@ -28,12 +28,15 @@ from events.views import EventViewSet
 from ticket_central.models import Ticket
 from ticket_central.views import TicketViewSet
 from teams.models import Team
+from webhooks.models import WebhookLog
+from webhooks.views import WebhookLogViewSet
 
 User = get_user_model()
 
 DELEGATES = BookDelegateViewSet.as_view({"get": "list"})
 EVENTS = EventViewSet.as_view({"get": "list"})
 TICKETS = TicketViewSet.as_view({"get": "list"})
+WEBHOOKS = WebhookLogViewSet.as_view({"get": "list"})
 
 # ── Literals captured from the real hook ─────────────────────────────────────
 WIRE = {
@@ -49,6 +52,29 @@ WIRE = {
         "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22web_bookings%22%2C%22op%22%3A%22is%22%2C%22value%22%3Atrue%7D%5D%7D",
     "user_fk_is":
         "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22created_by%22%2C%22op%22%3A%22is%22%2C%22value%22%3A109%7D%5D%7D",
+
+    # -- Advanced date filters ------------------------------------------------
+    # Every date operator takes dates the user picked off a calendar input, so
+    # the query says exactly the dates the panel shows and nothing is derived
+    # from the clock. "Is" is a window of one day rather than an equality test,
+    # which is what lets the same shape serve a DateTimeField correctly.
+    "date_is_window":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22request_date%22%2C%22op%22%3A%22between%22%2C%22values%22%3A%5B%222026-07-27%22%2C%222026-08-25%22%5D%7D%5D%7D",
+    "date_is_not_window":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22request_date%22%2C%22op%22%3A%22not_between%22%2C%22values%22%3A%5B%222026-08-01%22%2C%222026-08-31%22%5D%7D%5D%7D",
+    "date_before":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22request_date%22%2C%22op%22%3A%22before%22%2C%22value%22%3A%222026-08-25%22%7D%5D%7D",
+    "date_after":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22request_date%22%2C%22op%22%3A%22after%22%2C%22value%22%3A%222026-08-25%22%7D%5D%7D",
+    "date_is_empty":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22request_date%22%2C%22op%22%3A%22is_empty%22%7D%5D%7D",
+    # The same operators against a DateTimeField, which the schema flags with
+    # has_time. The edges are instants, not dates, or the day the user asked for
+    # would be truncated at midnight.
+    "datetime_is_day":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22received_at%22%2C%22op%22%3A%22between%22%2C%22values%22%3A%5B%222026-08-25T00%3A00%3A00%2B00%3A00%22%2C%222026-08-25T23%3A59%3A59.999999%2B00%3A00%22%5D%7D%5D%7D",
+    "datetime_after":
+        "%7B%22match%22%3A%22all%22%2C%22criteria%22%3A%5B%7B%22field%22%3A%22received_at%22%2C%22op%22%3A%22after%22%2C%22value%22%3A%222026-08-25T23%3A59%3A59.999999%2B00%3A00%22%7D%5D%7D",
 }
 
 
@@ -170,6 +196,76 @@ class WireContractTests(TestCase):
         live = quote(json.dumps({"match": "all", "criteria": [
             {**crit, "value": self.user.pk}]}))
         self.assertEqual(self._ids(TICKETS, live), {self.t_mine.id})
+
+    # -- Advanced date filters ------------------------------------------------
+    def test_shape_date_window_is_a_two_value_between(self):
+        """
+        "Between" leaves the browser as a between over the two picked dates.
+        Both endpoints are INCLUSIVE, which is what makes the range cover the
+        two days the user named rather than the days after and before them.
+        """
+        crit = json.loads(unquote(WIRE["date_is_window"]))["criteria"][0]
+        self.assertEqual(set(crit.keys()), {"field", "op", "values"})
+        self.assertEqual(crit["values"], ["2026-07-27", "2026-08-25"])
+
+        BookEvent.objects.filter(pk=self.inv_paid.pk).update(request_date="2026-07-27")
+        BookEvent.objects.filter(pk=self.inv_pending.pk).update(request_date="2026-07-26")
+        self.assertEqual(self._ids(DELEGATES, WIRE["date_is_window"]), {self.d_paid.id})
+
+    def test_shape_date_is_not_window_is_not_between(self):
+        """
+        The operator that cannot be assembled client-side from two criteria:
+        "outside this window" is before OR after, and `match` is "all".
+        """
+        crit = json.loads(unquote(WIRE["date_is_not_window"]))["criteria"][0]
+        self.assertEqual(crit["op"], "not_between")
+        self.assertEqual(len(crit["values"]), 2)
+
+        BookEvent.objects.filter(pk=self.inv_paid.pk).update(request_date="2026-08-15")
+        BookEvent.objects.filter(pk=self.inv_pending.pk).update(request_date="2026-09-15")
+        self.assertEqual(self._ids(DELEGATES, WIRE["date_is_not_window"]), {self.d_pending.id})
+
+    def test_shape_before_and_after_are_single_values_and_strict(self):
+        for name in ("date_before", "date_after"):
+            crit = json.loads(unquote(WIRE[name]))["criteria"][0]
+            self.assertEqual(set(crit.keys()), {"field", "op", "value"}, name)
+
+        # The named day belongs to neither, which is what the two words mean.
+        BookEvent.objects.filter(pk=self.inv_paid.pk).update(request_date="2026-08-25")
+        BookEvent.objects.filter(pk=self.inv_pending.pk).update(request_date="2026-08-24")
+        self.assertEqual(self._ids(DELEGATES, WIRE["date_before"]), {self.d_pending.id})
+        self.assertEqual(self._ids(DELEGATES, WIRE["date_after"]), set())
+
+    def test_shape_date_is_empty_carries_no_value(self):
+        crit = json.loads(unquote(WIRE["date_is_empty"]))["criteria"][0]
+        self.assertEqual(set(crit.keys()), {"field", "op"})
+        BookEvent.objects.filter(pk=self.inv_paid.pk).update(request_date="2026-08-25")
+        self.assertEqual(self._ids(DELEGATES, WIRE["date_is_empty"]), {self.d_pending.id})
+
+    def test_datetime_window_covers_the_whole_day_not_just_midnight(self):
+        """
+        The regression this shape exists to prevent: a bare date against a
+        DateTimeField is compared with MIDNIGHT, so `lte '2026-08-25'` drops
+        everything that happened during the day the user asked for. The same
+        trap accounts/period_filter.day_bounds() documents for `?period=`.
+        """
+        crit = json.loads(unquote(WIRE["datetime_is_day"]))["criteria"][0]
+        self.assertEqual(crit["values"][0], "2026-08-25T00:00:00+00:00")
+        self.assertEqual(crit["values"][1], "2026-08-25T23:59:59.999999+00:00")
+
+        midday = WebhookLog.objects.create(
+            source="wire", status="success", received_at="2026-08-25T12:00:00Z")
+        midnight = WebhookLog.objects.create(
+            source="wire", status="success", received_at="2026-08-25T00:00:00Z")
+        next_day = WebhookLog.objects.create(
+            source="wire", status="success", received_at="2026-08-26T00:00:00Z")
+
+        got = self._ids(WEBHOOKS, WIRE["datetime_is_day"])
+        self.assertEqual(got, {midday.id, midnight.id})
+        self.assertNotIn(next_day.id, got)
+
+        # "After the 25th" starts at the 26th, not at 00:00 on the 25th.
+        self.assertEqual(self._ids(WEBHOOKS, WIRE["datetime_after"]), {next_day.id})
 
     # ── The whole three-criterion example, as the UI would send it ────────────
     def test_full_example_round_trip(self):

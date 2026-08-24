@@ -9,13 +9,13 @@ Atomicity    : all DB writes are wrapped in a single transaction.atomic().
                is never left in a partially-synced state.
 """
 import os
-from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 import gspread
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from accounts.import_common import parse_import_date
 from book_event.models import BookEvent
 
 
@@ -72,17 +72,25 @@ COLUMN_MAP = {
 }
 
 
-def _parse_date(value):
-    """Try common date formats; return None if empty or unrecognised."""
-    if not value or not str(value).strip():
-        return None
-    val = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
-        try:
-            return datetime.strptime(val, fmt).date()
-        except ValueError:
-            continue
-    return None
+def _parse_date(value, warnings=None):
+    """
+    A date out of a sheet cell, or None. Never raises.
+
+    The five hardcoded formats this used to carry are gone; the format list is
+    accounts.import_common.parse_import_date, which this codebase already
+    declares the single authority on reading a date out of an import. Keeping a
+    private list here is how the sheet sync came to accept a different set of
+    formats from the webhook and from the two file importers, for the same
+    columns of the same table.
+
+    An unrecognised value appends its reason to `warnings` rather than being
+    dropped in silence. A cell that is genuinely blank appends nothing — that is
+    the sheet saying "no date", not a parse failure.
+    """
+    parsed, error = parse_import_date(value)
+    if error and warnings is not None:
+        warnings.append(error)
+    return parsed
 
 
 def _parse_decimal(value, nullable=True):
@@ -104,7 +112,7 @@ def _parse_int(value, default=None):
         return default
 
 
-def _build_defaults(row, active_headers):
+def _build_defaults(row, active_headers, date_warnings=None):
     """
     Convert a sheet row dict into a BookEvent defaults dict.
     Only includes columns present in active_headers; invoice_number is excluded
@@ -116,7 +124,7 @@ def _build_defaults(row, active_headers):
             continue
         raw = row.get(col_header, "")
         if field_name in DATE_FIELDS:
-            defaults[field_name] = _parse_date(raw)
+            defaults[field_name] = _parse_date(raw, date_warnings)
         elif field_name in NULLABLE_DECIMAL_FIELDS:
             defaults[field_name] = _parse_decimal(raw, nullable=True)
         elif field_name in ZERO_DEFAULT_DECIMAL_FIELDS:
@@ -206,6 +214,10 @@ class Command(BaseCommand):
         parsed_rows  = []
         skipped      = 0
         parse_errors = 0
+        # Dates that could not be read. These do NOT make the row a parse error;
+        # the rest of the booking is still worth syncing. They are reported at
+        # the end so an unreadable date column cannot pass for an empty one.
+        date_warnings = []
 
         for row_num, row in enumerate(rows, start=2):  # row 1 is the header
             invoice_number = str(row.get("invoice_number", "")).strip()
@@ -216,7 +228,7 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
             try:
-                defaults = _build_defaults(row, active_headers)
+                defaults = _build_defaults(row, active_headers, date_warnings)
                 parsed_rows.append((row_num, invoice_number, defaults))
             except Exception as exc:
                 self.stderr.write(
@@ -229,6 +241,18 @@ class Command(BaseCommand):
             f"{skipped} skipped (no invoice_number) | "
             f"{parse_errors} parse error(s)"
         )
+
+        if date_warnings:
+            distinct = sorted(set(date_warnings))
+            self.stdout.write(self.style.WARNING(
+                f"  {len(date_warnings)} date value(s) unreadable, stored as empty:"
+            ))
+            for value in distinct[:20]:
+                self.stdout.write(self.style.WARNING(f"    {value}"))
+            if len(distinct) > 20:
+                self.stdout.write(self.style.WARNING(
+                    f"    ... and {len(distinct) - 20} more distinct value(s)."
+                ))
 
         if not parsed_rows:
             self.stdout.write(self.style.WARNING("No valid rows to process."))

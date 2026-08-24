@@ -136,6 +136,14 @@ def build_filter_spec_fields(model, exclude=(), extra=None, labels=None):
             "label": labels.get(name, name.replace("_", " ").title()),
             "nullable": bool(getattr(f, "null", False)),
         }
+        # A DateTimeField is typed "date" here so it filters with the date
+        # vocabulary, but a client that sends a bare date against one narrows to
+        # MIDNIGHT and silently drops the rest of the day — the trap
+        # period_filter.day_bounds() exists to document. Saying which columns
+        # carry a time lets the caller send the right edge of the day instead of
+        # guessing from the column's name.
+        if type(f).__name__ == "DateTimeField":
+            cfg["has_time"] = True
         choices = getattr(f, "choices", None)
         if choices:
             cfg["choices"] = [c[0] for c in choices]
@@ -161,14 +169,14 @@ def build_filter_spec_fields(model, exclude=(), extra=None, labels=None):
 # 0") and is implemented by casting the column to text. Flagged, not silent.
 _LIST_OPS = {"any_of", "none_of"}
 _NO_VALUE_OPS = {"is_empty", "is_not_empty"}
-_PAIR_OPS = {"between"}
+_PAIR_OPS = {"between", "not_between"}
 
 # Operators whose operand is not required to be a member of the field's choice
 # list: substring matches work on fragments, and ordinal comparisons take
 # bounds that may sit outside the set of stored values.
 _UNCONSTRAINED_VALUE_OPS = {
     "contains", "not_contains",
-    "gt", "gte", "lt", "lte", "between", "before", "after",
+    "gt", "gte", "lt", "lte", "between", "not_between", "before", "after",
 }
 
 OPERATORS_BY_TYPE = {
@@ -182,7 +190,15 @@ OPERATORS_BY_TYPE = {
         "is", "is_not", "gt", "gte", "lt", "lte", "between",
         "contains", "not_contains", "is_empty", "is_not_empty",
     ],
-    "date": ["is", "is_not", "before", "after", "between", "is_empty", "is_not_empty"],
+    # not_between is the only operator here without a plain-language twin in the
+    # original vocabulary. It exists because "is not in this window" is
+    # `before OR after`, and `match` is "all" — an AND — so the client cannot
+    # assemble it from two criteria however it tries. Without it, the Advanced
+    # Filter's "Is Not" over a date range would have to be evaluated in the browser
+    # over whichever page happened to be loaded, and the row count underneath it
+    # would then describe that page rather than the table.
+    "date": ["is", "is_not", "before", "after", "between", "not_between",
+             "is_empty", "is_not_empty"],
     "user_fk": ["is", "is_not", "any_of", "none_of", "is_empty", "is_not_empty"],
 }
 
@@ -239,6 +255,7 @@ class FilterSpecMixin:
                 "nullable": bool(cfg.get("nullable", False)),
                 "resolved": bool(cfg.get("resolved")),
                 "empty_shape": self._empty_shape_name(cfg),
+                "has_time": bool(cfg.get("has_time", False)),
             }
             if cfg.get("choices") is not None:
                 entry["choices"] = list(cfg["choices"])
@@ -577,6 +594,15 @@ class FilterSpecMixin:
         if op == "after":  return Q(**{f"{path}__gt": v})
         if op == "between":
             return Q(**{f"{path}__gte": values[0], f"{path}__lte": values[1]})
+        # An undated row IS returned. Django compiles a negated lookup on a
+        # nullable column to NOT(col BETWEEN a AND b AND col IS NOT NULL), so
+        # NULL survives the negation — exactly as it already does for is_not and
+        # none_of. Left to behave that way rather than bolted shut with an
+        # extra isnull=False, because three negations in one vocabulary that
+        # disagree about empty values is worse than any one convention; the
+        # frontend's local evaluator matches this deliberately.
+        if op == "not_between":
+            return ~Q(**{f"{path}__gte": values[0], f"{path}__lte": values[1]})
 
         raise FilterSpecError(f"Unhandled operator '{op}'.")
 

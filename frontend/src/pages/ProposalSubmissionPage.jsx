@@ -52,7 +52,7 @@ const PROPOSAL_COLS = [
      every row. The status columns keep theirs; those lists are constants
      rather than a scan of the data. */
   { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-  { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
   { key: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
   // Name only — Company Name has its own column; see PaperReviewPage.
   { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },

@@ -18,6 +18,7 @@ from datetime import datetime
 from django.db import transaction
 from django.utils import timezone
 
+from accounts.import_common import parse_import_date
 from book_event.booking_code_canonical import DEFAULT_BOOKING_CODE
 from book_event.models import BookEvent
 from book_event.serializers import WebsiteBookingSerializer
@@ -294,36 +295,40 @@ class WebhookProcessor:
         
         return code
 
-    def parse_webhook_date(self, val):
-        if not val:
-            return None
-        s = str(val).strip()
-        fmts = [
-            "%Y-%m-%d",      # 2026-05-08
-            "%d/%m/%Y",      # 08/05/2026
-            "%m/%d/%Y",      # 05/08/2026
-            "%d-%b-%Y",      # 08-May-2026
-            "%d %b %Y",      # 08 May 2026
-            "%d %B %Y",      # 08 May 2026 (Full month)
-            "%B %d, %Y",     # May 08, 2026
-            "%b %d, %Y",     # May 08, 2026 (Short month)
-            "%d/%m/%y",      # 08/05/26
-            "%m/%d/%y",      # 05/08/26
-        ]
-        for fmt in fmts:
-            try:
-                return datetime.strptime(s, fmt).date()
-            except ValueError:
-                continue
-        return None
+    def parse_webhook_date(self, val, field=""):
+        """
+        A date out of a webhook payload, or None.
+
+        NEVER raises, and a date is never the reason a delivery is rejected —
+        same rule as the amount fields, see WebsiteBookingSerializer.validate.
+        What is new is that a value which could NOT be read now says so in the
+        processing notes. It used to return None silently, so a booking whose
+        Invoice Date arrived as "08.05.2026" or as an Excel serial was stored
+        with a blank date and nothing anywhere distinguished that from the
+        source having sent nothing at all.
+
+        The format list itself lives in accounts/import_common.parse_import_date,
+        which this codebase already declares the single authority on reading a
+        date out of an import. This method used to carry its own ten formats,
+        which is how it came to disagree with the four other importers.
+        """
+        parsed, error = parse_import_date(val)
+        if error:
+            label = f"{field}=" if field else ""
+            self._note(f"Date not recorded, {label}{error}; stored as empty")
+        return parsed
 
     def _create_booking(self, d, event_code, payment_status, sales_exec):
-        invoice_date_val = self.parse_webhook_date(d.get("InvoiceDate")) or self.parse_webhook_date(d.get("Date")) or timezone.localdate()
+        invoice_date_val = (
+            self.parse_webhook_date(d.get("InvoiceDate"), "InvoiceDate")
+            or self.parse_webhook_date(d.get("Date"), "Date")
+            or timezone.localdate()
+        )
         invoice = BookEvent.objects.create(
             invoice_number         = d["InvoiceNumber"],
             event_code             = event_code,
             event_name             = d.get("Eventname", ""),
-            event_date             = self.parse_webhook_date(d.get("Date")),
+            event_date             = self.parse_webhook_date(d.get("Date"), "Date"),
             invoice_date           = invoice_date_val,
             company_name           = d.get("DelegateCompanyName", ""),
             accounts_contact_email = d.get("AccountsContactEmail", ""),
@@ -359,12 +364,14 @@ class WebhookProcessor:
         """
         update_fields = []
 
-        parsed_invoice_date = self.parse_webhook_date(d.get("InvoiceDate")) or self.parse_webhook_date(d.get("Date"))
+        parsed_invoice_date = self.parse_webhook_date(
+            d.get("InvoiceDate"), "InvoiceDate"
+        ) or self.parse_webhook_date(d.get("Date"), "Date")
 
         field_map = {
             "event_code":             target_event.event_code,
             "event_name":             d.get("Eventname", ""),
-            "event_date":             self.parse_webhook_date(d.get("Date")),
+            "event_date":             self.parse_webhook_date(d.get("Date"), "Date"),
             "company_name":           d.get("DelegateCompanyName", ""),
             "accounts_contact_email": d.get("AccountsContactEmail", ""),
             "discount":               d.get("Discount", 0),
