@@ -1,6 +1,7 @@
 """
 book_event/serializers.py
 """
+import re
 from decimal import Decimal, InvalidOperation
 from rest_framework import serializers
 from .models import BookEvent
@@ -448,27 +449,77 @@ class WebsiteBookingSerializer(serializers.Serializer):
     # Delegates
     Delegates = DelegatePayloadSerializer(many=True, required=False, default=list)
 
+    def _parse_amount(self, value):
+        """
+        Read a number out of whatever a booking form put in an amount field.
+
+        Returns (Decimal, "") on success, or (None, reason) when no number can
+        be found. NEVER raises. Amounts are not tracked in this CRM, so an
+        amount is not allowed to be the reason a booking and its delegates are
+        thrown away, see the note on validate().
+
+        Handles the shapes the event websites actually send: "$975.55",
+        "USD 975.55", "975,55", "1,200.00", "975.55 USD", "(1,200.00)" for a
+        negative, and a non-breaking space as the thousands separator.
+        """
+        if value is None:
+            return None, "empty"
+
+        s_val = str(value).replace("\u00a0", " ").strip()
+        if not s_val:
+            return None, "empty"
+
+        negative = s_val.startswith("(") and s_val.endswith(")")
+
+        # Keep only the characters a number can be built from. This is what
+        # discards currency symbols, ISO codes, thousands separators of every
+        # kind, stray "%" and any surrounding words.
+        cleaned = re.sub(r"[^0-9.\-]", "", s_val.replace(",", "."))
+
+        # A European decimal comma became a dot above, and so did a thousands
+        # separator. Keep the LAST dot as the decimal point and drop the rest,
+        # so "1.200.00" reads as 1200.00 rather than failing.
+        if cleaned.count(".") > 1:
+            head, _, tail = cleaned.rpartition(".")
+            cleaned = head.replace(".", "") + "." + tail
+
+        # A minus is only a sign, and only in front.
+        sign = "-" if cleaned.startswith("-") else ""
+        cleaned = sign + cleaned.replace("-", "")
+
+        if cleaned in ("", "-", ".", "-."):
+            return None, f"no number found in {value!r}"
+
+        try:
+            amount = Decimal(cleaned)
+        except InvalidOperation:
+            return None, f"unreadable amount {value!r}"
+
+        if negative and amount > 0:
+            amount = -amount
+        return amount, ""
+
     def _decimal_or_none(self, value, name):
+        """Amount as a Decimal, or None. Records a warning instead of failing."""
         if not value and value != 0:
             return None
-        s_val = str(value).replace(",", "").replace("%", "").strip()
-        if not s_val:
+        amount, reason = self._parse_amount(value)
+        if amount is None:
+            if reason != "empty":
+                self.amount_warnings.append(f"{name}: {reason}; stored as empty")
             return None
-        try:
-            return Decimal(s_val)
-        except InvalidOperation:
-            raise serializers.ValidationError({name: f"Invalid decimal: {value}"})
+        return amount
 
     def _decimal(self, value, name):
+        """Amount as a Decimal, defaulting to 0. Records a warning instead of failing."""
         if not value and value != 0:
             return Decimal("0")
-        s_val = str(value).replace(",", "").replace("%", "").strip()
-        if not s_val:
+        amount, reason = self._parse_amount(value)
+        if amount is None:
+            if reason != "empty":
+                self.amount_warnings.append(f"{name}: {reason}; stored as 0")
             return Decimal("0")
-        try:
-            return Decimal(s_val)
-        except InvalidOperation:
-            raise serializers.ValidationError({name: f"Invalid decimal: {value}"})
+        return amount
 
     def validate_InvoiceNumber(self, value):
         return value.strip()
@@ -477,6 +528,18 @@ class WebsiteBookingSerializer(serializers.Serializer):
         return value.strip().upper()
 
     def validate(self, data):
+        """
+        Money fields can never fail this serializer.
+
+        This CRM does not track amounts; they are recorded elsewhere. A booking
+        that arrives with "$975.55" in TotalAmount is a booking we want, and
+        rejecting the delivery lost the invoice, the company and every delegate
+        on it over a field nothing here reads. So every amount is salvaged where
+        a number can be found and left empty where it cannot, and the reason is
+        appended to `amount_warnings` for the caller to write into the webhook
+        log. Nothing in this method raises, and nothing added to it may.
+        """
+        self.amount_warnings = []
         data["Discount"] = self._decimal(data["Discount"], "Discount")
         for f in ("PreTaxAmount", "TaxAmount", "TotalAmount", "AddOnsTotalAmount"):
             data[f] = self._decimal_or_none(data[f], f)

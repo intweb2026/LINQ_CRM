@@ -67,6 +67,12 @@ class WebhookProcessor:
             ])
             return False, {"detail": "Payload validation failed.", "errors": ser.errors}
 
+        # Amount fields never fail validation, this CRM does not track amounts,
+        # so a value that could not be read is reported here and the delivery
+        # goes on to succeed. See WebsiteBookingSerializer.validate.
+        for warning in getattr(ser, "amount_warnings", []):
+            self._note(f"Amount not recorded, {warning}")
+
         d              = ser.validated_data
         invoice_number = d["InvoiceNumber"]
         raw_event_code = d.get("Eventcode", "")
