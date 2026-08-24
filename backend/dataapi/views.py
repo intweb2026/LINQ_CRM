@@ -71,21 +71,71 @@ class DataApiBaseViewSet(viewsets.ReadOnlyModelViewSet):
             raise PermissionDenied(
                 f"This API key does not have access to the '{self.resource_name}' resource."
             )
+        # Reset before every build. _apply_param_filter appends to this, and the
+        # request log reads it afterwards, so it has to describe THIS call only.
+        self._applied_filters = []
         return self._base_queryset()
 
     def _base_queryset(self):
         raise NotImplementedError
 
+    def _apply_param_filter(self, qs, param, field, lookup="exact"):
+        """
+        Apply one query-param filter and record what was applied.
+
+        Behaviourally identical to the guarded `qs.filter(field=value)` each
+        subclass wrote inline: same truthiness check, and `field__exact=v` is
+        the same ORM node Django builds for `field=v`. The only thing added is
+        the note kept for the request log, which is taken FROM the applied
+        filter rather than written alongside it, so the log cannot drift from
+        what the queryset actually did.
+        """
+        value = self.request.query_params.get(param)
+        if not value:
+            return qs
+        self._applied_filters.append(f"{field}[{lookup}]={value!r}")
+        return qs.filter(**{f"{field}__{lookup}": value})
+
+    def _log_request(self, request, rows):
+        """
+        One INFO line per call to this surface, at dataapi.views.
+
+        Logged after the page is built, because `rows` is the size of the page
+        actually serialised, not the size of the queryset. `query` is the raw
+        QUERY_STRING as received, unparsed and undecoded, so a param the view
+        ignored is still visible in the log; `filters` is the list the ORM
+        really got. The two disagreeing is the point of logging both.
+        """
+        api_key = getattr(request.user, "api_key", None)
+        logger.info(
+            'dataapi resource=%s method=%s path=%s query="%s" filters=[%s] rows=%d key=%s',
+            self.resource_name,
+            request.method,
+            request.path,
+            request.META.get("QUERY_STRING", ""),
+            "; ".join(getattr(self, "_applied_filters", [])),
+            rows,
+            getattr(api_key, "key_preview", "-") or "-",
+        )
+
     def list(self, request, *args, **kwargs):
         """Wrap the paginated page in an envelope the GAS client can read."""
         response = super().list(request, *args, **kwargs)
         data = response.data
+        results = data.get("results", data) if isinstance(data, dict) else data
+        self._log_request(request, len(results) if results is not None else 0)
         return Response({
             "resource": self.resource_name,
-            "results": data.get("results", data) if isinstance(data, dict) else data,
+            "results": results,
             "next": data.get("next") if isinstance(data, dict) else None,
             "previous": data.get("previous") if isinstance(data, dict) else None,
         })
+
+    def retrieve(self, request, *args, **kwargs):
+        """Detail reads are logged too; a single row is still a page of one."""
+        response = super().retrieve(request, *args, **kwargs)
+        self._log_request(request, 1)
+        return response
 
 
 class BookingDataViewSet(DataApiBaseViewSet):
@@ -94,12 +144,8 @@ class BookingDataViewSet(DataApiBaseViewSet):
 
     def _base_queryset(self):
         qs = BookEvent.objects.select_related("sales_executive", "team_leader").order_by("pk")
-        event_code = self.request.query_params.get("event_code")
-        if event_code:
-            qs = qs.filter(event_code=event_code)
-        updated_since = self.request.query_params.get("updated_since")
-        if updated_since:
-            qs = qs.filter(updated_at__gte=updated_since)
+        qs = self._apply_param_filter(qs, "event_code", "event_code")
+        qs = self._apply_param_filter(qs, "updated_since", "updated_at", "gte")
         return qs
 
 
@@ -109,12 +155,8 @@ class DelegateDataViewSet(DataApiBaseViewSet):
 
     def _base_queryset(self):
         qs = BookDelegate.objects.select_related("invoice", "company").order_by("pk")
-        event_code = self.request.query_params.get("event_code")
-        if event_code:
-            qs = qs.filter(event_code=event_code)
-        updated_since = self.request.query_params.get("updated_since")
-        if updated_since:
-            qs = qs.filter(updated_at__gte=updated_since)
+        qs = self._apply_param_filter(qs, "event_code", "event_code")
+        qs = self._apply_param_filter(qs, "updated_since", "updated_at", "gte")
         return qs
 
 
@@ -136,15 +178,13 @@ class TicketDataViewSet(DataApiBaseViewSet):
             .select_related("created_by", "mr_submitted_by", "dmd_submitted_by", "returned_by")
             .order_by("pk")
         )
-        event_code = self.request.query_params.get("event_code")
-        if event_code:
-            qs = qs.filter(event_code=event_code)
-        updated_since = self.request.query_params.get("updated_since")
-        if updated_since:
-            qs = qs.filter(updated_at__gte=updated_since)
-        status = self.request.query_params.get("status")
-        if status:
-            qs = qs.filter(status=status)
+        qs = self._apply_param_filter(qs, "event_code", "event_code")
+        qs = self._apply_param_filter(qs, "updated_since", "updated_at", "gte")
+        # NOTE: the inline version bound this to a local named `status`, which
+        # shadowed the imported rest_framework.status module for the rest of the
+        # method. Nothing below it used the module, so it was harmless; routing
+        # it through the helper removes the shadow as a side effect.
+        qs = self._apply_param_filter(qs, "status", "status")
         return qs
 
 
