@@ -23,7 +23,52 @@ config = AutoConfig(search_path=BASE_DIR)
 # ── Security ──────────────────────────────────────────────────────────────────
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default="False", cast=lambda v: v.lower() in ("true", "1"))
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [
+    h.strip() for h in
+    os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
+# Django 4+ checks the Origin header on every unsafe request and rejects it
+# unless the exact scheme+host appears here. Reaching the app through anything
+# other than localhost — a tunnel, an sslip.io proxy, a staging domain — sends
+# that host as the Origin, so a login POST came back as "CSRF verification
+# failed" even with a perfectly valid token. Nothing was set at all before, so
+# only same-origin localhost requests could ever pass.
+#
+# Entries must carry a scheme; bare hostnames are rejected by Django's own
+# system check. Anything already in ALLOWED_HOSTS is trusted under both schemes,
+# so a host only has to be named once, and CSRF_EXTRA_TRUSTED_ORIGINS covers
+# origins whose host differs from the one Django is served under (a proxy that
+# rewrites Host to localhost, which is why the sslip.io hostname never reached
+# ALLOWED_HOSTS in the first place).
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in
+    os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
+for _host in ALLOWED_HOSTS:
+    # A leading-dot wildcard is legal in both settings; "*" is not a valid
+    # origin, so it is skipped rather than passed through to the check.
+    if _host == "*":
+        continue
+    # ALLOWED_HOSTS spells a wildcard as a leading dot (".example.com"), while an
+    # origin has to spell it "*.example.com". Passing the dotted form straight
+    # through produced "https://.example.com", which matches nothing.
+    _pattern = f"*{_host}" if _host.startswith(".") else _host
+    for _scheme in ("https", "http"):
+        _origin = f"{_scheme}://{_pattern}"
+        if _origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(_origin)
+
+# A TLS-terminating proxy speaks plain HTTP to Django, so request.is_secure()
+# is False and Django builds "http://<host>" when comparing against an Origin
+# that arrived as "https://<host>". Honouring X-Forwarded-Proto makes that
+# comparison agree. It is opt-in because trusting the header when no proxy sets
+# it would let a client claim its own connection is secure.
+if config("TRUST_PROXY_SSL_HEADER", default="False", cast=lambda v: v.lower() in ("true", "1")):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
 
 CORS_ALLOWED_ORIGINS = [
     o.strip() for o in
