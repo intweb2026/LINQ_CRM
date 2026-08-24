@@ -9,7 +9,7 @@ import {
 import DateFilterEditor from './DateFilterEditor';
 import {
   DATE_NO_VALUE_OPS, DATE_OPS, dateCondActive, dateCondPasses, dateCondText,
-  dateForOp, emptyDateCond, isDateOp,
+  dateForOp, emptyDateCond, isDateOp, rowDateISO,
 } from '../lib/dateFilter';
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
@@ -421,10 +421,22 @@ function FilterRow({ col, cond, onChange, onRemove }) {
   );
 }
 
+/** Tooltip for the sort control, which reads differently on a date column. */
+function sortHint(col, dir) {
+  if (isDateCol(col)) {
+    if (dir === 'desc') return 'Newest first — click for oldest first';
+    if (dir === 'asc') return 'Oldest first — click for newest first';
+    return `Sort ${col.label} — newest first`;
+  }
+  if (dir === 'asc') return 'Sorted ascending — click for descending';
+  if (dir === 'desc') return 'Sorted descending — click to clear';
+  return `Sort by ${col.label}`;
+}
+
 /**
- * Header cell: the column LABEL is the sort control (cycles ascending →
- * descending → unsorted) and the funnel is a separate button that opens the
- * filter editor. Two separate controls because one button cannot both sort and
+ * Header cell: the column LABEL is the sort control (text columns cycle
+ * ascending → descending → unsorted; date columns toggle newest ⇄ oldest) and
+ * the funnel is a separate button that opens the filter editor. Two separate controls because one button cannot both sort and
  * open a popover, which is why sorting was previously unreachable.
  */
 function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove }) {
@@ -444,8 +456,7 @@ function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemov
             className={'th-sort' + (dir ? ' on' : '')}
             onClick={onSort}
             aria-label={`Sort by ${col.label}`}
-            title={dir === 'asc' ? 'Sorted ascending — click for descending'
-              : dir === 'desc' ? 'Sorted descending — click to clear' : `Sort by ${col.label}`}
+            title={sortHint(col, dir)}
           >
             <span>{col.label}</span>
             {dir ? <Icon name={dir === 'asc' ? 'chevU' : 'chevD'} size={11} /> : null}
@@ -986,12 +997,12 @@ export default function DataTable({
       split.clientConds.forEach((cond) => { if (condActive(cond)) d = d.filter((r) => condPasses(r, cond)); });
       // Ordering the server understood is already applied; a column that sorts
       // only locally is sorted here.
-      if (sort && !ordering) d = sortLocally(d, sort);
+      if (sort && !ordering) d = sortLocally(d, sort, cols);
       return d;
     }
     if (q) { const v = q.toLowerCase(); d = d.filter((r) => cols.some((c) => String(r[c.key] == null ? '' : r[c.key]).toLowerCase().includes(v))); }
     conds.forEach((cond) => { if (condActive(cond)) d = d.filter((r) => condPasses(r, cond)); });
-    if (sort) d = sortLocally(d, sort);
+    if (sort) d = sortLocally(d, sort, cols);
     return d;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceRows, scope, q, conds, sort, serverMode, split.clientConds, ordering]);
@@ -1199,17 +1210,30 @@ export default function DataTable({
     setConds((cs) => (cs.some((c) => c.key === key) ? cs.map((c) => (c.key === key ? next : c)) : [...cs, next]));
     resetPaging();
   }
-  // asc → desc → off. Cycling back to off restores the table's default order
-  // rather than leaving the last direction stuck on.
+  /**
+   * Text columns cycle asc → desc → off. Cycling back to off restores the
+   * table's default order rather than leaving the last direction stuck on.
+   *
+   * A DATE column has TWO states and no third: newest first, then oldest
+   * first. A date has exactly two orders anyone asks for, and the off state
+   * made the control read as three — click, click, and the arrow vanishes with
+   * the rows back in an order the header no longer describes. Newest is first
+   * because that is what a date column is nearly always opened for; every one
+   * of these tables already defaults to newest-first.
+   */
   const cycleSort = useCallback((key) => {
+    const dateCol = isDateCol(cols.find((c) => c.key === key));
     setSort((s) => {
+      if (dateCol) {
+        return { key, dir: s && s.key === key && s.dir === 'desc' ? 'asc' : 'desc' };
+      }
       if (!s || s.key !== key) return { key, dir: 'asc' };
       if (s.dir === 'asc') return { key, dir: 'desc' };
       return null;
     });
     resetPaging();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageSize]);
+  }, [pageSize, cols.map((c) => c.key).join('|')]);
 
   const pageList = () => {
     const tp = totalPages, p = curPage, n = [];
@@ -1534,8 +1558,31 @@ export default function DataTable({
   }
 }
 
-function sortLocally(rows, sort) {
+function sortLocally(rows, sort, cols) {
   const { key, dir } = sort, m = dir === 'asc' ? 1 : -1;
+  const col = (cols || []).find((c) => c.key === key);
+  /**
+   * A DATE column is compared as a date, not as text.
+   *
+   * localeCompare orders '2026-08-24T18:30:00Z' against '2026-08-24' by their
+   * characters, and a cell holding an em dash or a null sorted wherever the
+   * punctuation fell — which is how the newest-first list came back led by
+   * blanks. rowDateISO normalises all three shapes to 'YYYY-MM-DD', which then
+   * orders correctly as a plain string comparison.
+   *
+   * Undated rows sort LAST in BOTH directions. They hold no position on a
+   * timeline, so neither end of the sort is theirs, and the server does the
+   * same thing now (accounts/ordering.py).
+   */
+  if (isDateCol(col)) {
+    return rows.slice().sort((a, b) => {
+      const x = rowDateISO(a[key]), y = rowDateISO(b[key]);
+      if (x === y) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return (x < y ? -1 : 1) * m;
+    });
+  }
   return rows.slice().sort((a, b) => {
     const x = a[key], y = b[key];
     if (typeof x === 'number' && typeof y === 'number') return (x - y) * m;

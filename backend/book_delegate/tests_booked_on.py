@@ -308,11 +308,17 @@ class BookedOnDefaultOrderingTests(TestCase):
         sends it as the Request Date column's serverOrdering, and DRF silently
         DROPS an unlisted term rather than erroring. If this regresses, that
         column stops sorting and nothing reports it.
+
+        It compiles to an EXPRESSION rather than the plain '-_sort_request_date'
+        string because the column is nullable and the view lists it in
+        nulls_last_ordering_fields: Postgres would otherwise open "newest first"
+        with every undated row. See accounts/ordering.py.
         """
-        self.assertEqual(
-            self.compiled_ordering("?ordering=-_sort_request_date"),
-            ["-_sort_request_date", "pk"],
-        )
+        term, tiebreak = self.compiled_ordering("?ordering=-_sort_request_date")
+        self.assertEqual(tiebreak, "pk")
+        self.assertEqual(term.expression.name, "_sort_request_date")
+        self.assertTrue(term.descending)
+        self.assertTrue(term.nulls_last)
 
     def test_rows_come_back_newest_added_first(self):
         """

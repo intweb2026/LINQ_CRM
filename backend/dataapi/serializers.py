@@ -56,6 +56,11 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
     # BookDelegate.invoice is a to_field FK on invoice_number, so the attname
     # invoice_id already holds the invoice-number string; no join needed.
     invoice_number = serializers.CharField(source="invoice_id")
+    # Unlike invoice_number, these two are real invoice columns, so they need
+    # the join. DelegateDataViewSet select_related("invoice") already pays for
+    # it once per page; see the assertNumQueries guard in tests_dataapi.py.
+    request_date = serializers.DateField(source="invoice.request_date", read_only=True)
+    invoice_date = serializers.DateField(source="invoice.invoice_date", read_only=True)
     effective_payment_status = serializers.SerializerMethodField()
     effective_payment_type = serializers.SerializerMethodField()
     effective_payment_date = serializers.SerializerMethodField()
@@ -73,6 +78,7 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
             "booking_code", "delegate_number", "delegate_count",
             "discount", "add_ons", "reference",
             "dietary_requirements", "notes",
+            "request_date", "invoice_date",
             "effective_payment_status", "effective_payment_type",
             "effective_payment_date", "effective_paid_or_free",
             "effective_ticket_tier",

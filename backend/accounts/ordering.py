@@ -24,6 +24,7 @@ deterministically instead of arbitrarily.
 Applied by swapping this in for rest_framework.filters.OrderingFilter, so it
 covers every list endpoint rather than only the three that prompted it.
 """
+from django.db.models import F
 from rest_framework.filters import OrderingFilter
 
 _PK_ALIASES = {"pk", "id"}
@@ -41,3 +42,45 @@ class StableOrderingFilter(OrderingFilter):
 
         ordering.append("pk")
         return ordering
+
+    def filter_queryset(self, request, queryset, view):
+        """Order the queryset, sending NULLs last on the fields that ask for it.
+
+        THE SECOND BUG THIS FIXES
+        Postgres orders NULLs FIRST on a DESC sort. Every date column here is
+        nullable — Date Paid, Request Date, Invoice Date, the two submission
+        dates — so "newest first" opened with a solid block of empty cells and
+        the actual newest rows sat below however many undated rows the table
+        held. Paper Review and Proposal Submission shipped that as their
+        DEFAULT ordering.
+
+        An undated row has no position on a timeline, so it belongs at the end
+        of the list in EITHER direction; that is also what the browser-side
+        twin does (frontend/src/components/DataTable.jsx sortLocally).
+
+        Opt-in per view via `nulls_last_ordering_fields` rather than applied to
+        everything, because NULLS LAST on a DESC sort does not match a plain
+        DESC index and would cost a full sort on columns that are never null
+        anyway — `-created_at` on Bookings is served by an index and stays a
+        plain string term.
+        """
+        ordering = self.get_ordering(request, queryset, view)
+        if not ordering:
+            return queryset
+
+        nulls_last = set(getattr(view, "nulls_last_ordering_fields", None) or ())
+        if not nulls_last:
+            return queryset.order_by(*ordering)
+
+        terms = []
+        for term in ordering:
+            field = term[1:] if term.startswith("-") else term
+            if field not in nulls_last:
+                terms.append(term)
+                continue
+            expr = F(field)
+            terms.append(
+                expr.desc(nulls_last=True) if term.startswith("-")
+                else expr.asc(nulls_last=True)
+            )
+        return queryset.order_by(*terms)

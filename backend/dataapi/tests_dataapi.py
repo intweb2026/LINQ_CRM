@@ -54,6 +54,8 @@ class DataApiEndpointTests(TestCase):
         invoice = BookEvent.objects.create(
             invoice_number="INV-TEST-1", event_code="TESTEV-26",
             company_name="ACME", payment_status="Paid", total_amount=100,
+            request_date=datetime.date(2026, 3, 4),
+            invoice_date=datetime.date(2026, 3, 9),
         )
         BookDelegate.objects.create(
             invoice=invoice, event_code="TESTEV-26",
@@ -107,6 +109,63 @@ class DataApiEndpointTests(TestCase):
         row = body["results"][0]
         self.assertEqual(row["invoice_number"], "INV-TEST-1")
         self.assertEqual(row["effective_payment_status"], "Paid")
+        invoice = BookEvent.objects.get(invoice_number="INV-TEST-1")
+        self.assertEqual(row["request_date"], str(invoice.request_date))
+        self.assertEqual(row["invoice_date"], str(invoice.invoice_date))
+
+    def test_delegate_dates_are_null_when_the_invoice_has_none(self):
+        """
+        Both columns are nullable on BookEvent, so a delegate on an undated
+        invoice must serialise null rather than raise. This is the common case
+        for rows imported before the dates were captured.
+        """
+        undated = BookEvent.objects.create(
+            invoice_number="INV-NODATE", event_code="TESTEV-26",
+            payment_status="Pending",
+        )
+        self.assertIsNone(undated.request_date)
+        self.assertIsNone(undated.invoice_date)
+        BookDelegate.objects.create(
+            invoice=undated, event_code="TESTEV-26",
+            first_name="Grace", last_name="Hopper", email="grace@example.com",
+        )
+        rows = self._get("/api/data/delegates/", self.raw).json()["results"]
+        row = next(r for r in rows if r["invoice_number"] == "INV-NODATE")
+        self.assertIsNone(row["request_date"])
+        self.assertIsNone(row["invoice_date"])
+
+    def test_delegate_page_query_count_is_independent_of_row_count(self):
+        """
+        Regression guard for DelegateDataViewSet.select_related("invoice").
+
+        request_date and invoice_date are real invoice columns, so without the
+        join each delegate row would cost one extra query. This endpoint is
+        walked 500 rows at a time over roughly 16,000 delegates, so a per-row
+        query is the difference between one request and five hundred.
+        """
+        def add_delegates(n, start):
+            for i in range(start, start + n):
+                inv = BookEvent.objects.create(
+                    invoice_number=f"INV-Q-{i}", event_code="TESTEV-26",
+                    payment_status="Paid",
+                    request_date=datetime.date(2026, 5, 1),
+                    invoice_date=datetime.date(2026, 5, 2),
+                )
+                BookDelegate.objects.create(
+                    invoice=inv, event_code="TESTEV-26",
+                    first_name=f"D{i}", last_name="Q", email=f"d{i}@example.com",
+                )
+
+        BookDelegate.objects.all().delete()
+        url = "/api/data/delegates/?page_size=500"
+
+        add_delegates(2, 1)
+        with self.assertNumQueries(3):
+            self.assertEqual(len(self._get(url, self.raw).json()["results"]), 2)
+
+        add_delegates(2, 3)
+        with self.assertNumQueries(3):
+            self.assertEqual(len(self._get(url, self.raw).json()["results"]), 4)
 
     def test_delegate_override_wins_over_invoice(self):
         d = BookDelegate.objects.first()

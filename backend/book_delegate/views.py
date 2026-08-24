@@ -358,6 +358,14 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # Date column's serverOrdering, and dropping it would silently disable that
     # header. The same is true of created_at, which the Added Time column sends.
     ordering        = ["-created_at", "-id"]
+    # The date columns are all nullable, and Postgres orders NULLs FIRST on a
+    # DESC sort: "newest first" on Date Paid came back led by every delegate
+    # with no payment date at all. Undated rows now land at the END in both
+    # directions, matching the browser-side sort. created_at is deliberately
+    # NOT here — it is never null and its plain DESC term is index-served.
+    nulls_last_ordering_fields = [
+        "_sort_request_date", "_sort_date", "_sort_effective_payment_date",
+    ]
 
     def get_queryset(self):
         from django.db.models import F, Value

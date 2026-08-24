@@ -135,3 +135,61 @@ class PaginationStabilityTests(TestCase):
         ids = self._sweep(page_size=10, extra="&ordering=id")
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(len(set(ids)), self.expected)
+
+
+class NullsLastOrderingTests(TestCase):
+    """Undated rows sort LAST, in both directions.
+
+    Postgres orders NULLs FIRST on a DESC sort, so "newest first" on a nullable
+    date column came back led by every row that had no date at all. The delegate
+    date columns are all nullable, and Date Paid is the one users hit first.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="nulls_admin", is_all_access=True)
+        cls.user = User.objects.create_user(
+            username="nulls_user", password="x", role="admin",
+            email="nulls@iq-hub.com",
+        )
+        cls.user.team = cls.role
+        cls.user.save()
+
+        # Three invoices: two with a payment date, one with none. The dated pair
+        # brackets the undated row on both ends of the sort.
+        cls.rows = {}
+        for name, paid in (("old", "2026-01-01"), ("new", "2026-06-01"), ("none", None)):
+            inv = BookEvent.objects.create(
+                invoice_number=f"NL-{name}", event_code="NL - AA",
+                request_date="2026-01-01", payment_date=paid,
+                payment_status="Pending",
+            )
+            cls.rows[name] = BookDelegate.objects.create(
+                invoice=inv, event_code="NL - AA", first_name=name,
+                email=f"{name}@example.com",
+            )
+
+    def _ids(self, ordering):
+        req = APIRequestFactory().get(f"/?page_size=50&ordering={ordering}")
+        force_authenticate(req, user=self.user)
+        resp = LIST(req)
+        resp.render()
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return [r["id"] for r in resp.data["results"]]
+
+    def test_newest_first_puts_the_undated_row_last(self):
+        self.assertEqual(
+            self._ids("-_sort_effective_payment_date"),
+            [self.rows["new"].id, self.rows["old"].id, self.rows["none"].id],
+        )
+
+    def test_oldest_first_also_puts_the_undated_row_last(self):
+        self.assertEqual(
+            self._ids("_sort_effective_payment_date"),
+            [self.rows["old"].id, self.rows["new"].id, self.rows["none"].id],
+        )
+
+    def test_a_field_outside_the_optin_keeps_its_plain_term(self):
+        """created_at is never null and its DESC term must stay index-served."""
+        ids = self._ids("-created_at")
+        self.assertEqual(len(ids), 3)

@@ -150,6 +150,10 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "theme", "proposal_received", "agenda_addition",
     ]
     ordering = ["-paper_submission_date"]
+    # paper_submission_date is nullable, and Postgres orders NULLs FIRST on a
+    # DESC sort — so this DEFAULT ordering opened the table with every undated
+    # row before the newest dated one. See accounts/ordering.py.
+    nulls_last_ordering_fields = ["paper_submission_date"]
 
     # ── Mass update (C2) ──────────────────────────────────────────────────────
     # PaperReview has no parent FK, so every row is independent: no collateral,

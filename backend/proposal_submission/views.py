@@ -130,6 +130,9 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         "agenda_addition", "spex_remarks",
     ]
     ordering = ["-submission_date"]
+    # submission_date is nullable and this default sorts DESC, where Postgres
+    # puts NULLs FIRST — the undated rows led the list. See accounts/ordering.py.
+    nulls_last_ordering_fields = ["submission_date"]
 
     # ── Mass update ───────────────────────────────────────────────────────────
     # ProposalSubmission has no parent FK, so every row is independent: no
