@@ -200,6 +200,19 @@ class BookDelegate(models.Model):
                 models.F("id").desc(),
                 name="book_delegates_booked_id_idx",
             ),
+            # The CURRENT default Bookings sort, ["-created_at", "-id"] — see the
+            # long note on BookDelegateViewSet.ordering for why it moved off
+            # booked_on. Spelled DESC/DESC so the index matches that ORDER BY
+            # exactly and the page is one index scan; fields=["-created_at", "-id"]
+            # would express the same thing, but the expression form is used here to
+            # stay consistent with the booked_on index directly above.
+            #
+            # created_at is NOT NULL, so no nulls_last clause is needed or wanted.
+            models.Index(
+                models.F("created_at").desc(),
+                models.F("id").desc(),
+                name="book_delegates_created_id_idx",
+            ),
         ]
 
     def __str__(self):

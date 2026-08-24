@@ -11,8 +11,11 @@ and SKIPPED rows. Measured on the real database before the fix, Bookings pages
 These fixtures deliberately give every row the SAME sort key, which is the
 worst case and what the old code could not survive.
 """
+from datetime import datetime
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 
@@ -66,17 +69,24 @@ class PaginationStabilityTests(TestCase):
         cls.user.team = cls.role
         cls.user.save()
 
-        # One invoice: every delegate therefore shares invoice__request_date,
-        # which is the default sort key. All 37 rows tie.
+        # One invoice AND one shared created_at, so all 37 rows tie on the sort
+        # key. The shared created_at is the load-bearing half now: the Bookings
+        # default moved to ["-created_at", "-id"], and created_at defaults to
+        # timezone.now(), so rows created in a loop would each get a distinct
+        # microsecond and this class would silently stop testing the tie it is
+        # named for. The single invoice is kept because request_date is still the
+        # key behind the Request Date column's own ordering term.
         inv = BookEvent.objects.create(
             invoice_number="ORD-1", event_code="ORD - AA",
             request_date="2026-01-01", payment_status="Pending",
         )
+        tied = timezone.make_aware(datetime(2026, 1, 1, 9, 0, 0))
         cls.expected = 37
         for i in range(cls.expected):
             BookDelegate.objects.create(
                 invoice=inv, event_code="ORD - AA",
                 first_name=f"D{i:02d}", email=f"ord{i:02d}@example.com",
+                created_at=tied,
             )
 
     def _sweep(self, page_size, extra=""):

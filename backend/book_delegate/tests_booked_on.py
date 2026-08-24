@@ -14,9 +14,11 @@ WHAT THIS PINS, AND WHY EACH ONE MATTERS
 3.  Deriving it costs NO EXTRA QUERY on the path the app actually uses. The
     whole point of the denormalisation is to remove work; a save() that added a
     SELECT would hand it straight back.
-4.  The default ordering really is booked_on with the pk tiebreak, read off the
-    compiled query rather than off the class attribute — StableOrderingFilter
-    rewrites ordering at filter time, so the attribute is not the answer.
+4.  The default ordering really is ["-created_at", "-id"], read off the compiled
+    query rather than off the class attribute — StableOrderingFilter rewrites
+    ordering at filter time, so the attribute is not the answer. booked_on is NO
+    LONGER the sort; it stayed as the period window's column, and points 1-3
+    above still pin it because the window depends on them.
 """
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -263,8 +265,42 @@ class BookedOnDefaultOrderingTests(TestCase):
         qs = view.filter_queryset(view.get_queryset())
         return list(qs.query.order_by)
 
-    def test_default_ordering_is_booked_on_desc_with_pk_tiebreak(self):
-        self.assertEqual(self.compiled_ordering(), ["-booked_on", "pk"])
+    def test_default_ordering_is_created_at_desc_newest_first(self):
+        """
+        The Bookings table's default is NEWEST ADDED FIRST, not newest business
+        date first. booked_on is the invoice's request_date/invoice_date, so a
+        delegate entered today against an older invoice sorted down the table and
+        newly entered work never showed at the top — the reported symptom.
+
+        -id is asserted, not pk: StableOrderingFilter appends `pk` ASCENDING,
+        which resolves ties oldest-first inside a tied second and would not match
+        book_delegates_created_id_idx. Spelling -id in the viewset's default makes
+        the filter pass the ordering through untouched, and this is what pins that.
+        """
+        self.assertEqual(self.compiled_ordering(), ["-created_at", "-id"])
+
+    def test_booked_on_ordering_still_reaches_the_database(self):
+        """
+        booked_on is off the default but stays in ordering_fields, and DRF
+        silently DROPS an unlisted term rather than erroring. It is also still
+        period_date_fields, so it has to keep working.
+        """
+        self.assertEqual(
+            self.compiled_ordering("?ordering=-booked_on"),
+            ["-booked_on", "pk"],
+        )
+
+    def test_created_at_ordering_still_reaches_the_database(self):
+        """
+        BookingsPage.jsx sends `created_at` as the Added Time column's
+        serverOrdering. Explicit and default are deliberately NOT the same
+        compiled order: an explicit term goes through StableOrderingFilter's pk
+        tiebreak, which is deterministic and is all that column needs.
+        """
+        self.assertEqual(
+            self.compiled_ordering("?ordering=-created_at"),
+            ["-created_at", "pk"],
+        )
 
     def test_request_date_ordering_still_reaches_the_database(self):
         """
@@ -278,20 +314,30 @@ class BookedOnDefaultOrderingTests(TestCase):
             ["-_sort_request_date", "pk"],
         )
 
-    def test_rows_come_back_newest_first(self):
-        """End to end, so the ordering is proven against real rows."""
+    def test_rows_come_back_newest_added_first(self):
+        """
+        End to end, so the ordering is proven against real rows.
+
+        THE INVOICE DATE IS DELIBERATELY THE OLDEST IN THE SET. This is the
+        reported bug in miniature: a delegate entered LAST against an invoice
+        raised FIRST. Under the old -booked_on default it sorted to the bottom;
+        under ["-created_at", "-id"] it is row one. Giving the new row a newer
+        request_date instead would pass under both orderings and pin nothing.
+        """
         BookEvent.objects.create(
             invoice_number="ORDBO-2", event_code="ORDBO - AA",
-            request_date="2026-09-09",
+            request_date="2020-01-01",
         )
-        newer = BookDelegate.objects.create(
+        newest = BookDelegate.objects.create(
             invoice=BookEvent.objects.get(invoice_number="ORDBO-2"),
             event_code="ORDBO - AA", first_name="Newest", email="new@example.com",
         )
+        self.assertEqual(str(newest.booked_on), "2020-01-01",
+                         "the fixture no longer sets up the old-invoice case")
         factory = APIRequestFactory()
         req = factory.get("/api/delegates/")
         force_authenticate(req, user=self.user)
         resp = BookDelegateViewSet.as_view({"get": "list"})(req)
         resp.render()
         self.assertEqual(resp.status_code, 200, resp.content)
-        self.assertEqual(resp.data["results"][0]["id"], newer.id)
+        self.assertEqual(resp.data["results"][0]["id"], newest.id)

@@ -67,11 +67,21 @@ export function delegateProblem(rows) {
   return null;
 }
 
+/**
+ * What a brand-new delegate row books as.
+ *
+ * 'Delegate' rather than blank: it is what the overwhelming majority of rows are,
+ * and an empty Booking Code is not a meaningful state — it was simply the value
+ * every new row carried until somebody remembered to set it. Still a dropdown, so
+ * a speaker or a comp is one click away.
+ */
+const DEFAULT_BOOKING_CODE = 'Delegate';
+
 export function blankDelegate(today, defaultOwner = '') {
   const now = new Date().toISOString();
   return {
     key: 'new-' + Math.random().toString(36).slice(2),
-    id: null, payment_status: 'Pending', booking_code: '', request_date: today, invoice_date: today,
+    id: null, payment_status: 'Pending', booking_code: DEFAULT_BOOKING_CODE, request_date: today, invoice_date: today,
     name: '', company_name: '', email: '', phone_number: '', accounts_contact_email: '',
     delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: 'Stripe', ticket_tier: 'Regular',
     discount: 0, add_ons: '', reference: '', added_time: now, modified_time: now,
@@ -141,13 +151,53 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'modified_time', label: 'Modified Time', type: 'display', width: 150, format: 'datetime' },
 ];
 
+/**
+ * Statuses a Date Paid entry is allowed to promote to 'Paid'.
+ *
+ * Deliberately NOT every status. 'Cancelled', 'Refunded', 'Credit Transferred',
+ * 'Paid (Transferred)' and 'IQ Staff' are decisions somebody made about the
+ * booking, and a date typed into the cell beside them is not a reason to erase
+ * one; the credit-pending pair are their own state for the same reason. Only a
+ * row that is still waiting for money moves.
+ *
+ * A FREE delegate is included: Paid/Free records what was charged, not whether
+ * the paperwork settled, so a date entered against a free row marks it paid like
+ * any other.
+ */
+const AUTO_PAID_FROM = ['', 'Pending', 'Unpaid'];
+
+/**
+ * The payment status a row should carry now that Date Paid holds `date`, or null
+ * to leave the status alone.
+ *
+ * Both directions. Entering a date on a row that is still waiting for money marks
+ * it 'Paid'; CLEARING the date takes that same row back to 'Pending', because a
+ * booking with no date paid is not a paid booking. The reverse leg is limited to
+ * rows sitting on 'Paid' for the same reason the forward leg is limited to
+ * AUTO_PAID_FROM — it undoes this rule, and nothing else.
+ *
+ * This only ever fires as Date Paid CHANGES, so the status cell remains a normal
+ * dropdown and anything set here can be overridden by hand straight afterwards.
+ */
+function autoPaidStatus(row, date) {
+  const current = String(row.payment_status ?? '').trim();
+  if (!String(date ?? '').trim()) return current === 'Paid' ? 'Pending' : null;
+  if (!AUTO_PAID_FROM.includes(current)) return null;
+  return 'Paid';
+}
+
 export default function DelegateTable({ rows, onChange, onRemove, eventCode, eventName, invoiceNumber, salesExec, onTransfer }) {
   const ctx = { eventCode, eventName, invoiceNumber, salesExec };
   const COLS = baseCols({ onTransfer });
 
   function update(i, key, value) {
     const next = rows.slice();
-    next[i] = { ...next[i], [key]: value, modified_time: new Date().toISOString() };
+    const row = { ...next[i], [key]: value, modified_time: new Date().toISOString() };
+    if (key === 'payment_date') {
+      const auto = autoPaidStatus(next[i], value);
+      if (auto) row.payment_status = auto;
+    }
+    next[i] = row;
     onChange(next);
   }
 

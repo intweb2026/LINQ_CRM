@@ -296,33 +296,68 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         # pk tiebreak alone without any error.
         "booked_on",
     ]
-    # DEFAULT ORDERING CHANGED, from -_sort_request_date to -booked_on.
+    # DEFAULT ORDERING CHANGED AGAIN, from -booked_on to -created_at.
     #
-    # Same rows, same direction, one table. _sort_request_date was F() on
-    # invoice__request_date, so the sort lived on the JOINED side while
-    # StableOrderingFilter's pk tiebreak lived on the DRIVING side, across a
-    # varchar join — no index can serve that shape, and the measured plan was a
-    # full hash join plus a sort of the entire set to return 50 rows.
+    # WHAT THE USER ASKED FOR, AND WHY booked_on COULD NOT GIVE IT
+    # The Bookings table must show the most RECENTLY ADDED rows first. booked_on
+    # is COALESCE(invoice.request_date, invoice.invoice_date) — a BUSINESS date
+    # authored on the invoice, not a record of when the row was created. A
+    # delegate added today to an invoice raised three weeks ago inherits that
+    # invoice's dates and lands three weeks down the table, so newly entered
+    # work was invisible at the top. That is the reported symptom: rows entered
+    # on 2026-08-24 sat below a 2026-08-21 head of table.
     #
-    # The new order AGREES WITH THE PERIOD WINDOW BY CONSTRUCTION rather than by
-    # coincidence: period_date_fields above is now the same booked_on column, and
-    # booked_on IS COALESCE(request_date, invoice_date). Under the old default a
-    # delegate whose invoice carried only an invoice_date was inside the window
-    # but sorted as NULL.
+    # THE KNOWN COST, MEASURED, NOT ASSUMED. import_booking_excel DOES carry
+    # Zoho's "Added Time" onto created_at (`if del_dt: bd.created_at = del_dt`),
+    # so it is tempting to call created_at a true per-row entry time. On the
+    # development database it is NOT: all 1,251 imported delegates carry
+    # 2026-08-14 15:07:xx, the load timestamp, and exactly one row — the only one
+    # a person actually entered — carries a distinct 2026-08-21. The imported
+    # rows differ only by the microseconds of the insert loop, which encodes the
+    # source FILE's order and nothing about the business.
     #
-    # ROWS WHOSE POSITION CHANGES. Measured on the 2026-06-11 development snapshot
-    # (Task 1 question 4): 0 delegates have request_date NULL with invoice_date
-    # present, and 0 have both NULL — all 1,251 delegates carry a request_date, and
-    # 0 are orphaned from their invoice. So on this data the two orderings are
-    # identical and NOTHING moves. On production, any row in those first two
-    # buckets moves from the NULL group to its real date position, which is the
-    # intended correction.
+    # So for the BACKLOG this ordering is arbitrary-looking where -booked_on was
+    # chronological, and that is a real regression for anyone scanning old rows
+    # by date. It is accepted deliberately, because the whole backlog still sorts
+    # BELOW every later entry — which is the property that was asked for — and
+    # because Request Date remains a sortable column for the chronological read.
+    # If Added Time is ever backfilled properly, this ordering gets better on its
+    # own with no code change.
+    #
+    # NOT NULLABLE, so unlike booked_on there is no nulls_first hazard here and
+    # no nulls_last spelling is needed: created_at is
+    # DateTimeField(default=timezone.now).
+    #
+    # -id IS PART OF THE DEFAULT, NOT LEFT TO StableOrderingFilter. The filter
+    # would append `pk` ASCENDING, which resolves ties oldest-first inside a
+    # tied second — wrong for a newest-first table, and it would not match the
+    # index below. Spelling -id here also makes the filter pass the ordering
+    # through untouched, because it treats a leading -id as already
+    # deterministic.
+    #
+    # WHAT DID NOT CHANGE. period_date_fields stays ("booked_on",): the period
+    # WINDOW is a business-date question and must keep agreeing with the
+    # dashboards. Filtering and sorting are now deliberately different columns,
+    # which is why booked_on keeps both its column and its index.
+    #
+    # Served by book_delegates_created_id_idx — (created_at DESC, id DESC),
+    # added in backend/sql/2026_08_bookings_created_order.sql — so this is one
+    # single-table index scan, the same shape the booked_on work established.
+    #
+    # PREVIOUS RATIONALE, KEPT because booked_on is still the period column and
+    # this explains why it exists at all. The ordering before booked_on was
+    # -_sort_request_date, an F() on invoice__request_date: the sort lived on the
+    # JOINED side while the pk tiebreak lived on the DRIVING side, across a
+    # varchar join, so no index could serve the shape and the measured plan was a
+    # full hash join plus a sort of the entire set to return 50 rows. Moving the
+    # value onto book_delegates.booked_on made it single-table, and it stays the
+    # period window's column for exactly that reason.
     #
     # _sort_request_date is deliberately KEPT in both the annotation block and
     # ordering_fields: frontend/src/pages/BookingsPage.jsx sends it as the Request
     # Date column's serverOrdering, and dropping it would silently disable that
-    # header.
-    ordering        = ["-booked_on"]
+    # header. The same is true of created_at, which the Added Time column sends.
+    ordering        = ["-created_at", "-id"]
 
     def get_queryset(self):
         from django.db.models import F, Value
