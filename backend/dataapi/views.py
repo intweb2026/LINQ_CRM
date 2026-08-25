@@ -154,7 +154,15 @@ class DelegateDataViewSet(DataApiBaseViewSet):
     serializer_class = DataApiDelegateSerializer
 
     def _base_queryset(self):
-        qs = BookDelegate.objects.select_related("invoice", "company").order_by("pk")
+        # invoice__sales_executive is joined here and not left to the serializer:
+        # DataApiDelegateSerializer reports the invoice's sales executive by
+        # name, and without the join that is one extra query per delegate on a
+        # 500-row page. See test_delegate_page_query_count_is_independent_of_row_count.
+        qs = (
+            BookDelegate.objects
+            .select_related("invoice", "invoice__sales_executive", "company")
+            .order_by("pk")
+        )
         qs = self._apply_param_filter(qs, "event_code", "event_code")
         qs = self._apply_param_filter(qs, "updated_since", "updated_at", "gte")
         return qs

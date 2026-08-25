@@ -11,12 +11,15 @@ import { Icon } from '../lib/icons';
 // Omitted, the option is its own label, which is how every other caller uses this.
 export default function Select({ value, options, onChange, className = 'in', placeholder = 'Select…', width, labelOf }) {
   const text = labelOf || ((o) => o);
+  // Only an absent value shows the placeholder. A truthiness test would hide a
+  // legitimate 0 — Delegate Number offers 0 and 1 (see lib/constants.js).
+  const empty = value === '' || value === null || value === undefined;
   return (
     <Popover
       width={width}
       trigger={({ toggle, open }) => (
         <button type="button" className={className + ' sel-trigger' + (open ? ' open' : '')} onClick={toggle}>
-          <span className="sel-v">{value ? text(value) : <span className="dim">{placeholder}</span>}</span>
+          <span className="sel-v">{empty ? <span className="dim">{placeholder}</span> : text(value)}</span>
           <Icon name="chevD" size={13} />
         </button>
       )}

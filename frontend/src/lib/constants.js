@@ -66,11 +66,11 @@ export const BOOKING_CODES = [
 
 /**
  * Which delegate on the invoice this row is. Offered as a picker because the
- * column is an ordinal, not free text — every row in the database currently
- * holds 1. A stored value outside this range is appended to its own dropdown
- * rather than dropped, exactly as with BOOKING_CODES.
+ * column is an ordinal, not free text. The agreed set is 0 and 1 only; unlike
+ * BOOKING_CODES, a stored value outside it is NOT appended to the dropdown, so
+ * the picker can never offer a third option.
  */
-export const DELEGATE_NUMBERS = [1, 2, 3, 4];
+export const DELEGATE_NUMBERS = [0, 1];
 export const PAYMENT_TYPES = ['Stripe', 'Bank'];
 export const TICKET_TIERS = ['SEB', 'EB', 'Regular'];
 export const ATTENDANCE = ['Pending', 'Confirmed', 'No-show', 'Cancelled'];

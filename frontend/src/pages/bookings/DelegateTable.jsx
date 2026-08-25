@@ -27,10 +27,13 @@ function percentValue(label) {
 /**
  * `options`, plus the row's own value when it is not among them.
  *
- * Booking codes and delegate numbers are closed lists now, and the live data holds
- * a handful of codes outside the agreed set. Appending the stored value means such
- * a row still shows what it holds — a plain dropdown would render it as blank and
- * the next save would replace real data with the first thing anyone clicked.
+ * Booking codes are a closed list now, and the live data holds a handful of codes
+ * outside the agreed set. Appending the stored value means such a row still shows
+ * what it holds — a plain dropdown would render it as blank and the next save
+ * would replace real data with the first thing anyone clicked.
+ *
+ * Columns marked `strictOptions` opt out: Delegate Number must offer 0 and 1 and
+ * nothing else, so a legacy 2 is not carried into the picker.
  */
 function optionsWith(options, value) {
   if (value == null || value === '' || options.includes(value)) return options;
@@ -133,7 +136,7 @@ const baseCols = ({ onTransfer } = {}) => [
   // without being stored, and typing over it is all it takes to set a real one.
   // Editing it on any row sets it for the whole invoice; see splitPersonLevel.
   { key: 'accounts_contact_email_raw', label: 'Accounts Contact', type: 'email', width: 190, placeholderFrom: 'email' },
-  { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, width: 140 },
+  { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, strictOptions: true, width: 140 },
   { key: 'paid_or_free', label: 'Payable/Free', type: 'select', options: PAID_OR_FREE, optionLabel: paidOrFreeLabel, width: 110 },
   { key: 'payment_date', label: 'Date Paid', type: 'date', width: 140 },
   { key: 'payment_type', label: 'Payment Type', type: 'select', options: PAYMENT_TYPES, width: 120 },
@@ -203,6 +206,11 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
       const auto = autoPaidStatus(next[i], value);
       if (auto) row.payment_status = auto;
     }
+    // A cancelled booking does not seat a delegate, so the ordinal drops to 0
+    // along with the status; the picker still allows correcting it by hand.
+    if (key === 'payment_status' && String(value).trim() === 'Cancelled') {
+      row.delegate_number = 0;
+    }
     next[i] = row;
     onChange(next);
   }
@@ -219,7 +227,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     if (c.type === 'select') {
       const value = c.percent ? percentLabel(row[c.key]) : (row[c.key] ?? '');
       return (
-        <Select className="in in-xs" value={value} options={optionsWith(c.options, value)} labelOf={c.optionLabel} width={Math.max(c.width, 160)}
+        <Select className="in in-xs" value={value} options={c.strictOptions ? c.options : optionsWith(c.options, value)} labelOf={c.optionLabel} width={Math.max(c.width, 160)}
           onChange={(v) => update(i, c.key, c.percent ? percentValue(v) : v)} />
       );
     }

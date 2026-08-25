@@ -56,11 +56,35 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
     # BookDelegate.invoice is a to_field FK on invoice_number, so the attname
     # invoice_id already holds the invoice-number string; no join needed.
     invoice_number = serializers.CharField(source="invoice_id")
-    # Unlike invoice_number, these two are real invoice columns, so they need
-    # the join. DelegateDataViewSet select_related("invoice") already pays for
-    # it once per page; see the assertNumQueries guard in tests_dataapi.py.
+    # Everything sourced from `invoice.` below is a real invoice column, so it
+    # needs the join. DelegateDataViewSet select_related("invoice") already pays
+    # for it once per page; see the assertNumQueries guard in tests_dataapi.py.
+    #
+    # These columns live on the INVOICE, not on book_delegates, but a booking
+    # report row is one delegate and the invoice carries the half of it that is
+    # shared. Pulling them through the FK here is what keeps the consumer from
+    # having to join /delegates/ to /bookings/ in the spreadsheet itself.
     request_date = serializers.DateField(source="invoice.request_date", read_only=True)
     invoice_date = serializers.DateField(source="invoice.invoice_date", read_only=True)
+    payment_due_date = serializers.DateField(source="invoice.payment_due_date", read_only=True)
+    event_name = serializers.CharField(source="invoice.event_name", read_only=True)
+    parent_code = serializers.CharField(source="invoice.parent_code", read_only=True)
+    # The BILLING company on the invoice, which is not always the delegate's own
+    # employer — an agency or a parent group books and is invoiced, while
+    # company_display below stays whoever the delegate actually works for.
+    account_company = serializers.CharField(source="invoice.company_name", read_only=True)
+    # The id costs nothing (it is a column on the invoice row already fetched);
+    # the name needs the user, which is why the viewset select_relates
+    # invoice__sales_executive.
+    sales_executive = serializers.IntegerField(source="invoice.sales_executive_id", read_only=True)
+    sales_executive_name = serializers.SerializerMethodField()
+    accounts_contact_email = serializers.SerializerMethodField()
+    # The report has ONE Name column, so first_name and last_name are not
+    # exposed here at all — a consumer that had both and the merge would have
+    # three ways to spell the same person and no rule for which is canonical.
+    # full_name is BookDelegate.full_name, the same merge every other read of a
+    # delegate uses (book_delegate/models.py).
+    full_name = serializers.ReadOnlyField()
     effective_payment_status = serializers.SerializerMethodField()
     effective_payment_type = serializers.SerializerMethodField()
     effective_payment_date = serializers.SerializerMethodField()
@@ -70,19 +94,53 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = BookDelegate
+        # ORDER IS PART OF THE CONTRACT. DRF serialises in the order named
+        # here, so this list IS the column order every fetch comes back in, and
+        # a spreadsheet that writes the response straight into a sheet gets the
+        # same headings in the same places on every run. The first 29 entries
+        # are the booking report's own columns, in its own sequence; anything
+        # added later belongs in the trailing block so the report's columns
+        # never shift. tests_dataapi.py pins this order.
+        #
+        #                         ↓ the report's heading for each
         fields = [
-            "id", "invoice_number", "event_code", "edition",
-            "first_name", "last_name", "email", "phone_number", "position",
-            "company_name_raw", "company_display",
-            "ticket_package", "sponsorship_level", "attendance",
-            "booking_code", "delegate_number", "delegate_count",
-            "discount", "add_ons", "reference",
+            "effective_payment_status",   # Payment Status
+            "event_code",                 # Event Code
+            "booking_code",               # Booking Code
+            "request_date",               # Request Date
+            "invoice_date",               # Invoice Date
+            "payment_due_date",           # Payment Due
+            "invoice_number",             # Invoice Number
+            "full_name",                  # Name
+            "position",                   # Job Title
+            "company_display",            # Delegate Company
+            "email",                      # Delegate Email
+            "phone_number",               # Direct Line
+            "account_company",            # Account Company
+            "accounts_contact_email",     # Accounts Contact
+            "delegate_number",            # Delegate Number
+            "effective_paid_or_free",     # Paid/Free
+            "parent_code",                # Parent Code
+            "effective_payment_date",     # Date Paid
+            "effective_payment_type",     # Payment Type
+            "effective_ticket_tier",      # Ticket Tier
+            "discount",                   # Discount
+            "add_ons",                    # Add-Ons
+            "reference",                  # Ref
+            "event_name",                 # Event Name
+            "created_at",                 # Added Time
+            "updated_at",                 # Modified Time
+            "sales_executive_name",       # Sales Executive
+            "id",                         # Record ID
+            "attendance",                 # Attendance - IN?
+            # ── Beyond the report ────────────────────────────────────────────
+            # Not columns of the booking report, kept because consumers of this
+            # endpoint predate it. They sit AFTER the 29 so adding or removing
+            # one cannot move a report column.
+            "edition", "delegate_count", "company_name_raw",
+            "ticket_package", "sponsorship_level",
             "dietary_requirements", "notes",
-            "request_date", "invoice_date",
-            "effective_payment_status", "effective_payment_type",
-            "effective_payment_date", "effective_paid_or_free",
-            "effective_ticket_tier",
-            "created_at", "updated_at",
+            "sales_executive",            # the user id behind Sales Executive
         ]
 
     def get_effective_payment_status(self, obj):
@@ -105,6 +163,28 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
         if obj.company_id and obj.company:
             return obj.company.name
         return obj.company_name_raw
+
+    def get_accounts_contact_email(self, obj):
+        """
+        Who the invoice is chased with, with the delegate's own address as the
+        fallback — the same read-time rule book_delegate/serializers.py applies.
+
+        book_delegate/accounts_contact.py fills the invoice column on write and
+        has a backfill for the history, but rows written by paths that bypass
+        save() (the Excel importer bulk_creates) can still be blank, and a blank
+        billing contact in a report cell reads as "this booking has none" rather
+        than "nobody filled the column in".
+        """
+        invoice = obj.invoice if obj.invoice_id else None
+        raw = (getattr(invoice, "accounts_contact_email", "") or "").strip()
+        return raw or (obj.email or "")
+
+    def get_sales_executive_name(self, obj):
+        invoice = obj.invoice if obj.invoice_id else None
+        if invoice and invoice.sales_executive_id:
+            u = invoice.sales_executive
+            return u.get_full_name() or u.username
+        return None
 
 
 class DataApiEventSerializer(serializers.ModelSerializer):

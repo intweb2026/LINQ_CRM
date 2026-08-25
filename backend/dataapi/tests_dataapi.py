@@ -5,8 +5,10 @@ Covers the security boundary of the Data API, which is the part of it that
 cannot be checked by eye: who gets in, who is refused, and with what status.
 """
 import datetime
+import re
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -17,6 +19,18 @@ from dataapi.models import DataApiKey
 from events.models import Event
 
 HEADER = "HTTP_X_DATA_API_KEY"
+
+# create_data_api_key writes the raw key through self.style.WARNING, and Django
+# builds that style from supports_color() — TRUE when the command is run from a
+# real console. The colour codes wrap the token, so a test that split() the
+# output raw picked up "dapi_abc...\x1b[0m" and hashed the escape sequence along
+# with the key. It passed under a piped stdout and failed in a terminal, which is
+# exactly the wrong way round for a test to behave.
+_ANSI = re.compile("\x1b" + r"\[[0-9;]*m")
+
+
+def strip_ansi(text):
+    return _ANSI.sub("", text)
 
 
 class DataApiKeyModelTests(TestCase):
@@ -113,6 +127,108 @@ class DataApiEndpointTests(TestCase):
         self.assertEqual(row["request_date"], str(invoice.request_date))
         self.assertEqual(row["invoice_date"], str(invoice.invoice_date))
 
+    # The booking report's columns, in the report's own order. Kept here as a
+    # literal rather than read back off the serializer, so a reordering of the
+    # field list is a test FAILURE and not a silently accepted new contract:
+    # the consumer writes this response straight into sheet columns.
+    REPORT_COLUMNS = [
+        "effective_payment_status", "event_code", "booking_code",
+        "request_date", "invoice_date", "payment_due_date", "invoice_number",
+        "full_name", "position", "company_display", "email", "phone_number",
+        "account_company", "accounts_contact_email", "delegate_number",
+        "effective_paid_or_free", "parent_code", "effective_payment_date",
+        "effective_payment_type", "effective_ticket_tier", "discount",
+        "add_ons", "reference", "event_name", "created_at", "updated_at",
+        "sales_executive_name", "id", "attendance",
+    ]
+
+    def test_delegate_columns_come_back_in_the_report_order_every_time(self):
+        """
+        Order is the contract, not just membership. The Apps Script consumer
+        maps the response onto fixed sheet columns, so a field list reshuffled
+        for tidiness would silently move every value one column across.
+        """
+        row = self._get("/api/data/delegates/", self.raw).json()["results"][0]
+        self.assertEqual(list(row)[:len(self.REPORT_COLUMNS)], self.REPORT_COLUMNS)
+
+    def test_delegate_row_has_one_merged_name_and_no_split_parts(self):
+        """
+        first_name and last_name are deliberately absent: the report has a
+        single Name cell, and shipping all three would leave no rule for which
+        spelling of a person is the canonical one.
+        """
+        row = self._get("/api/data/delegates/", self.raw).json()["results"][0]
+        self.assertEqual(row["full_name"], "Ada Lovelace")
+        self.assertNotIn("first_name", row)
+        self.assertNotIn("last_name", row)
+
+    def test_delegate_row_carries_the_invoice_side_report_columns(self):
+        """
+        The booking report is one row per delegate, and half of its columns are
+        the invoice's. Payment Due, Parent Code, Account Company, Event Name and
+        Sales Executive are not on book_delegates at all, so a consumer that had
+        to find them would be joining two endpoints inside a spreadsheet.
+        """
+        user = get_user_model().objects.create_user(
+            username="jsmith", password="x", first_name="Jane", last_name="Smith",
+        )
+        invoice = BookEvent.objects.create(
+            invoice_number="INV-FULL", event_code="TESTEV-26",
+            company_name="Acme Holdings", payment_status="Paid",
+            parent_code="PARENT-1",
+            payment_due_date=datetime.date(2026, 4, 1),
+            accounts_contact_email="accounts@acme.test",
+            sales_executive=user,
+        )
+        BookDelegate.objects.create(
+            invoice=invoice, event_code="TESTEV-26",
+            first_name="Alan", last_name="Turing", email="alan@example.com",
+            position="CTO",
+        )
+
+        rows = self._get("/api/data/delegates/", self.raw).json()["results"]
+        row = next(r for r in rows if r["invoice_number"] == "INV-FULL")
+
+        self.assertEqual(row["id"], BookDelegate.objects.get(email="alan@example.com").pk)
+        self.assertEqual(row["full_name"], "Alan Turing")
+        self.assertEqual(row["position"], "CTO")
+        self.assertEqual(row["payment_due_date"], "2026-04-01")
+        self.assertEqual(row["parent_code"], "PARENT-1")
+        self.assertEqual(row["account_company"], "Acme Holdings")
+        self.assertEqual(row["event_name"], invoice.event_name)
+        self.assertEqual(row["accounts_contact_email"], "accounts@acme.test")
+        self.assertEqual(row["sales_executive"], user.pk)
+        self.assertEqual(row["sales_executive_name"], "Jane Smith")
+
+    def test_accounts_contact_falls_back_to_the_delegate_email(self):
+        """
+        Mirrors the CRM's own read-time rule. The invoice column is filled on
+        write by book_delegate/accounts_contact.py, but rows that reached the
+        database another way can still be blank, and a blank cell in the report
+        would read as "this booking has no billing contact".
+        """
+        invoice = BookEvent.objects.create(
+            invoice_number="INV-NOCONTACT", event_code="TESTEV-26",
+            payment_status="Pending",
+        )
+        d = BookDelegate.objects.create(
+            invoice=invoice, event_code="TESTEV-26",
+            first_name="Grace", last_name="Hopper", email="grace@example.com",
+        )
+        BookEvent.objects.filter(pk=invoice.pk).update(accounts_contact_email="")
+
+        rows = self._get("/api/data/delegates/", self.raw).json()["results"]
+        row = next(r for r in rows if r["invoice_number"] == "INV-NOCONTACT")
+        self.assertEqual(row["accounts_contact_email"], d.email)
+
+    def test_delegate_row_has_no_sales_executive_when_the_invoice_has_none(self):
+        row = next(
+            r for r in self._get("/api/data/delegates/", self.raw).json()["results"]
+            if r["invoice_number"] == "INV-TEST-1"
+        )
+        self.assertIsNone(row["sales_executive"])
+        self.assertIsNone(row["sales_executive_name"])
+
     def test_delegate_dates_are_null_when_the_invoice_has_none(self):
         """
         Both columns are nullable on BookEvent, so a delegate on an undated
@@ -136,13 +252,20 @@ class DataApiEndpointTests(TestCase):
 
     def test_delegate_page_query_count_is_independent_of_row_count(self):
         """
-        Regression guard for DelegateDataViewSet.select_related("invoice").
+        Regression guard for DelegateDataViewSet's select_related.
 
-        request_date and invoice_date are real invoice columns, so without the
-        join each delegate row would cost one extra query. This endpoint is
-        walked 500 rows at a time over roughly 16,000 delegates, so a per-row
-        query is the difference between one request and five hundred.
+        request_date, invoice_date and the rest of the invoice-side report
+        columns are real invoice columns, so without the join each delegate row
+        would cost one extra query. This endpoint is walked 500 rows at a time
+        over roughly 16,000 delegates, so a per-row query is the difference
+        between one request and five hundred.
+
+        Every invoice here is given a SALES EXECUTIVE deliberately: that column
+        is reported by name, which is a second hop off the invoice, and an
+        invoice with none would leave invoice__sales_executive unguarded.
         """
+        owner = get_user_model().objects.create_user(username="qexec", password="x")
+
         def add_delegates(n, start):
             for i in range(start, start + n):
                 inv = BookEvent.objects.create(
@@ -150,6 +273,7 @@ class DataApiEndpointTests(TestCase):
                     payment_status="Paid",
                     request_date=datetime.date(2026, 5, 1),
                     invoice_date=datetime.date(2026, 5, 2),
+                    sales_executive=owner,
                 )
                 BookDelegate.objects.create(
                     invoice=inv, event_code="TESTEV-26",
@@ -262,11 +386,39 @@ class CreateDataApiKeyCommandTests(TestCase):
         # The printed raw key must be the one this row hashes to, and the hash
         # itself must never appear in the output.
         # "..." excludes the abbreviated preview line, which also starts dapi_.
-        raw = [t for t in output.split()
-               if t.startswith("dapi_") and "..." not in t]
-        self.assertEqual(len(raw), 1, output)
-        self.assertEqual(DataApiKey.hash_key(raw[0]), key.key_hash)
+        self.assertEqual(self._printed_raw_keys(output), [key])
         self.assertNotIn(key.key_hash, output)
+
+    @staticmethod
+    def _printed_raw_keys(output):
+        """
+        The DataApiKey rows the raw keys in `output` hash to, in printed order.
+
+        Colour codes are stripped first; see strip_ansi above. "..." excludes the
+        abbreviated preview line, which also starts dapi_.
+        """
+        tokens = [t for t in strip_ansi(output).split()
+                  if t.startswith("dapi_") and "..." not in t]
+        return [DataApiKey.objects.get(key_hash=DataApiKey.hash_key(t))
+                for t in tokens]
+
+    def test_the_printed_key_is_readable_from_a_colour_capable_console(self):
+        """
+        Regression guard for the above. force_color reproduces what a real
+        terminal gets — without the strip, the raw key comes back wrapped in
+        escape codes and hashes to nothing in the table.
+        """
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        call_command("create_data_api_key", "Coloured", stdout=out, force_color=True)
+        output = out.getvalue()
+
+        self.assertIn("\x1b[", output)  # the console path really is exercised
+        key = DataApiKey.objects.get(name="Coloured")
+        self.assertEqual(self._printed_raw_keys(output), [key])
 
     def test_command_reuses_an_existing_service_user(self):
         from django.core.management import call_command
