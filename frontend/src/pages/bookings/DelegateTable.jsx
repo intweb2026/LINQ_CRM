@@ -161,6 +161,20 @@ const baseCols = ({ onTransfer } = {}) => [
 ];
 
 /**
+ * The booking code that is never charged for.
+ *
+ * An SPP delegate is a sponsor's pass, so the row carries no money: selecting it
+ * blanks Date Paid and sets Payable/Free to 'Free' in one go, which is what
+ * whoever picked it was going to do by hand on the next two cells anyway. Matched
+ * exactly, so the combined 'SPP / Group Pass' is left alone — that one is a group
+ * pass as well and is not automatically free.
+ *
+ * Like the Date Paid rule below, this fires only as the code CHANGES: both cells
+ * stay ordinary editors and either can be set back by hand straight afterwards.
+ */
+const FREE_BOOKING_CODE = 'SPP';
+
+/**
  * Statuses a Date Paid entry is allowed to promote to 'Paid'.
  *
  * Deliberately NOT every status. 'Cancelled', 'Refunded', 'Credit Transferred',
@@ -205,6 +219,10 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     if (key === 'payment_date') {
       const auto = autoPaidStatus(next[i], value);
       if (auto) row.payment_status = auto;
+    }
+    if (key === 'booking_code' && String(value).trim() === FREE_BOOKING_CODE) {
+      row.payment_date = '';
+      row.paid_or_free = 'Free';
     }
     // A cancelled booking does not seat a delegate, so the ordinal drops to 0
     // along with the status; the picker still allows correcting it by hand.
