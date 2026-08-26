@@ -328,12 +328,33 @@ function OperatorSelect({ value, onChange, ops = FILTER_OPS }) {
   );
 }
 
+/**
+ * The condition a column starts with when its filter is first opened.
+ *
+ * A column with `opts` picks from a CLOSED list — the payment statuses, the
+ * grades, the ticket priorities — and every one of those is a `choice` field
+ * server-side. The backend's choice vocabulary has no `contains`, so defaulting
+ * these to Contains meant the single most common interaction in the whole table
+ * (open the funnel, tick "Paid") had no backend form and was re-applied in the
+ * browser over the loaded rows, with the footer counting them. Ticking a value
+ * off a closed list means EQUALITY anyway, and Is is also the more accurate
+ * answer where one choice is a prefix of another: Contains "Paid" swept up
+ * "Paid (Transferred)" as well.
+ *
+ * Free-text columns keep Contains — it is what a person typing a fragment
+ * means, and text fields register it.
+ */
+function blankCond(col) {
+  if (isDateCol(col)) return emptyDateCond(col.key);
+  return { key: col.key, op: col.opts ? 'Is' : 'Contains', values: [] };
+}
+
 // Unified checklist item for the toolbar Search/Filter panel: checking a field
 // expands its operator + value editor directly beneath it (spreadsheet-search style).
 function FilterListItem({ col, cond, onToggle, onChangeCond }) {
   const checked = !!cond;
   const isDate = isDateCol(col);
-  const value = cond || (isDate ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
+  const value = cond || blankCond(col);
   const ops = isDate ? DATE_OPS : FILTER_OPS;
   const noValueOps = isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS;
   const needsValue = checked && !noValueOps.includes(value.op);
@@ -441,7 +462,7 @@ function sortHint(col, dir) {
  */
 function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove }) {
   const active = cond ? condActive(cond) : false;
-  const value = cond || (isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
+  const value = cond || blankCond(col);
   const dir = sort && sort.key === col.key ? sort.dir : null;
   return (
     <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '') + (active ? 'act' : '')}>
@@ -1200,7 +1221,7 @@ export default function DataTable({
   }
   function clearAll() { setConds([]); setQ(''); resetPaging(); }
   function addCond(col) {
-    const blank = isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] };
+    const blank = blankCond(col);
     setConds((cs) => [...cs, blank]);
     resetPaging();
   }

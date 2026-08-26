@@ -175,20 +175,46 @@ _PAIR_OPS = {"between", "not_between"}
 # list: substring matches work on fragments, and ordinal comparisons take
 # bounds that may sit outside the set of stored values.
 _UNCONSTRAINED_VALUE_OPS = {
-    "contains", "not_contains",
+    "contains", "not_contains", "like",
     "gt", "gte", "lt", "lte", "between", "not_between", "before", "after",
 }
 
+# `like` is a SQL-LIKE pattern — % for any run of characters, _ for one — and it
+# is here because the table OFFERS it. Without a backend form, picking "Is Like"
+# in the filter panel dropped that condition to the browser and it narrowed the
+# loaded page alone, which is indistinguishable from a working filter until the
+# count is checked. Evaluated as a case-insensitive anchored regex, translated
+# from the pattern by _like_regex below, so it means what the browser's likeTest
+# means.
 OPERATORS_BY_TYPE = {
     "text": [
         "is", "is_not", "contains", "not_contains", "starts_with", "ends_with",
-        "any_of", "none_of", "is_empty", "is_not_empty",
+        "like", "any_of", "none_of", "is_empty", "is_not_empty",
     ],
-    "choice": ["is", "is_not", "any_of", "none_of", "is_empty", "is_not_empty"],
-    "boolean": ["is", "is_empty", "is_not_empty"],
+    # contains / not_contains on a CHOICE field are here because the table used
+    # to default every column's filter to "Contains", so filters saved before
+    # that changed still carry it — and without a backend form each of those
+    # silently reverted to filtering the loaded page. A choice column is a
+    # CharField underneath, so the substring match is the same one text gets;
+    # _UNCONSTRAINED_VALUE_OPS already exempts both from the membership check,
+    # since a fragment of a choice is not itself a choice.
+    "choice": ["is", "is_not", "contains", "not_contains", "like",
+               "any_of", "none_of", "is_empty", "is_not_empty"],
+    # is_not is here so a boolean column answers "not ticked" as one criterion.
+    # It was absent, so the table's "Is Not" fell back to the browser and
+    # narrowed the loaded page alone. _q_for negates the plain equality for any
+    # non-text type, so nothing else was needed.
+    "boolean": ["is", "is_not", "is_empty", "is_not_empty"],
+    # any_of / none_of are here for the same reason they are on text: the
+    # table's "Is" filter accepts SEVERAL values, and multi-value Is maps onto
+    # any_of. Without them a two-value filter on a numeric column — Delegate
+    # Number is 0 or 1 — had no backend form at all and fell back to filtering
+    # whichever page happened to be loaded. _q_for already builds them for
+    # non-text types with plain equality, so nothing else was needed.
     "number": [
         "is", "is_not", "gt", "gte", "lt", "lte", "between",
-        "contains", "not_contains", "is_empty", "is_not_empty",
+        "any_of", "none_of",
+        "contains", "not_contains", "like", "is_empty", "is_not_empty",
     ],
     # not_between is the only operator here without a plain-language twin in the
     # original vocabulary. It exists because "is not in this window" is
@@ -204,6 +230,37 @@ OPERATORS_BY_TYPE = {
 
 # Types whose column can meaningfully hold '' as well as NULL. Drives is_empty.
 _TEXTISH = {"text", "choice"}
+
+
+# POSIX ERE metacharacters. Deliberately NOT re.escape(): that also escapes
+# '-', '&', '~', '#' and whitespace, and Postgres reads a backslash before a
+# non-alphanumeric as the literal character, so those would still work — but it
+# escapes them with sequences this file would then have to reason about per
+# backend. Escaping exactly the metacharacters is the smaller claim.
+_ERE_SPECIAL = set(".^$*+?()[]{}|" + chr(92))
+
+
+def _like_regex(pattern):
+    """
+    A SQL-LIKE pattern as an anchored, case-insensitive regex.
+
+    Mirrors likeTest in frontend/src/components/DataTable.jsx exactly — % is any
+    run of characters, _ is exactly one, everything else is literal, and the
+    whole value must match. The two evaluators must agree: the same filter is
+    applied by the browser whenever a condition cannot travel.
+    """
+    out = ["^"]
+    for ch in str(pattern):
+        if ch == "%":
+            out.append(".*")
+        elif ch == "_":
+            out.append(".")
+        elif ch in _ERE_SPECIAL:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    out.append("$")
+    return "".join(out)
 
 
 class FilterSpecError(Exception):
@@ -228,7 +285,19 @@ class FilterSpecMixin:
             },
             "company_name": {"type": "text", "label": "Company",
                              "source": "invoice__company_name"},
+            # COMPUTED: no column holds this value, so the filter runs against
+            # an annotation. Use it wherever the table displays something the
+            # serializer builds — a full name, a related user's display name, a
+            # unit conversion — because the alternative is not filtering at all,
+            # and "not at all" degrades to filtering the loaded page.
+            "name": {"type": "text", "label": "Name",
+                     "expression": lambda: Trim(Concat(...))},
         }
+
+    `expression` may be a callable, evaluated per request, so a registry can be
+    declared at class-definition time. `source`, `resolved` and `expression` are
+    three ways to name the same thing — where the value lives — and exactly one
+    of them applies per field.
     """
 
     filter_spec_fields = {}
@@ -392,8 +461,30 @@ class FilterSpecMixin:
         return Q(**{f"{path}__isnull": True}) | Q(**{path: ""})
 
     # ── Path resolution + annotations ─────────────────────────────────────────
-    def _annotation_name(self, key):
-        return f"_fs_{key}"
+    def _annotation_name(self, key, cast=False):
+        """
+        Name of the annotation a criterion filters through.
+
+        Two names, not one. A number field filtered with `contains` is compared
+        as TEXT and needs a Cast; the same field filtered with `gt` in the same
+        request must stay numeric. One name for both meant the second annotation
+        silently replaced the first in `_prepare`'s dict, so a spec carrying
+        "discount contains 2" AND "discount gt 0" compared one of them against
+        the wrong type. The cast form gets its own name and the two coexist.
+        """
+        return f"_fs_{key}_txt" if cast else f"_fs_{key}"
+
+    @staticmethod
+    def _expression_for(cfg):
+        """
+        The declared `expression`, resolved.
+
+        Accepts a callable so a registry can be written at class-definition time
+        without evaluating ORM expressions at import; anything else is taken as
+        the expression itself.
+        """
+        expr = cfg["expression"]
+        return expr() if callable(expr) else expr
 
     def _resolved_expression(self, cfg):
         """COALESCE(NULLIF(override, ''), invoice) — '' on the override inherits."""
@@ -405,22 +496,31 @@ class FilterSpecMixin:
         return Coalesce(NullIf(override, Value("")), invoice)
 
     def _prepare(self, queryset, criteria):
-        """Attach annotations for any resolved or text-cast field in play."""
+        """Attach annotations for any resolved, computed or text-cast field in play."""
         annotations = {}
         for c in criteria:
             key = c["field"]
             cfg = self.get_filter_spec_fields()[key]
+            textual = cfg["type"] == "number" and c["op"] in ("contains", "not_contains", "like")
             if cfg.get("resolved"):
-                annotations[self._annotation_name(key)] = self._resolved_expression(cfg)
-            elif cfg["type"] == "number" and c["op"] in ("contains", "not_contains"):
-                src = cfg.get("source", key)
-                annotations[self._annotation_name(key)] = Cast(src, TextField())
+                base = self._resolved_expression(cfg)
+            elif cfg.get("expression"):
+                base = self._expression_for(cfg)
+            else:
+                base = None
+            if base is not None:
+                annotations[self._annotation_name(key)] = base
+                if textual:
+                    annotations[self._annotation_name(key, cast=True)] = Cast(base, TextField())
+            elif textual:
+                annotations[self._annotation_name(key, cast=True)] = Cast(
+                    cfg.get("source", key), TextField())
         return queryset.annotate(**annotations) if annotations else queryset
 
     def _path_for(self, key, cfg, op):
-        if cfg.get("resolved"):
-            return self._annotation_name(key)
-        if cfg["type"] == "number" and op in ("contains", "not_contains"):
+        if cfg["type"] == "number" and op in ("contains", "not_contains", "like"):
+            return self._annotation_name(key, cast=True)
+        if cfg.get("resolved") or cfg.get("expression"):
             return self._annotation_name(key)
         return cfg.get("source", key)
 
@@ -505,9 +605,11 @@ class FilterSpecMixin:
             values = c.get("values")
             if not isinstance(values, list) or len(values) != 2:
                 raise FilterSpecError(f"{where}: 'between' needs exactly 2 values.")
-        elif op in ("contains", "not_contains"):
+        elif op in ("contains", "not_contains", "like"):
             # Single value OR a list. A list means "contains any of" /
-            # "contains none of" — the worked example uses the list form.
+            # "contains none of" / "matches any of these patterns" — the worked
+            # example uses the list form, and the browser's own evaluator ORs a
+            # multi-value condition the same way.
             if "values" in c and c.get("values") is not None:
                 values = c["values"]
                 if not isinstance(values, list) or len(values) < 1:
@@ -567,6 +669,12 @@ class FilterSpecMixin:
             for item in values:
                 q |= Q(**{f"{path}__icontains": item})
             return ~q
+
+        if op == "like":
+            q = Q()
+            for item in values:
+                q |= Q(**{f"{path}__iregex": _like_regex(item)})
+            return q
 
         if op == "starts_with":
             return Q(**{f"{path}__istartswith": v})

@@ -40,7 +40,7 @@ const day = (v) => dim(v) || fdate(v);
  * already loaded and DataTable says so rather than implying a full-table result.
  */
 const tkCols = () => [
-  { key: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => fdate(v) },
+  { key: 'created_at', serverField: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => fdate(v) },
   { key: 'link_url', serverField: 'link_url', label: 'Link URL', group: 'mr', cell: (v) => <ExtLink value={v} /> },
   { key: 'linkedin_keywords', serverField: 'linkedin_keywords', label: 'LinkedIn Keywords', group: 'mr' },
   { key: 'duplicate_tickets', serverField: 'duplicate_tickets', label: 'Duplicate Tickets', group: 'mr', cell: (v) => dim(v) || <span className="mono" style={{ color: 'var(--amber)' }}>{v}</span> },
@@ -62,12 +62,12 @@ const tkCols = () => [
   { key: 'complete_date_lx2', serverField: 'complete_date_lx2', label: 'Complete Date (LX2)', type: 'date', group: 'lx', cell: day },
   { key: 'dm_comments', serverField: 'dm_comments', label: 'DM Comments', group: 'dm' },
   { key: 'dm_comments_lx2', serverField: 'dm_comments_lx2', label: 'DM Comments (LX-2)', group: 'lx' },
-  { key: 'source_spreadsheet_id', label: 'Source_Spreadsheet_ID', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
-  { key: 'source_tab', label: 'Source_Tab', group: 'dm' },
-  { key: 'source_row_number', label: 'Source_Row_Number', group: 'dm', num: true, cell: num },
-  { key: 'idempotency_key', label: 'Idempotency_Key', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
-  { key: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => fdate(v) },
-  { key: 'id', label: 'ID', group: 'rec', serverOrdering: 'id', num: true, cell: (v) => <span className="mono">{v}</span> },
+  { key: 'source_spreadsheet_id', serverField: 'source_spreadsheet_id', label: 'Source_Spreadsheet_ID', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
+  { key: 'source_tab', serverField: 'source_tab', label: 'Source_Tab', group: 'dm' },
+  { key: 'source_row_number', serverField: 'source_row_number', label: 'Source_Row_Number', group: 'dm', num: true, cell: num },
+  { key: 'idempotency_key', serverField: 'idempotency_key', label: 'Idempotency_Key', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
+  { key: 'updated_at', serverField: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => fdate(v) },
+  { key: 'id', serverField: 'id', label: 'ID', group: 'rec', serverOrdering: 'id', num: true, cell: (v) => <span className="mono">{v}</span> },
   { key: 'assigned_mr', serverField: 'assigned_mr', label: 'Assigned MR', group: 'mr', cell: person },
   { key: 'added_user_text', serverField: 'added_user_text', label: 'Added User', group: 'rec' },
   // Off the Zoho report, so hidden by default rather than dropped — they are real

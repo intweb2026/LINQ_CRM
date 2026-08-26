@@ -16,8 +16,21 @@
 // An entry must set one or the other, never both. `mod: null` with no `needsAny`
 // would mean ungated, which nothing is any more.
 //
-// `hpOnly` is a THIRD gate and stacks on top of whichever of the two an entry
-// uses: the entry is reachable only by the HP account, whatever the permission
+// `adminOnly` is a THIRD gate and stacks on top of whichever of the two an entry
+// uses: the entry is reachable only by an administrator, whatever the permission
+// matrix says. It mirrors backend/accounts/permissions.py:IsAdminRole, which
+// guards the endpoint behind such an entry, and it exists because a `mod` alone
+// cannot express "no role may be granted this" — ticking the module would light
+// up a page whose every request then 403s.
+//
+// ONE ENTRY CARRIES IT: Event Performance. Its numbers are per-event revenue and
+// paid/unpaid delegate counts across the whole catalogue, and the server has
+// always answered /api/event-performance/ for admins only. The rail and the page
+// were gated on the `performance` module instead, so any team ticked into it saw
+// the entry, opened the page and read commercially sensitive figures the module
+// was never meant to authorise. Both now ask the same question the server asks.
+//
+// `hpOnly` is a FOURTH gate and stacks the same way: the entry is reachable only by the HP account, whatever the permission
 // matrix says. It is not a module because it is not a role capability — no role
 // can be granted it and no role can lose it, so putting it in the permission
 // matrix would only create a switch that looks like it works and does not.
@@ -63,7 +76,10 @@ export const NAV = [
   ] },
   { g: 'Insights', items: [
     { id: 'dashboard', l: 'Dashboard', ic: 'grid', needsAny: DASH_MODULES, path: '/dashboard' },
-    { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', path: '/performance' },
+    // `adminOnly` — the `mod` alongside it is decorative, kept only so an entry
+    // never sits here with no module at all, and the Permissions grid shows the
+    // Performance row as locked for the same reason (see CRM_MODULES).
+    { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance' },
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },
@@ -103,12 +119,15 @@ export const NAV_FLAT = NAV.flatMap((g) => g.items);
  * three places for a module to stay visible after being revoked, so it lives
  * here instead.
  *
- * `username` is the third argument rather than something read off a hook,
+ * `username` and `isAdmin` are arguments rather than something read off a hook,
  * for the same reason `canView` is passed in: this module must stay React-free.
- * It is optional, and an absent username fails `hpOnly` closed — a caller that
- * has not been given the session yet hides the entry rather than showing it.
+ * Both are optional, and an absent one fails `hpOnly` / `adminOnly` CLOSED — a
+ * caller that has not been given the session yet hides the entry rather than
+ * showing it. That direction matters: these two gates gate the surfaces the
+ * permission matrix cannot, so guessing wrong must never guess open.
  */
-export function canAccess(item, canView, username) {
+export function canAccess(item, canView, username, isAdmin) {
+  if (item.adminOnly && !isAdmin) return false;
   if (item.hpOnly && username !== HP_USERNAME) return false;
   if (item.needsAny) return item.needsAny.some((m) => canView(m));
   return !item.mod || canView(item.mod);
@@ -139,8 +158,8 @@ export function canAccess(item, canView, username) {
  * sidebar logo, NoAccessPage) still resolves through here, so the landing page
  * is decided in exactly one place.
  */
-export function homeFor(canView, username) {
-  const first = NAV_FLAT.find((i) => canAccess(i, canView, username));
+export function homeFor(canView, username, isAdmin) {
+  const first = NAV_FLAT.find((i) => canAccess(i, canView, username, isAdmin));
   return first
     ? { path: first.path, label: first.l, ic: first.ic }
     : { path: '/dashboard', label: 'Dashboard', ic: 'grid' };

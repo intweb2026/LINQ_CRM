@@ -15,7 +15,8 @@ POST /api/webhooks/keys/{id}/regenerate/      — regenerate secret
 """
 import logging
 import traceback
-from django.db.models import Q
+from django.db.models import F, IntegerField, Q, Value
+from django.db.models.functions import Coalesce, Round
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -354,13 +355,39 @@ class WebhookLogViewSet(FilterSpecMixin, viewsets.ReadOnlyModelViewSet):
     # hung one. `payload`, `headers`, `response` and `stack_trace` are excluded
     # — they are large text blobs and filtering them would be a table scan
     # over megabytes per row.
-    filter_spec_fields = build_filter_spec_fields(
-        WebhookLog,
-        exclude={"payload", "headers", "response", "stack_trace",
-                 "api_key", "created_booking"},
-        labels={"invoice_number": "Invoice Number", "event_code": "Event Code",
-                "db_insert_status": "DB Insert Status"},
-    )
+    filter_spec_fields = {
+        **build_filter_spec_fields(
+            WebhookLog,
+            exclude={"payload", "headers", "response", "stack_trace",
+                     "api_key", "created_booking"},
+            labels={"invoice_number": "Invoice Number", "event_code": "Event Code",
+                    "db_insert_status": "DB Insert Status"},
+        ),
+        # ── The three columns the list builds rather than stores ──────────────
+        # api/webhooks.js derives all three per row, so none of them is a column
+        # build_filter_spec_fields could find, and each was therefore filtered in
+        # the browser over the loaded page. On 130,287 deliveries that is a
+        # filter answering from whatever the last scroll fetched.
+        #
+        # Each mirrors its line in api/webhooks.js exactly:
+        #   api_key_name  the related key's name (serializers.get_api_key_name)
+        #   records       records_inserted + records_updated
+        #   duration_ms   processing_duration is SECONDS as a float; the cell
+        #                 shows milliseconds, rounded, and 0 where the delivery
+        #                 never recorded one — so the filter is written in
+        #                 milliseconds too, or "duration_ms gt 500" would compare
+        #                 against a number nobody has seen.
+        "api_key_name": {"type": "text", "label": "API Key",
+                         "source": "api_key__name"},
+        "records": {"type": "number", "label": "Records",
+                    "expression": lambda: F("records_inserted") + F("records_updated")},
+        "duration_ms": {"type": "number", "label": "Duration (ms)",
+                        "expression": lambda: Coalesce(
+                            Round(F("processing_duration") * Value(1000.0)),
+                            Value(0),
+                            output_field=IntegerField(),
+                        )},
+    }
     # Explicit rather than inherited: DRF silently drops an unrecognised
     # ordering term, so anything the frontend may ask for has to be named.
     ordering_fields = ["id", "received_at", "created_at", "status",

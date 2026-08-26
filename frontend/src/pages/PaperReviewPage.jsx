@@ -27,6 +27,17 @@ import ClearAllButton from '../components/ClearAllButton';
  * back into the component, wrapped in useMemo over what it reads.
  */
 const REVIEW_COLS = [
+  /* EVERY column declares `serverField`. It is what routes a filter condition to
+     Django; without it DataTable re-applies the condition in the BROWSER, over
+     the rows already fetched. Not one column here carried it, so the comment
+     below — that a text condition on these is "evaluated by the database over
+     every row" — described an intention rather than the behaviour: every filter
+     on this table narrowed the loaded page and the footer counted that page. The
+     names match backend/paper_review/views.py filter_spec_fields exactly, which is the
+     registry the schema endpoint advertises and the only thing a criterion is
+     allowed to name. A new column needs its entry there before it can have one
+     here; deny-by-default means an unregistered name is dropped back to the
+     browser rather than 400ing the list. */
   /* event_code and company_name carry NO `opts`. Those dropdowns were
      built by scanning the loaded rows, which under server paging means
      the fifty on screen, so an event absent from page one would look like
@@ -34,41 +45,52 @@ const REVIEW_COLS = [
      a text condition on either is still evaluated by the database over
      every row. grade and session_location_on_agenda keep theirs; those
      lists are constants, not a scan of the data. */
-  { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-  { key: 'paper_submission_date', serverOrdering: 'paper_submission_date', label: 'Paper Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
-  { key: 'speaker_email_ref', serverOrdering: 'speaker_email_ref', label: 'Speaker Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
-  { key: 'research_email_ref', serverOrdering: 'research_email_ref', label: 'Research Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
+  { key: 'event_code', serverField: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
+  { key: 'paper_submission_date', serverField: 'paper_submission_date', serverOrdering: 'paper_submission_date', label: 'Paper Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'speaker_email_ref', serverField: 'speaker_email_ref', serverOrdering: 'speaker_email_ref', label: 'Speaker Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
+  { key: 'research_email_ref', serverField: 'research_email_ref', serverOrdering: 'research_email_ref', label: 'Research Email Ref', group: 'id', cell: (v) => v || <span className="dim">—</span> },
   // C1 — the row marker. Advisory only: a resubmission is legitimate, so
   // this never blocks anything. The tooltip carries the scope caveat,
   // because the count is computed over the caller's own events only.
-  { key: 'duplicate_count', serverOrdering: 'duplicate_count', label: 'Duplicate?', group: 'id', num: true,
+  { key: 'duplicate_count', serverField: 'duplicate_count', serverOrdering: 'duplicate_count', label: 'Duplicate?', group: 'id', num: true,
     cell: (v) => ((v || 0) > 0
       ? <span className="tg bg-amber" title={`${v} other review${v === 1 ? '' : 's'} with this speaker's email on this event, within your assigned events`}>{v}</span>
       : <span className="dim">—</span>) },
   // Name only — Company Name is the very next column, so repeating it under
   // the speaker's name said the same thing twice.
-  { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
-  { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
-  { key: 'email', serverOrdering: 'email', label: 'Email Address of the Speaker', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
-  { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn Profile of Speaker', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-  { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers Count', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-  { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn Company Profile', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
-  { key: 'nos', serverOrdering: 'nos', label: 'NOS?', group: 'sp', cell: (v) => (v ? <span className="tg bg-teal">Yes</span> : <span className="dim">No</span>) },
+  { key: 'speaker_name', serverField: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
+  { key: 'company_name', serverField: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
+  { key: 'email', serverField: 'email', serverOrdering: 'email', label: 'Email Address of the Speaker', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
+  { key: 'linkedin_speaker', serverField: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn Profile of Speaker', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+  { key: 'linkedin_followers', serverField: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers Count', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+  { key: 'linkedin_company', serverField: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn Company Profile', group: 'sp', cell: (v) => (v ? <a href={v} target="_blank" rel="noreferrer" className="mono lnk" style={{ fontSize: 11 }}>{v}</a> : <span className="dim">—</span>) },
+  // The one BOOLEAN column, and the only one that needs `opts` for a reason
+  // other than a short value list: filter values are the STORED ones, and
+  // accounts/filter_spec.py `_coerce_value` answers 400 for anything that is
+  // not a true/false token — a 400 on the list request is a table showing an
+  // error, not a rejected criterion. A two-item picker of 'true'/'false',
+  // relabelled Yes/No by `optLabel`, means the cell reads as it always did
+  // while the value sent is one the backend can compare. (lib/filterSpec.js
+  // also refuses to send an unparseable boolean, so a stored filter from before
+  // this cannot break the page either.)
+  { key: 'nos', serverField: 'nos', serverOrdering: 'nos', label: 'NOS?', group: 'sp',
+    cell: (v) => (v ? <span className="tg bg-teal">Yes</span> : <span className="dim">No</span>),
+    opts: () => ['true', 'false'], optLabel: (v) => (v === 'true' ? 'Yes' : 'No') },
   // The six rubric criteria are model columns under their own names, so
   // each orders server side under that name; PaperReviewViewSet spreads
   // CRITERIA_FIELDS into ordering_fields from the same single source.
   ...PAPER_REVIEW_CRITERIA.map((c) => ({
-    key: c.key, serverOrdering: c.key, label: `${c.label} (${c.max})`, group: 'sc', num: true,
+    key: c.key, serverField: c.key, serverOrdering: c.key, label: `${c.label} (${c.max})`, group: 'sc', num: true,
     cell: (v) => (v == null || v === '' ? <span className="dim">—</span> : nf(v)),
   })),
-  { key: 'proposal_score', serverOrdering: 'proposal_score', label: 'Proposal Score', group: 'sc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : <b style={{ color: 'var(--text)' }}>{nf(v)}</b>) },
-  { key: 'grade', serverOrdering: 'grade', label: 'Grade', group: 'sc', cell: (v) => (v ? <Dot tone={PAPER_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => PAPER_GRADES },
-  { key: 'session_location_on_agenda', serverOrdering: 'session_location_on_agenda', label: 'Session or Location on Agenda', group: 'ag', opts: () => PAPER_SESSION_OPTIONS },
-  { key: 'internal_footnotes', label: 'Internal Footnotes', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
-  { key: 'feedback_to_speaker', serverOrdering: 'feedback_to_speaker', label: 'Feedback to Speaker or Request Information', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
-  { key: 'theme', serverOrdering: 'theme', label: 'Theme', group: 'ct' },
-  { key: 'proposal_received', serverOrdering: 'proposal_received', label: 'Proposal Received', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
-  { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+  { key: 'proposal_score', serverField: 'proposal_score', serverOrdering: 'proposal_score', label: 'Proposal Score', group: 'sc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : <b style={{ color: 'var(--text)' }}>{nf(v)}</b>) },
+  { key: 'grade', serverField: 'grade', serverOrdering: 'grade', label: 'Grade', group: 'sc', cell: (v) => (v ? <Dot tone={PAPER_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => PAPER_GRADES },
+  { key: 'session_location_on_agenda', serverField: 'session_location_on_agenda', serverOrdering: 'session_location_on_agenda', label: 'Session or Location on Agenda', group: 'ag', opts: () => PAPER_SESSION_OPTIONS },
+  { key: 'internal_footnotes', serverField: 'internal_footnotes', label: 'Internal Footnotes', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
+  { key: 'feedback_to_speaker', serverField: 'feedback_to_speaker', serverOrdering: 'feedback_to_speaker', label: 'Feedback to Speaker or Request Information', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
+  { key: 'theme', serverField: 'theme', serverOrdering: 'theme', label: 'Theme', group: 'ct' },
+  { key: 'proposal_received', serverField: 'proposal_received', serverOrdering: 'proposal_received', label: 'Proposal Received', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+  { key: 'agenda_addition', serverField: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
 ];
 
 // Same reasoning as REVIEW_COLS, for the two props DataTable reads by identity.

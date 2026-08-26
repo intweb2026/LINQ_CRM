@@ -12,12 +12,12 @@ import { useSession } from '../context/SessionContext';
  */
 export default function NoAccessPage({ module, reason }) {
   const nav = useNavigate();
-  const { canView, user } = useSession();
+  const { canView, user, isAdmin } = useSession();
   // The way out has to be a page this user can actually open. homeFor() resolves
   // that against the live permission matrix, so the button cannot offer a module
   // this user just bounced off — and cannot offer Dashboard either, now that
   // Dashboard is itself gated.
-  const home = homeFor(canView, user?.username);
+  const home = homeFor(canView, user?.username, isAdmin);
   return (
     <div className="card">
       <div className="mt">

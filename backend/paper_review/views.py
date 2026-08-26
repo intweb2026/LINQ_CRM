@@ -218,29 +218,39 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # had to be found in both.
 
     # ── Compound filter engine ────────────────────────────────────────────────
-    filter_spec_fields = build_filter_spec_fields(
-        PaperReview,
-        # Provenance and audit columns: import_batch_id has its own purpose-built
-        # filter in filters.py, and filtering on who last touched a row is not a
-        # use case anyone has asked for.
-        exclude=("created_by", "updated_by", "import_batch_id"),
-        labels={
-            "event_code": "Event Code",
-            "paper_submission_date": "Paper Submission Date",
-            "email": "Email Address of the Speaker",
-            "linkedin_speaker": "LinkedIn — Speaker",
-            "linkedin_company": "LinkedIn — Company",
-            "linkedin_followers": "LinkedIn Followers",
-            "nos": "NOS?",
-            "proposal_score": "Proposal Score",
-            "session_location_on_agenda": "Session or Location on Agenda",
-            "internal_footnotes": "Internal Footnotes",
-            "feedback_to_speaker": "Feedback to Speaker",
-            "speaker_email_ref": "Speaker Email Ref",
-            "research_email_ref": "Research Email Ref",
-            **{f: FIELD_TO_LABEL[f] for f in CRITERIA_FIELDS},
-        },
-    )
+    filter_spec_fields = {
+        # duplicate_count is the correlated Subquery get_queryset() attaches, not
+        # a column, so build_filter_spec_fields cannot find it — and the grid's
+        # "Duplicate?" marker was therefore filtered in the browser over the
+        # loaded rows alone. filter_spec runs AFTER get_queryset(), so the
+        # annotation is on the queryset by the time a criterion names it and the
+        # count is evaluated per row by the database.
+        "duplicate_count": {"type": "number", "label": "Duplicate?",
+                            "source": "duplicate_count"},
+        **build_filter_spec_fields(
+            PaperReview,
+            # Provenance and audit columns: import_batch_id has its own purpose-built
+            # filter in filters.py, and filtering on who last touched a row is not a
+            # use case anyone has asked for.
+            exclude=("created_by", "updated_by", "import_batch_id"),
+            labels={
+                "event_code": "Event Code",
+                "paper_submission_date": "Paper Submission Date",
+                "email": "Email Address of the Speaker",
+                "linkedin_speaker": "LinkedIn — Speaker",
+                "linkedin_company": "LinkedIn — Company",
+                "linkedin_followers": "LinkedIn Followers",
+                "nos": "NOS?",
+                "proposal_score": "Proposal Score",
+                "session_location_on_agenda": "Session or Location on Agenda",
+                "internal_footnotes": "Internal Footnotes",
+                "feedback_to_speaker": "Feedback to Speaker",
+                "speaker_email_ref": "Speaker Email Ref",
+                "research_email_ref": "Research Email Ref",
+                **{f: FIELD_TO_LABEL[f] for f in CRITERIA_FIELDS},
+            },
+        ),
+    }
 
     def get_filter_spec_fields(self):
         """

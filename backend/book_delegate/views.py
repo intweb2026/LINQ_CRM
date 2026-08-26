@@ -1,6 +1,8 @@
 import logging
 
 from django.db import transaction
+from django.db.models import DecimalField, ExpressionWrapper, F, TextField, Value
+from django.db.models.functions import Coalesce, Concat, NullIf, Trim
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -66,6 +68,62 @@ def _append_reference(current, note):
     return f"{current} / {note}"
 
 
+# ── Computed filter expressions ──────────────────────────────────────────────
+# Three of the Bookings columns show a value no column holds: the delegate's
+# full name, the sales executive's display name, and the discount as a PERCENT.
+# The serializer builds each of them in Python, which is fine for rendering and
+# useless for filtering — a criterion the backend cannot express falls back to
+# filtering whichever page the browser has loaded, so "Name contains smith" over
+# 14,800 delegates answered from the 50 rows on screen and the footer counted
+# those. These re-state the same three definitions as SQL so the filter reaches
+# the whole table.
+#
+# Each must stay IDENTICAL to its serializer counterpart. Where they drift, the
+# rows that come back are not the rows the cells describe, which is worse than
+# the page-only filtering this replaces.
+
+
+def _display_name(first_path, last_path):
+    """`"first last".strip()` in SQL — BookDelegate.full_name, and User.get_full_name."""
+    return Trim(Concat(
+        Coalesce(F(first_path), Value("")),
+        Value(" "),
+        Coalesce(F(last_path), Value("")),
+        output_field=TextField(),
+    ))
+
+
+def _delegate_name():
+    """BookDelegate.full_name (models.py) — the value the Name column renders."""
+    return _display_name("first_name", "last_name")
+
+
+def _sales_executive_name():
+    """serializers.get_sales_executive_name: the full name, else the username."""
+    return Coalesce(
+        NullIf(_display_name("invoice__sales_executive__first_name",
+                             "invoice__sales_executive__last_name"), Value("")),
+        F("invoice__sales_executive__username"),
+        output_field=TextField(),
+    )
+
+
+def _discount_percent():
+    """
+    The stored FRACTION as the percent the table shows.
+
+    book_delegates.discount holds 0.20 for a 20% discount (api/bookings.js
+    fractionToPercent), so a filter sent straight at the column would compare
+    against a number the user has never seen — "Discount is 20" would match
+    nothing while looking like it worked. Multiplying here means the criterion
+    is written in the units of the cell.
+    """
+    return ExpressionWrapper(
+        F("discount") * Value(100),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+
 class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                           RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
@@ -105,8 +163,13 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     filter_spec_fields = {
         **build_filter_spec_fields(
             BookDelegate,
-            # invoice is the FK object itself; its columns are exposed by name below
-            exclude={"invoice", "delegate_number"},
+            # invoice is the FK object itself; its columns are exposed by name below.
+            # delegate_number USED to be excluded here as well. It is a column the
+            # table shows and people filter on, and excluding it did not make it
+            # unfilterable — it made it filterable in the browser over the loaded
+            # page only. It is registered now; the bulk-update exclusion is
+            # separate and stays, because save() rewrites it on Cancelled rows.
+            exclude={"invoice"},
             labels={"company_name_raw": "Company (raw)", "event_code": "Event Code"},
         ),
         # Person-level resolved fields
@@ -141,6 +204,38 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "source":         {"type": "choice", "label": "Source",
                            "source": "invoice__source",
                            "choices": list(BookEvent.Source.values)},
+
+        # ── Columns the table shows that no column holds ──────────────────────
+        # See the expression helpers above the class. Each mirrors the serializer
+        # field of the same name, so the filter and the cell agree.
+        "name":  {"type": "text", "label": "Name", "expression": _delegate_name},
+        "owner": {"type": "text", "label": "Sales Executive",
+                  "expression": _sales_executive_name},
+        # The percent, not the stored fraction — filters are written in the units
+        # of the cell. `discount` itself stays registered by the builder above
+        # against the raw column, for any caller that means the fraction.
+        "discount_percent": {"type": "number", "label": "Discount (%)",
+                             "expression": _discount_percent},
+        # Accounts Contact falls back to the delegate's own email when the
+        # invoice's is blank (serializers.get_accounts_contact_email), which is
+        # exactly the resolved shape the person-level fields use — override
+        # first, then the other side — so it is declared the same way rather
+        # than as an expression.
+        "accounts_contact_email": {
+            "type": "text", "label": "Accounts Contact",
+            "resolved": {"override": "invoice__accounts_contact_email",
+                         "invoice": "email"},
+        },
+        # created_at / updated_at are in DEFAULT_EXCLUDES because on most models
+        # they carry no business meaning. On Bookings they are two visible
+        # columns — Added Time and Modified Time — so they are registered here
+        # under the names the table uses. has_time is what tells the client to
+        # send the END of a day as the upper bound rather than its midnight; see
+        # accounts/period_filter.day_bounds() for the trap it avoids.
+        "added_time":    {"type": "date", "label": "Added Time",
+                          "source": "created_at", "has_time": True},
+        "modified_time": {"type": "date", "label": "Modified Time",
+                          "source": "updated_at", "has_time": True},
     }
 
     # ── Mass update ───────────────────────────────────────────────────────────

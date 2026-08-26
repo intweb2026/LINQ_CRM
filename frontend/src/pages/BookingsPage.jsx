@@ -34,19 +34,33 @@ import * as bookingsApi from '../api/bookings';
  *                    otherwise. A column without one is not sortable in server
  *                    mode at all, rather than sorting one page and implying more.
  *
- * Deliberately absent server fields, and why:
- *   name / owner            full_name and sales_executive_name are computed on
- *                           the serializer (a property and a SerializerMethod);
- *                           neither is a column the delegate registry exposes.
- *   accounts_contact_email  invoice-sourced but not declared in the registry.
- *   delegate_number         explicitly excluded by the viewset.
- *   added_time/modified_time created_at/updated_at are in DEFAULT_EXCLUDES.
+ * EVERY data column now carries one. It did not: name, owner,
+ * accounts_contact_email, delegate_number, discount, added_time and
+ * modified_time had no server field, and a column without one is not
+ * "unfiltered" — it is filtered in the BROWSER, over the fifty rows that
+ * happened to be loaded, with the footer counting those. On a table of ~14,800
+ * delegates that reads as a filter that works and quietly lies. The seven are
+ * registered on BookDelegateViewSet.filter_spec_fields now, three of them as
+ * SQL expressions mirroring the serializer (see the helpers there):
+ *
+ *   name / owner            Trim(first || ' ' || last), and the same over the
+ *                           invoice's sales executive with a username fallback.
+ *   accounts_contact_email  resolved — the invoice's, else the delegate's own,
+ *                           which is what the cell shows.
+ *   delegate_number         the viewset's filter exclusion was lifted.
+ *   added_time/modified_time created_at/updated_at, registered under the names
+ *                           this table uses. Both are `type: 'date'` here so the
+ *                           filter is a calendar and travels as a date criterion —
+ *                           a text `contains` has no backend form on a date field
+ *                           and would have fallen straight back to the page.
+ *   discount                serverField is `discount_percent`, NOT `discount`:
+ *                           the column stores a FRACTION (0.2) while this cell
+ *                           shows the percent (20), so the backend annotates
+ *                           discount * 100 and the criterion is written in the
+ *                           units the user can see.
+ *
+ * Still deliberately absent:
  *   transfer                a button, not data — see the column itself.
- *   discount                the column DOES exist server-side, but it stores a
- *                           FRACTION (0.2) while this cell shows the percent (20).
- *                           A server filter would therefore match a number the
- *                           user never saw, so discount is filtered in the browser
- *                           against the displayed value and DataTable says so.
  *
  * No column carries `editOpts`/`onEdit`: a booking is edited ONLY through
  * EditBookingModal, which opens via onRow and is gated on can('update',
@@ -86,12 +100,12 @@ const bkCols = ({ onTransfer } = {}) => [
   { key: 'invoice_number', label: 'Invoice Number', group: 'id', serverField: 'invoice_number', serverOrdering: '_sort_invoice', cell: (v) => <span className="mono lnk">{v}</span> },
   // Name only — the company had been repeated here as a sub-line directly
   // beside the Delegate Company column that already holds it.
-  { key: 'name', label: 'Name', group: 'del', serverOrdering: '_sort_name', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
+  { key: 'name', label: 'Name', group: 'del', serverField: 'name', serverOrdering: '_sort_name', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
   { key: 'company_name', label: 'Delegate Company', group: 'del', serverField: 'company_name' },
   { key: 'email', label: 'Delegate Email', group: 'del', serverField: 'email', serverOrdering: 'email', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
   { key: 'phone_number', label: 'Direct Line', group: 'del', serverField: 'phone_number', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
-  { key: 'accounts_contact_email', label: 'Accounts Contact', group: 'del', cell: (v) => <span className="dim" style={{ fontSize: 11.5 }}>{v}</span> },
-  { key: 'delegate_number', label: 'Delegate Number', group: 'del', cell: (v) => <span className="mono">{v}</span> },
+  { key: 'accounts_contact_email', label: 'Accounts Contact', group: 'del', serverField: 'accounts_contact_email', cell: (v) => <span className="dim" style={{ fontSize: 11.5 }}>{v}</span> },
+  { key: 'delegate_number', label: 'Delegate Number', group: 'del', serverField: 'delegate_number', cell: (v) => <span className="mono">{v}</span> },
   // Displayed as "Payable"/"Free" and filtered by the STORED values — paidOrFreeLabel
   // is a rename of the wording only, so `optLabel` relabels the filter checkboxes
   // while the value posted to ?paid_or_free= stays what the server's choice field
@@ -105,7 +119,7 @@ const bkCols = ({ onTransfer } = {}) => [
   // Percent, mapped from the stored fraction in api/bookings.js. Rendered through
   // an explicit cell so a zero discount reads as "0" — DataTable's default would
   // print the raw serialized decimal, which is what showed 0.00.
-  { key: 'discount', label: 'Discount', group: 'pay', num: true,
+  { key: 'discount', label: 'Discount', group: 'pay', num: true, serverField: 'discount_percent',
     cell: (v) => <span>{v == null || v === '' ? 0 : v}</span> },
   { key: 'add_ons', label: 'Add-Ons', group: 'pay', serverField: 'add_ons' },
   { key: 'reference', label: 'Ref', group: 'pay', serverField: 'reference', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
@@ -127,10 +141,10 @@ const bkCols = ({ onTransfer } = {}) => [
       </span>
     ),
   }] : []),
-  { key: 'added_time', label: 'Added Time', group: 'audit', serverOrdering: 'created_at',
+  { key: 'added_time', label: 'Added Time', type: 'date', group: 'audit', serverField: 'added_time', serverOrdering: 'created_at',
     cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
-  { key: 'modified_time', label: 'Modified Time', group: 'audit', cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
-  { key: 'owner', label: 'Sales Executive', group: 'team', cell: (v) => <Who name={v} avatar={false} /> },
+  { key: 'modified_time', label: 'Modified Time', type: 'date', group: 'audit', serverField: 'modified_time', cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
+  { key: 'owner', label: 'Sales Executive', group: 'team', serverField: 'owner', cell: (v) => <Who name={v} avatar={false} /> },
   // ONE attendance column, backed by `attendance`. There were two: this one, and a
   // "Attendance - IN?" Yes/No column with no backend field behind it at all — it
   // read 'No' for all 14.8k rows because api/bookings.js hardcoded it. The

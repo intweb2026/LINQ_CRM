@@ -36,24 +36,38 @@ export default function PermissionGrid({ value, inherited, onToggle, disabled })
       <tbody>
         {CRM_MODULES.map((mo) => (
           <tr key={mo.k}>
-            <td>{mo.l}</td>
+            <td>
+              {mo.l}
+              {/* Said in the row rather than only in a tooltip: an administrator
+                  looking for why Event Performance will not grant needs the
+                  answer where they are looking, not on hover. */}
+              {mo.adminOnly ? <span className="dim" style={{ marginLeft: 6, fontSize: 11 }}>Admins only</span> : null}
+            </td>
             {PERM_ACTIONS.map((a) => {
               const state = cellState(mo.k, a);
+              // An adminOnly module is not a capability any role can hold — the
+              // surface behind it checks for an administrator, not for this tick
+              // — so the cell is shown locked rather than hidden. Hiding the row
+              // would leave the grid one row short of the backend's module list
+              // and read as "no such module".
+              const locked = disabled || !!mo.adminOnly;
               return (
                 <td key={a} className={'pm-c pm-' + state}>
                   <input
                     type="checkbox"
                     className="ck"
                     checked={!!(value[mo.k] || {})[a]}
-                    disabled={disabled}
-                    onChange={() => onToggle(mo.k, a)}
+                    disabled={locked}
+                    onChange={() => { if (!mo.adminOnly) onToggle(mo.k, a); }}
                     aria-label={`${mo.l} ${a}`}
-                    title={inherited ? {
-                      inherited: 'From the team',
-                      granted: 'Given to this person on top of the team',
-                      revoked: 'Taken away from this person; the team has it',
-                      off: 'Not granted',
-                    }[state] : undefined}
+                    title={mo.adminOnly
+                      ? 'Restricted to administrators; it cannot be granted to a role.'
+                      : inherited ? {
+                        inherited: 'From the team',
+                        granted: 'Given to this person on top of the team',
+                        revoked: 'Taken away from this person; the team has it',
+                        off: 'Not granted',
+                      }[state] : undefined}
                   />
                 </td>
               );

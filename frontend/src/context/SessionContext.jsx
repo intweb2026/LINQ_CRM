@@ -197,10 +197,28 @@ export function SessionProvider({ children }) {
     return !!(m && m[action]);
   }, [perms]);
 
+  /**
+   * Whether this session is an administrator, in the SAME sense the server means.
+   *
+   * backend/accounts/permissions.py:IsAdminRole passes on `is_admin` OR a team
+   * flagged `has_all_access`, and that class guards whole surfaces which no
+   * module grant can open — Event Performance is one. A frontend gate reading
+   * only `user.role === 'admin'` would hide those surfaces from an all-access
+   * team the server would happily serve, so both halves are checked here, once,
+   * rather than re-derived per page.
+   *
+   * This is NOT a module and must never be treated as one: it cannot be granted
+   * or revoked from the Permissions grid. See `adminOnly` in lib/nav.js.
+   */
+  const isAdmin = useMemo(
+    () => user?.role === 'admin' || !!perms?.is_all_access,
+    [user, perms],
+  );
+
   const value = useMemo(() => ({
-    user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can,
+    user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin,
     roleLabel: user ? ROLE_FULL[user.role] || user.role : '',
-  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can]);
+  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -39,9 +39,12 @@ import {
 // user supplied more than one value, because the backend's arity rules differ:
 // `is` takes a single `value`, `any_of` takes a `values` list.
 //
-// `Like` has NO entry: the backend vocabulary has no SQL-LIKE operator
-// (OPERATORS_BY_TYPE in filter_spec.py), so a Like condition can only ever be
-// evaluated locally. Leaving it unmapped is what routes it there.
+// `Like` used to have NO entry, because the backend vocabulary had no SQL-LIKE
+// operator — so every Like condition was evaluated locally, against the page
+// that happened to be loaded, while looking exactly like a filter that worked.
+// filter_spec.py registers `like` now (translated to an anchored regex by
+// _like_regex, which mirrors DataTable's own likeTest), so it travels. Its list
+// form ORs the patterns, which is what condPasses does with several values.
 const OP_MAP = {
   'Is': { single: 'is', multi: 'any_of' },
   'Is Not': { single: 'is_not', multi: 'none_of' },
@@ -55,6 +58,7 @@ const OP_MAP = {
   // server answer that matched only the first.
   'Starts With': { single: 'starts_with', multi: null },
   'Ends With': { single: 'ends_with', multi: null },
+  'Like': { single: 'like', multi: 'like', listOk: true },
   'Is Empty': { single: 'is_empty', multi: 'is_empty', noValue: true },
   'Is Not Empty': { single: 'is_not_empty', multi: 'is_not_empty', noValue: true },
 };
@@ -154,6 +158,37 @@ function dateCriterion(cond, field, cfg) {
   };
 }
 
+// ── Values the backend can actually compare ──────────────────────────────────
+/**
+ * Tokens accounts/filter_spec.py `_coerce_value` accepts for a boolean.
+ *
+ * It answers 400 for anything else, and a 400 on the list request is not a
+ * rejected criterion — it is a table that shows an error instead of rows. So a
+ * value outside this set is never SENT; the condition stays client-side, which
+ * narrows the loaded page but leaves the screen working.
+ */
+const BOOL_TOKENS = ['true', 'false', '1', '0'];
+
+/**
+ * Can the backend compare this value against a field of this type?
+ *
+ * Only two types can be handed something they cannot parse. A boolean is
+ * rejected outright (above). A NUMBER is worse: `Q(estimate='abc')` raises
+ * inside the ORM rather than validating, so a typo in a numeric filter box
+ * would take the whole list down. Substring operators are exempt — they run
+ * against a text CAST of the column, so any string is a legitimate operand.
+ *
+ * Anything else — text, choice, date, fk — is either unconstrained or already
+ * checked against the field's own choice list further down.
+ */
+function valueFitsType(value, cfg, op) {
+  if (cfg.type === 'boolean') return BOOL_TOKENS.includes(String(value).toLowerCase());
+  if (cfg.type === 'number' && !['contains', 'not_contains', 'like'].includes(op)) {
+    return String(value).trim() !== '' && Number.isFinite(Number(value));
+  }
+  return true;
+}
+
 /** Every value the condition should match: committed chips plus the live draft. */
 export function condValues(cond) {
   const live = cond._live ? [cond._live] : [];
@@ -221,10 +256,19 @@ export function toCriterion(cond, col, schema) {
     return { ok: false, reason: `'${op}' not allowed on '${field}'` };
   }
 
+  // A value the field's own type cannot parse never travels — see
+  // valueFitsType. Half-typed input reaches here on every keystroke (`_live`),
+  // so "5" mid-way to "50" is normal and a 400 would blank the table while the
+  // user was still typing.
+  const unfit = values.find((v) => !valueFitsType(v, cfg, op));
+  if (unfit !== undefined) {
+    return { ok: false, reason: `'${unfit}' is not a ${cfg.type} value` };
+  }
+
   // Membership operators must name a real choice; the backend rejects anything
   // else with a 400. Substring and ordinal operators are deliberately exempt
   // (filter_spec.py _UNCONSTRAINED_VALUE_OPS), so a "contains" fragment is fine.
-  const unconstrained = ['contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'between', 'not_between', 'before', 'after'];
+  const unconstrained = ['contains', 'not_contains', 'like', 'gt', 'gte', 'lt', 'lte', 'between', 'not_between', 'before', 'after'];
   if (cfg.choices && !unconstrained.includes(op)) {
     const allowed = cfg.choices.map((c) => (typeof c === 'object' ? c.value : c));
     const bad = values.find((v) => !allowed.includes(v));

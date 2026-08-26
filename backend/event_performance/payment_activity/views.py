@@ -3,9 +3,9 @@ from __future__ import annotations
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q
 
+from accounts.permissions import IsAdminRole
 from events.models import Event
 from .queries import event_payment_metrics, event_paid_bookings
 from .calculator import calc_trend, calc_activity_color
@@ -49,7 +49,19 @@ def _build_row(event: Event, metrics: dict) -> dict:
 
 
 class PaymentActivityViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    # IsAdminRole, not IsAuthenticated. This viewset is mounted INSIDE the
+    # event-performance router (see ../urls.py) and answers with the same
+    # commercially sensitive figures the sibling EventPerformanceViewSet
+    # guards as admin-only: per-event paid-booking counts, rolling 7/15/30-day
+    # payment totals and the named sales rep on each event. IsAuthenticated
+    # made all of that readable by any logged-in session's token, so the
+    # restricted page had an unrestricted door on the same mount point.
+    #
+    # The two must stay in step: whatever gates /api/event-performance/ gates
+    # this. The frontend asks the matching question via `isAdmin`
+    # (frontend/src/context/SessionContext.jsx) rather than the `performance`
+    # module, which no longer opens either endpoint.
+    permission_classes = [IsAdminRole]
 
     def list(self, request):
         """

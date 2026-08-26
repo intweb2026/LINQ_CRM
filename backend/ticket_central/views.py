@@ -75,17 +75,41 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # excludes. status, ticket_number and every provenance field ARE filterable
     # here even though writing them is refused: reading a workflow state cannot
     # route around the submit guards, whereas writing it can.
-    filter_spec_fields = build_filter_spec_fields(
-        Ticket,
-        labels={
-            "assigned_mr": "Assigned MR", "assign_name": "Assign Name",
-            "assign_name_lx2": "Assign Name (LX-2)", "mr_comments": "MR Comments",
-            "dm_comments": "DM Comments", "dm_comments_lx2": "DM Comments (LX-2)",
-            "type_of_ticket": "Type of Ticket", "ticket_type": "Ticket Type (DMD)",
-            "event_month_year": "Event Month/Year",
-            "added_user_text": "Added User",
-        },
-    )
+    filter_spec_fields = {
+        **build_filter_spec_fields(
+            Ticket,
+            labels={
+                "assigned_mr": "Assigned MR", "assign_name": "Assign Name",
+                "assign_name_lx2": "Assign Name (LX-2)", "mr_comments": "MR Comments",
+                "dm_comments": "DM Comments", "dm_comments_lx2": "DM Comments (LX-2)",
+                "type_of_ticket": "Type of Ticket", "ticket_type": "Ticket Type (DMD)",
+                "event_month_year": "Event Month/Year",
+                "added_user_text": "Added User",
+            },
+        ),
+        # ── Columns DEFAULT_EXCLUDES held back ────────────────────────────────
+        # The surrogate key, the two timestamps and the four provenance columns
+        # are excluded from every registry by default, because on most models
+        # nobody filters them. This table SHOWS all seven — Added Time, Modified
+        # Time, ID, Source_Spreadsheet_ID, Source_Tab, Source_Row_Number and
+        # Idempotency_Key are columns in the grid — and a shown column with no
+        # server field is not unfiltered, it is filtered in the browser over the
+        # rows already fetched. Provenance is exactly what someone reaches for
+        # when tracing a bad import, which is precisely when the answer must
+        # cover the whole table rather than the current scroll position.
+        #
+        # has_time is what tells the client to send the END of a day as the
+        # upper bound instead of its midnight; without it a filter for "today"
+        # silently returns nothing but the first instant of it.
+        "created_at": {"type": "date", "label": "Added Time", "has_time": True},
+        "updated_at": {"type": "date", "label": "Modified Time", "has_time": True},
+        "id": {"type": "number", "label": "ID"},
+        "source_spreadsheet_id": {"type": "text", "label": "Source Spreadsheet ID"},
+        "source_tab": {"type": "text", "label": "Source Tab"},
+        "source_row_number": {"type": "number", "label": "Source Row Number",
+                              "nullable": True},
+        "idempotency_key": {"type": "text", "label": "Idempotency Key"},
+    }
 
     _BULK_STATIC_FIELDS = build_bulk_update_fields(
         Ticket,

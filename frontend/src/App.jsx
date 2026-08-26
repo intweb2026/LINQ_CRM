@@ -72,8 +72,8 @@ function LoginRoute() {
  * and send every session to the fallback.
  */
 function HomeRedirect() {
-  const { canView, user } = useSession();
-  return <Navigate to={homeFor(canView, user?.username).path} replace />;
+  const { canView, user, isAdmin } = useSession();
+  return <Navigate to={homeFor(canView, user?.username, isAdmin).path} replace />;
 }
 
 export default function App() {

@@ -124,7 +124,16 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // to tick, and saving any team's permissions deleted whatever google_sync row it
 // had, so the page was unreachable for everyone but the all-access Admin team and
 // no amount of clicking in the UI could change that.
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance' }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
+//
+// `adminOnly` marks a row the grid must SHOW but must not let anyone tick. The
+// key has to stay here — the list mirrors the backend's CRM_MODULES and every
+// save rebuilds the team's rows from it, so dropping 'performance' would revoke
+// it everywhere on the next save of any team — while the thing it once gated,
+// Event Performance, is now admin-only on both sides (IsAdminRole in
+// backend/event_performance/views.py, `adminOnly` in lib/nav.js). Leaving the
+// row tickable would put a switch in front of an administrator that grants a
+// module no page reads any more, which is worse than showing it locked.
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
 export const PERM_ACTIONS = ['view', 'create', 'update', 'delete'];
 export const PAGE_SIZE = 1000;
 export const ALL_MODULES = CRM_MODULES.map((m) => m.k);
