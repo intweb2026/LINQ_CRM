@@ -92,7 +92,14 @@ class RBACMixin:
 
         from django.db.models import Q
 
-        codes = user.assigned_event_codes() or []
+        # visible_event_codes(), NOT assigned_event_codes(): the first is the
+        # second widened to everyone who names this caller as their reporting
+        # manager. See accounts.models.User.data_scope_user_ids for the rule.
+        codes = user.visible_event_codes() or []
+
+        # The people this caller stands in for. One id for everybody except a
+        # lead, who also carries the active accounts mapped under them.
+        scope_ids = user.data_scope_user_ids() or [user.pk]
 
         # Build event_code OR clause (used as either primary or secondary filter).
         #
@@ -119,7 +126,11 @@ class RBACMixin:
             owner_path = "sales_executive"
 
         if owner_path:
-            combined = Q(**{owner_path: user})
+            # `__in` over scope_ids rather than `= user`, so a lead reaches a row
+            # one of their reports personally sold even on an event the lead
+            # holds no assignment for. Without this the lead's two grant routes
+            # would disagree: the event-code half already covers the reports.
+            combined = Q(**{f"{owner_path}__in": scope_ids})
             if ec_query:
                 combined |= ec_query
             return qs.filter(combined)

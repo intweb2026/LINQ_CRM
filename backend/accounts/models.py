@@ -184,8 +184,14 @@ class User(AbstractUser):
 
     def assigned_event_codes(self):
         """
-        The event codes this user may see, or None for an admin, meaning
+        The event codes belonging to THIS PERSON, or None for an admin, meaning
         unrestricted.
+
+        Personal on purpose. Read `visible_event_codes` for what a caller may
+        SEE, which is this set widened to everyone who reports to them when the
+        caller is a lead. The two were one method until data sharing gained the
+        reporting-manager rule, and keeping them apart is what stops a lead's own
+        assignment card from reporting their reports' catalogue as their own.
 
         Reads BOTH of the ways an event can belong to somebody, because there are
         two of them and their names are one character apart. `assigned_events` is
@@ -208,18 +214,88 @@ class User(AbstractUser):
         """
         if self.is_admin:
             return None
+        return self._event_codes_owned_by([self.pk])
+
+    def _event_codes_owned_by(self, user_ids):
+        """
+        The codes of every event owned by any of `user_ids`, by either route.
+
+        Factored out because two callers need the same pair of ownership routes
+        over different sets of people; `assigned_event_codes` asks about one
+        person, `visible_event_codes` asks about a lead and everyone who
+        reports to them.
+        """
+        if not user_ids:
+            return []
         # Imported here, not at module scope: events.models imports this model.
         from django.db.models import Q
         from events.models import Event
         return list(
             Event.objects
-            .filter(Q(assigned_users=self) | Q(sales_executive=self))
+            .filter(Q(assigned_users__in=user_ids) | Q(sales_executive__in=user_ids))
             # A blank code would scope to `event_code = ''`, which is every row
             # that never got one rather than no rows at all.
             .exclude(event_code="")
             .values_list("event_code", flat=True)
             .distinct()
         )
+
+    def data_scope_user_ids(self):
+        """
+        The people whose rows this user may reach, as a list of ids, or None for
+        an admin, meaning unrestricted.
+
+        Everybody gets themselves. A lead also gets everyone who NAMES THEM as
+        their reporting manager, which is `mapped_lead`, "the specific team lead
+        this user is mapped under".
+
+        THE REPORTING MANAGER IS THE WHOLE RULE
+        Not team membership, and not the `is_team_lead` flag. Two consequences
+        worth stating, because both are intended:
+
+          * Two leads sitting in one team see DIFFERENT sets, one per manager.
+            Terry sees the people mapped to Terry and nobody else, even a
+            colleague of theirs in the same team who is mapped to Fred.
+          * A member whose reporting manager is BLANK belongs to nobody, so their
+            rows stay private to them. Sharing is opt in, one filled-in field at
+            a time, and an unmapped account cannot leak by sitting in a team.
+
+        Being flagged `is_team_lead` grants nothing on its own; a lead with
+        nobody mapped under them sees only their own rows. That is why the flag
+        is not consulted here: anyone named as somebody's `mapped_lead` IS their
+        lead by definition, so a second gate could only ever disagree with the
+        field and hide rows the mapping says to share.
+
+        Members are filtered to ACTIVE. An inactive account cannot sign in, so
+        its rows would otherwise be visible to the lead and to nobody else,
+        which is a quieter form of the orphaning this whole scope prevents.
+        """
+        if self.is_admin:
+            return None
+        ids = {self.pk}
+        ids.update(
+            User.objects
+            .filter(mapped_lead=self, status=self.Status.ACTIVE)
+            .values_list("pk", flat=True)
+        )
+        return list(ids)
+
+    def visible_event_codes(self):
+        """
+        The event codes this user may SEE, or None for an admin.
+
+        `assigned_event_codes` deliberately stays personal: it answers "which
+        events are this person's own", which is what the per-user events_stats
+        card on the Users page reports, and widening it would have made a lead's
+        own assignment card silently report their reports' catalogue too.
+
+        This is that same question asked over `data_scope_user_ids`, so a lead's
+        Bookings and Events grids cover the people mapped under them while every
+        other caller of the personal accessor is untouched.
+        """
+        if self.is_admin:
+            return None
+        return self._event_codes_owned_by(self.data_scope_user_ids())
 
     @property
     def has_all_access(self):
