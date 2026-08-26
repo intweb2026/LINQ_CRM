@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Modal from '../../components/Modal';
 import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
@@ -14,11 +14,23 @@ export default function NewBookingModal({ onClose, onCreated }) {
   const today = new Date().toISOString().slice(0, 10);
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
   const EVENTS = events || [];
-  const openEvents = EVENTS.filter((e) => e.status !== 'Completed');
+  const openEvents = useMemo(() => (events || []).filter((e) => e.status !== 'Completed'), [events]);
   // Starts EMPTY, and stays empty until someone chooses. It used to auto-select the
   // first open event as soon as the list arrived, so a booking saved without
   // touching the field silently landed on whichever event happened to sort first.
   const [eventCode, setEventCode] = useState('');
+  // Codes are deduped as well as sorted: two events sharing a code would collide
+  // on the option key, and the picker would render one of them twice.
+  const eventOptions = useMemo(
+    () => [...new Set(openEvents.map((e) => e.event_code).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [openEvents]);
+  // Second line under each code in the dropdown. Several codes read alike, so the
+  // event name is what tells them apart at the moment of choosing.
+  const nameOfCode = useMemo(() => {
+    const m = {};
+    openEvents.forEach((e) => { if (e.event_code && !(e.event_code in m)) m[e.event_code] = e.name || ''; });
+    return m;
+  }, [openEvents]);
   const [invoiceNumber, setInvoiceNumber] = useState('INV-' + (2026000 + Math.floor(Math.random() * 900)));
   const ev = EVENTS.find((e) => e.event_code === eventCode) || {};
   // Sales Executive comes from the event, so a new booking has no owner to show
@@ -61,8 +73,13 @@ export default function NewBookingModal({ onClose, onCreated }) {
         <div className="fs-t"><Icon name="calendar" size={13} />Invoice</div>
         <div className="fg c4">
           <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
+            {/* search: the open list is filtered by typing a code fragment. It is a
+                filter only, so the saved event still comes from a row the user
+                picked, which is what keeps event_name and SCA below in step. */}
             <Select className="in mono" value={eventCode} placeholder="Select an event…"
-              options={openEvents.map((e) => e.event_code).filter(Boolean).sort((a, b) => a.localeCompare(b))}
+              options={eventOptions}
+              search searchPlaceholder="Search event code…" emptyText="No event code matches"
+              subOf={(code) => nameOfCode[code] || null} width={330}
               onChange={setEventCode} />
           </div>
           <div className="fd"><label className="fd-l">Event name</label><input className="in" value={ev?.name || ''} readOnly /></div>

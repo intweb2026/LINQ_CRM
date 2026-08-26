@@ -218,6 +218,17 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pop-f{border-top:1px solid var(--border);margin-top:4px;padding:7px 9px 4px;display:flex;justify-content:space-between;gap:6px}
 .pop-mx{max-height:330px;overflow-y:auto}
 
+/* Searchable Select: the filter box pins above the scrolling option list, so a
+   long list scrolls under it instead of pushing it out of reach. */
+.sel-search{padding:2px 2px 7px;border-bottom:1px solid var(--border);margin-bottom:5px}
+.sel-search input{width:100%}
+.sel-none{padding:12px 10px;font-size:12px;font-weight:500;color:var(--text-4);text-align:center}
+.pop-i-2{align-items:flex-start;padding-top:7px;padding-bottom:7px}
+.pop-i-2 svg{margin-top:1px}
+.sel-o{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sel-o-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sel-o-s{font-size:11px;font-weight:500;color:var(--text-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 /* ═══ ADVANCED FILTER ROWS ═══ */
 .flt-row{display:flex;flex-direction:column;border:1px solid var(--t-200);border-radius:var(--r-sm);padding:8px 9px;margin:0 9px 8px;gap:5px;background:var(--t-50)}
 .flt-row-h{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:1px}

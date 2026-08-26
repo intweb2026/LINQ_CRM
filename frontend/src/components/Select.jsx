@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import Popover from './Popover';
 import { Icon } from '../lib/icons';
 
@@ -9,7 +10,13 @@ import { Icon } from '../lib/icons';
 // the stored value and returns the wording to show, so a picklist can be relabelled
 // without touching the value it writes (Paid → "Payable", see lib/constants.js).
 // Omitted, the option is its own label, which is how every other caller uses this.
-export default function Select({ value, options, onChange, className = 'in', placeholder = 'Select…', width, labelOf }) {
+//
+// `search` adds a filter box at the top of the open menu, for pickers whose list
+// is too long to scan (event codes, see NewBookingModal.jsx). It filters only;
+// the typed text is never a value, so the committed value still comes from a row
+// the user clicked. `subOf` returns an optional second line per option, which is
+// how an event code shows its event name without widening the trigger.
+export default function Select({ value, options, onChange, className = 'in', placeholder = 'Select…', width, labelOf, search = false, searchPlaceholder = 'Search…', subOf, emptyText = 'No matches' }) {
   const text = labelOf || ((o) => o);
   // Only an absent value shows the placeholder. A truthiness test would hide a
   // legitimate 0 — Delegate Number offers 0 and 1 (see lib/constants.js).
@@ -25,15 +32,62 @@ export default function Select({ value, options, onChange, className = 'in', pla
       )}
     >
       {({ close }) => (
-        <div className="pop-mx">
-          {options.map((o) => (
-            <button type="button" className="pop-i" key={o} onClick={() => { onChange(o); close(); }}>
-              {o === value ? <Icon name="check" size={14} /> : <span style={{ width: 14, flexShrink: 0 }} />}
-              {text(o)}
-            </button>
-          ))}
-        </div>
+        <SelectMenu
+          options={options} value={value} onChange={onChange} close={close}
+          text={text} subOf={subOf}
+          search={search} searchPlaceholder={searchPlaceholder} emptyText={emptyText}
+        />
       )}
     </Popover>
+  );
+}
+
+// A child component, not inline JSX, so the query lives and dies with one opening
+// of the menu: Popover mounts its children only while open, so reopening the
+// dropdown always starts from the full list rather than the last search.
+function SelectMenu({ options, value, onChange, close, text, subOf, search, searchPlaceholder, emptyText }) {
+  const [query, setQuery] = useState('');
+
+  // Matched against the option VALUE, not its label or sub-line: for the event
+  // code picker the code is what people type, and matching the name too would
+  // surface rows whose visible code has nothing to do with the query.
+  const shown = useMemo(() => {
+    if (!search) return options;
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => String(o).toLowerCase().includes(q));
+  }, [options, query, search]);
+
+  return (
+    <>
+      {search ? (
+        <div className="sel-search">
+          <input
+            className="in in-xs in-s" type="search" autoFocus
+            value={query} placeholder={searchPlaceholder}
+            onChange={(e) => setQuery(e.target.value)}
+            // Enter inside a modal form would otherwise submit; and Enter must
+            // not commit the typed text, which is a filter and not a value.
+            onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+          />
+        </div>
+      ) : null}
+      <div className="pop-mx">
+        {shown.length === 0 ? (
+          <div className="sel-none">{emptyText}</div>
+        ) : shown.map((o) => {
+          const sub = subOf ? subOf(o) : null;
+          return (
+            <button type="button" className={'pop-i' + (sub ? ' pop-i-2' : '')} key={o} onClick={() => { onChange(o); close(); }}>
+              {o === value ? <Icon name="check" size={14} /> : <span style={{ width: 14, flexShrink: 0 }} />}
+              <span className="sel-o">
+                <span className="sel-o-t">{text(o)}</span>
+                {sub ? <span className="sel-o-s">{sub}</span> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
