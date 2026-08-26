@@ -84,6 +84,23 @@ const OVERRIDE_FIELDS = [
   ['ticket_tier', 'delegate_ticket_tier'],
 ];
 
+/**
+ * The person-level fields a CLEARED value has to reach the invoice for.
+ *
+ * effective_payment_date is `delegate_payment_date or invoice.payment_date`
+ * (book_delegate/serializers.py), so emptying Date Paid in the modal could not
+ * stick: the override was written as NULL, the invoice kept the old date, and the
+ * resolved value the table reads fell straight back onto it. The cell blanked,
+ * the save returned 200, and the date was back on the next refetch, which is
+ * what made the Booking Code to SPP rule look like it did nothing.
+ *
+ * Only payment_date is listed. It is the one nullable column of the five; the
+ * others are non-null CharFields whose empty value is '' and whose blank simply
+ * means "nothing to push up", so clearing them on the invoice is neither
+ * expressible nor asked for.
+ */
+const CLEARABLE_ON_INVOICE = ['payment_date'];
+
 /** The value every delegate shares for `key`, or undefined if they differ. */
 function agreedValue(delegates, key) {
   if (!delegates.length) return undefined;
@@ -103,9 +120,24 @@ function splitPersonLevel(delegates) {
   const inherited = {};
   OVERRIDE_FIELDS.forEach(([uiKey, overrideKey]) => {
     const agreed = agreedValue(delegates, uiKey);
+    const clearable = CLEARABLE_ON_INVOICE.includes(uiKey);
     if (agreed !== undefined && agreed !== '' && agreed !== null) {
       invoiceFields[uiKey] = agreed;
       inherited[overrideKey] = true;
+      return;
+    }
+    // Nothing shared, or shared and empty. A clearable column is NULLed on the
+    // invoice as soon as ANY delegate holds no value, because that row's blank
+    // is otherwise not expressible: it resolves through the invoice and shows
+    // the invoice's date. `inherited` stays unset, so the rows that DO have a
+    // date keep it as an override, which is what an override is for.
+    //
+    // Delegates that merely differ, all of them non-empty, leave the column
+    // alone: each already carries its own override, and blanking the invoice
+    // would take the booking out of the invoice-level Date Paid filters
+    // (book_delegate/filters.py payment_date_from/to) for no gain.
+    if (clearable && delegates.some((d) => !String(d[uiKey] ?? '').trim())) {
+      invoiceFields[uiKey] = null;
     }
   });
   // booking_code is per delegate now (book_delegate/models.py), but revenue

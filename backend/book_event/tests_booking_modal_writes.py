@@ -389,3 +389,106 @@ class PaymentStatusChoiceTests(TestCase):
         """
         for legacy in ("Unpaid", "Free"):
             self.assertIn(legacy, BookEvent.PaymentStatus.values)
+
+
+class SppClearsTheDatePaidTests(TestCase):
+    """
+    Booking Code → SPP blanks Date Paid and sets Payable/Free to Free.
+
+    The UI half is DelegateTable.update(); this is the half that made it look
+    like nothing happened. effective_payment_date resolves as
+    `delegate_payment_date or invoice.payment_date`, so writing the override as
+    NULL while the invoice kept its date left the resolved value untouched: the
+    cell blanked, the PATCH returned 200, and the old date came back with the
+    next refetch. The modal now sends payment_date: null for the INVOICE as soon
+    as any delegate has none — api/bookings.js splitPersonLevel — and these lock
+    that contract down from the server's side.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="spp_admin", is_all_access=True)
+        cls.admin = User.objects.create_user(
+            username="spp_admin_u", password="x", role="admin", email="spp@iq-hub.com",
+        )
+        cls.admin.team = cls.role
+        cls.admin.save()
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        make_event(EVENT_A)
+        self.inv = BookEvent.objects.create(
+            invoice_number="SPP-1", event_code=EVENT_A, booking_code="Delegate",
+            payment_status="Paid", payment_date="2026-03-01", paid_or_free="Paid",
+        )
+
+    def delegate(self, email, **over):
+        kwargs = {
+            "invoice": self.inv, "event_code": EVENT_A,
+            "first_name": "A", "last_name": "Delegate", "email": email,
+        }
+        kwargs.update(over)
+        return BookDelegate.objects.create(**kwargs)
+
+    def patch(self, body):
+        req = self.factory.patch(f"/api/invoices/{self.inv.pk}/", body, format="json")
+        force_authenticate(req, user=self.admin)
+        resp = _view({"patch": "partial_update"})(req, pk=self.inv.pk)
+        resp.render()
+        return resp
+
+    def resolved(self, delegate):
+        from book_delegate.serializers import BookDelegateListSerializer
+        delegate.refresh_from_db()
+        data = BookDelegateListSerializer(delegate).data
+        return data["effective_payment_date"], data["effective_paid_or_free"]
+
+    def test_the_only_delegate_going_spp_clears_the_whole_booking(self):
+        d = self.delegate("one@acme.test")
+
+        resp = self.patch({
+            # What the modal sends once its one row holds SPP: the invoice's own
+            # date NULLed, Free agreed by every delegate so it goes on the invoice.
+            "payment_date": None,
+            "paid_or_free": "Free",
+            "delegates": [{
+                "id": d.id, "email": d.email, "first_name": "A",
+                "booking_code": "SPP",
+                "delegate_payment_date": None, "delegate_paid_or_free": None,
+            }],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.payment_date)
+        self.assertEqual(self.inv.paid_or_free, "Free")
+        d.refresh_from_db()
+        self.assertEqual(d.booking_code, "SPP")
+        self.assertEqual(self.resolved(d), (None, "Free"))
+
+    def test_one_delegate_of_two_going_spp_leaves_the_other_paid(self):
+        """
+        The blank is only expressible with the invoice column NULL, so the
+        delegate that still HAS a date carries it as an override. Both rows must
+        resolve to what the modal was showing.
+        """
+        spp = self.delegate("spp@acme.test")
+        keep = self.delegate("keep@acme.test", first_name="B")
+
+        resp = self.patch({
+            "payment_date": None,   # some delegate has none
+            "delegates": [
+                {"id": spp.id, "email": spp.email, "first_name": "A",
+                 "booking_code": "SPP",
+                 "delegate_payment_date": None, "delegate_paid_or_free": "Free"},
+                {"id": keep.id, "email": keep.email, "first_name": "B",
+                 "booking_code": "Delegate",
+                 "delegate_payment_date": "2026-03-01", "delegate_paid_or_free": "Paid"},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.payment_date)
+        self.assertEqual(self.resolved(spp), (None, "Free"))
+        self.assertEqual(self.resolved(keep), ("2026-03-01", "Paid"))

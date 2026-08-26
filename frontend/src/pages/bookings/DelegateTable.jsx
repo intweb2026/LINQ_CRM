@@ -166,11 +166,11 @@ const baseCols = ({ onTransfer } = {}) => [
  * An SPP delegate is a sponsor's pass, so the row carries no money: selecting it
  * blanks Date Paid and sets Payable/Free to 'Free' in one go, which is what
  * whoever picked it was going to do by hand on the next two cells anyway. Matched
- * exactly, so the combined 'SPP / Group Pass' is left alone — that one is a group
+ * exactly, so the combined 'SPP / Group Pass' is left alone; that one is a group
  * pass as well and is not automatically free.
  *
- * Like the Date Paid rule below, this fires only as the code CHANGES: both cells
- * stay ordinary editors and either can be set back by hand straight afterwards.
+ * Like the Date Paid rule below, this fires only as the code CHANGES, so both
+ * cells stay ordinary editors and either can be set back by hand straight after.
  */
 const FREE_BOOKING_CODE = 'SPP';
 
