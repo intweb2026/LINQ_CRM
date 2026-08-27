@@ -19,7 +19,9 @@ every stored row to change the capitalisation of one unrelated column would put
 hundreds of rows' event_name and edition through a derivation they were never
 asked to re-run — a far larger blast radius than the fix. This writes one
 column, runs no derivation, and is scoped by an exact-value filter, which is the
-carve-out BookEvent.save() itself documents for its own .update().
+carve-out BookEvent.save() itself documents for its own .update(). updated_at
+rides along, because .update() does not fire auto_now and booking_code is an
+exported column; see repair().
 
 WHY EXACT-MATCH FILTERS AND NOT A SWEEP
 Rows are grouped by their stored spelling and each group is updated with
@@ -35,6 +37,8 @@ what makes it safe as a migration AND as a cron/manual repair for anything that
 slips in later.
 """
 from collections import Counter
+
+from django.utils import timezone
 
 from book_event.booking_code_canonical import canonicalize
 
@@ -67,8 +71,23 @@ def repair(model, apply=False):
     """
     entries = plan(model)
     if apply:
+        # updated_at IS SET BY HAND where the model has one. A queryset .update()
+        # does not fire auto_now — the ORM never instantiates the rows, so no
+        # field's pre_save() runs — and booking_code is an EXPORTED column on
+        # both tables this runs against (dataapi/serializers.py). Rewriting it
+        # without moving the watermark leaves the Data API's ?updated_since=
+        # delta feed unable to ever offer the corrected row again.
+        #
+        # Guarded on the field rather than assumed, because repair() is also
+        # called from book_event/migrations/0023 with historical models, and a
+        # model without the column must not raise here.
+        stamp = {}
+        if any(f.name == "updated_at" for f in model._meta.get_fields()):
+            stamp["updated_at"] = timezone.now()
         for stored, target, _ in entries:
-            model.objects.filter(booking_code=stored).update(booking_code=target)
+            model.objects.filter(booking_code=stored).update(
+                booking_code=target, **stamp
+            )
     return entries
 
 

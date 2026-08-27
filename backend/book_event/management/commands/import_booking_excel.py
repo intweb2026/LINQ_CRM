@@ -63,6 +63,17 @@ from event_performance.active_edition_service import (
 
 User = get_user_model()
 
+# Every header this command reads. Checked before the import runs, because each
+# read is a `.get(header, "")` that turns an absent column into a blank one.
+EXPECTED_COLUMNS = (
+    "Invoice Number", "Event Code", "Event Name", "Booking Code",
+    "Request Date", "Invoice Date", "Date Paid", "Payment Type",
+    "Payment Status", "Paid/Free", "Ticket Tier", "Discount", "Add-Ons", "Ref",
+    "Delegate Company", "Accounts Contact", "Sales Executive", "Added Time",
+    "Name", "Delegate Email", "Direct Line", "Delegate Number",
+    "Attendance - IN?",
+)
+
 
 def _s(v) -> str:
     """Any value → stripped string; '' for None / NaN / blank."""
@@ -131,6 +142,16 @@ class Command(BaseCommand):
             action="store_true",
             help="Preview counts and issues without writing to the database.",
         )
+        parser.add_argument(
+            "--allow-missing-columns",
+            action="store_true",
+            help=(
+                "Import even though a mapped column is absent, leaving it blank "
+                "on every row. Off by default; a missing column is an error, "
+                "because a blank column and an absent one look identical once "
+                "the data is stored."
+            ),
+        )
 
     def handle(self, *args, **options):
         path = Path(options["excel_path"])
@@ -153,6 +174,34 @@ class Command(BaseCommand):
             engine="openpyxl",
         )
         self.stdout.write(f"  {len(df):,} rows x {df.shape[1]} columns loaded.")
+
+        # ── 1a. Every mapped column must be PRESENT ───────────────────────────
+        # Every read below is `row.get("Header", "")`, so a column this workbook
+        # spells differently, or does not carry at all, imports as a column of
+        # blanks that is indistinguishable from a column the source left empty.
+        # That is not hypothetical. A load of an 11,288-invoice workbook stored
+        # paid_or_free as "" on 8,876 invoices and delegate_number as the model
+        # default 1 on all 15,180 delegates, because neither column arrived under
+        # the header named here; "Paid" never once reached the database, while
+        # the model declares Paid and Free as its only valid values. Cross-checked
+        # against the source afterwards, 6,204 rows reading Paid were stored as "".
+        #
+        # import_remaining_bookings already treats a missing header as an error
+        # for exactly this reason. This does the same, one release later.
+        missing = [c for c in EXPECTED_COLUMNS if c not in df.columns]
+        if missing:
+            message = (
+                f"{len(missing)} mapped column(s) are absent from this workbook, "
+                "and every row would import them as blank:\n  "
+                + "\n  ".join(missing)
+                + "\n\nHeaders found:\n  "
+                + "\n  ".join(str(c) for c in df.columns)
+                + "\n\nRename the columns in the workbook, or pass "
+                "--allow-missing-columns to import the rest and leave these empty."
+            )
+            if not options["allow_missing_columns"]:
+                raise CommandError(message)
+            self.stdout.write(self.style.WARNING(message))
 
         # ── 2. Build Event lookup: (master_code, year) → Event ───────────────
         event_lookup: dict[tuple, Event] = {}
@@ -336,6 +385,46 @@ class Command(BaseCommand):
                     bd.created_at = del_dt
 
                 delegates_to_create.append(bd)
+
+        # ── 5a. Values the model would not accept ─────────────────────────────
+        # A CharField with choices is not validated on bulk_create, so a value
+        # outside the choice list is stored without complaint and then renders as
+        # a blank cell nobody can explain. paid_or_free is checked by name rather
+        # than in a loop over every field, because it is the one that went wrong
+        # and the one the Bookings table resolves through two columns.
+        valid_pof = set(BookEvent.PaidOrFree.values)
+        bad_pof = defaultdict(int)
+        for be in events_to_create:
+            if be.paid_or_free not in valid_pof:
+                bad_pof[be.paid_or_free] += 1
+        if bad_pof:
+            total_bad = sum(bad_pof.values())
+            self.stdout.write(self.style.WARNING(
+                f"{prefix}Paid/Free holds a value the model does not allow on "
+                f"{total_bad:,} of {len(events_to_create):,} invoices; the "
+                f"Payable / Free column will read blank for them. Allowed values "
+                f"are {sorted(valid_pof)}. Found:"
+            ))
+            for value, count in sorted(bad_pof.items(), key=lambda kv: -kv[1]):
+                self.stdout.write(self.style.WARNING(
+                    f"  {value!r}  on {count:,} invoice(s)"
+                ))
+            issues.append({
+                "invoice_number": "—",
+                "excel_code": "—",
+                "master": "—",
+                "year": "—",
+                "event_name": "—",
+                "delegate_count": total_bad,
+                "sample_delegates": "; ".join(
+                    f"{v!r} x{n}" for v, n in
+                    sorted(bad_pof.items(), key=lambda kv: -kv[1])[:5]
+                ),
+                "reason": (
+                    f"Paid/Free outside {sorted(valid_pof)} on {total_bad} "
+                    "invoice(s); Payable / Free will read blank for them"
+                ),
+            })
 
         # ── 6. Write issues MD ────────────────────────────────────────────────
         md_path = (

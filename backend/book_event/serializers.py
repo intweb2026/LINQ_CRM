@@ -3,7 +3,10 @@ book_event/serializers.py
 """
 import re
 from decimal import Decimal, InvalidOperation
+
+from django.utils import timezone
 from rest_framework import serializers
+
 from .models import BookEvent
 
 
@@ -274,8 +277,15 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
             # instance.delegates.all() still resolves correctly after the rename.
             # db_constraint=False on the FK means no DB constraint blocks this.
             if new_invoice_number != old_invoice_number:
+                # updated_at IS SET BY HAND. A queryset .update() does not fire
+                # auto_now, so without this the renamed delegates keep whatever
+                # watermark they had, and the Data API's ?updated_since= filter
+                # (dataapi/views.py DelegateDataViewSet) never hands them back —
+                # leaving an incremental consumer with rows filed under an
+                # invoice number that no longer exists.
                 BookDelegate.objects.filter(invoice_id=old_invoice_number).update(
-                    invoice_id=new_invoice_number
+                    invoice_id=new_invoice_number,
+                    updated_at=timezone.now(),
                 )
 
             instance = super().update(instance, validated_data)
@@ -309,7 +319,28 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                             raise serializers.ValidationError(
                                 {"delegates": f"Email {email} already exists on this invoice."}
                             )
-                        BookDelegate.objects.filter(id=d_id).update(**clean)
+                        # updated_at IS SET BY HAND, and this is the write path
+                        # it matters most on: frontend saveInvoiceDelegates()
+                        # (frontend/src/api/bookings.js) PATCHes the invoice with
+                        # its whole delegate list, so EVERY delegate edit made in
+                        # the Bookings modal lands here. A queryset .update()
+                        # does not fire auto_now — the ORM never instantiates the
+                        # row, so no field's pre_save() runs — so the edit used
+                        # to leave updated_at untouched. That is invisible in the
+                        # CRM, which re-reads the row anyway, and fatal to the
+                        # Data API's ?updated_since= delta feed, which reads that
+                        # column and nothing else: a corrected name or tier was
+                        # never offered to the consumer again.
+                        #
+                        # NOT ROUTED THROUGH save() INSTEAD. BookDelegate.save()
+                        # derives delegate_count from the previous payment status
+                        # and re-derives edition and event_code; this path writes
+                        # only the _ALLOWED_DELEGATE keys the modal sent, and
+                        # widening it to a full save() here would change what a
+                        # modal save does to columns it never named.
+                        BookDelegate.objects.filter(id=d_id).update(
+                            **clean, updated_at=timezone.now()
+                        )
                         updated_count += 1
                     else:
                         # New delegate — email required and must be unique on this invoice
