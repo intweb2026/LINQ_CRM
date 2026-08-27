@@ -8,17 +8,27 @@ WHAT THIS PINS, AND WHY EACH ONE MATTERS
     all-NULL case. A wrong derivation is not a slow page, it is rows in the
     wrong order with no error anywhere.
 2.  Changing an invoice's dates propagates to that invoice's delegates and to
-    NO OTHER invoice's. The propagation is the one sanctioned queryset
-    .update() in the codebase and it is filtered on a varchar FK column, which
-    is exactly the kind of filter that silently matches everything or nothing.
+    NO OTHER invoice's. The propagation is a sanctioned queryset .update() and
+    it is filtered on a varchar FK column, which is exactly the kind of filter
+    that silently matches everything or nothing. It now shares that statement
+    with the delegates' updated_at stamp (BookEvent.DELEGATE_EXPORT_FIELDS), so
+    the two conditions are pinned INDEPENDENTLY below: a save that moves an
+    exported column but no date must write updated_at and not booked_on, and a
+    save that moves neither must write nothing at all.
 3.  Deriving it costs NO EXTRA QUERY on the path the app actually uses. The
     whole point of the denormalisation is to remove work; a save() that added a
     SELECT would hand it straight back.
-4.  The default ordering really is ["-created_at", "-id"], read off the compiled
+4.  The default ordering really is ["-updated_at", "-id"], read off the compiled
     query rather than off the class attribute — StableOrderingFilter rewrites
     ordering at filter time, so the attribute is not the answer. booked_on is NO
     LONGER the sort; it stayed as the period window's column, and points 1-3
-    above still pin it because the window depends on them.
+    above still pin it because the window depends on them. created_at is no longer
+    the sort either, and is pinned here only as a term the Added Time column can
+    still send.
+5.  An EDITED row rises to the top. That is the whole point of the -updated_at
+    default and it is the one property -created_at could not give: it is asserted
+    against a row created FIRST and edited LAST, because a row that is both newest
+    and last-edited would pass under either ordering and pin nothing.
 """
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -163,18 +173,49 @@ class BookedOnPropagationTests(TestCase):
 
         self.assertEqual(self.booked(self.inv_a), ["2026-02-02"] * 3)
 
-    def test_saving_with_no_date_change_leaves_delegates_alone(self):
-        """
-        The guard, not just the update. Without _dates_changed every invoice
-        save would rewrite every one of its delegate rows.
-        """
-        self.inv_a.company_name = "Something Else"
+    def _delegate_updates(self, mutate):
+        """The UPDATE statements against book_delegates that `mutate` provokes."""
+        mutate()
         with CaptureQueriesContext(connection) as ctx:
             self.inv_a.save()
-        updates = [q["sql"] for q in ctx.captured_queries
-                   if q["sql"].lstrip().upper().startswith("UPDATE")
-                   and "book_delegates" in q["sql"]]
-        self.assertEqual(updates, [], "delegates were rewritten on a non-date save")
+        return [q["sql"] for q in ctx.captured_queries
+                if q["sql"].lstrip().upper().startswith("UPDATE")
+                and "book_delegates" in q["sql"]]
+
+    def test_saving_with_no_date_change_does_not_rewrite_booked_on(self):
+        """
+        The guard, not just the update. Without _dates_changed every invoice
+        save would rewrite booked_on on every one of its delegate rows.
+
+        NARROWED FROM "no UPDATE AT ALL" TO "no booked_on". This block is no
+        longer the booked_on cascade alone: BookEvent.save() now also stamps its
+        delegates' updated_at when a column in DELEGATE_EXPORT_FIELDS moves, and
+        company_name — the invoice's billing company, exported on the delegate
+        row as account_company — is one of them. So this save legitimately does
+        write book_delegates now, and what has to stay absent is booked_on. The
+        no-write-at-all case is pinned by the test below, on a column no
+        delegate is exported with.
+        """
+        updates = self._delegate_updates(
+            lambda: setattr(self.inv_a, "company_name", "Something Else"))
+        self.assertFalse(
+            [sql for sql in updates if "booked_on" in sql],
+            "booked_on was rewritten on a non-date save",
+        )
+
+    def test_saving_an_invoice_only_column_leaves_delegates_untouched(self):
+        """
+        Both guards at once, on a column that reaches neither cascade.
+        total_amount is invoice-only: it is not a date, so booked_on does not
+        move, and no delegate is exported with it, so no watermark moves either.
+        A save like this must issue ZERO statements against book_delegates —
+        otherwise every unrelated invoice write would push the whole invoice
+        through the Data API's ?updated_since= delta feed.
+        """
+        updates = self._delegate_updates(
+            lambda: setattr(self.inv_a, "total_amount", 4321))
+        self.assertEqual(updates, [],
+                         "delegates were rewritten on an invoice-only save")
 
 
 class BookedOnQueryCostTests(TestCase):
@@ -265,19 +306,35 @@ class BookedOnDefaultOrderingTests(TestCase):
         qs = view.filter_queryset(view.get_queryset())
         return list(qs.query.order_by)
 
-    def test_default_ordering_is_created_at_desc_newest_first(self):
+    def test_default_ordering_is_updated_at_desc_newest_modified_first(self):
         """
-        The Bookings table's default is NEWEST ADDED FIRST, not newest business
-        date first. booked_on is the invoice's request_date/invoice_date, so a
-        delegate entered today against an older invoice sorted down the table and
-        newly entered work never showed at the top — the reported symptom.
+        The Bookings table's default is NEWEST MODIFIED FIRST.
+
+        Not newest business date, which is what booked_on gave, and no longer
+        newest ADDED either. -created_at pinned a row to its entry position for
+        good: a correction made this morning to a row entered in July stayed in
+        July, so the person who made it could not see their own work.
 
         -id is asserted, not pk: StableOrderingFilter appends `pk` ASCENDING,
-        which resolves ties oldest-first inside a tied second and would not match
-        book_delegates_created_id_idx. Spelling -id in the viewset's default makes
-        the filter pass the ordering through untouched, and this is what pins that.
+        which resolves ties oldest-first inside a tied microsecond and would not
+        match book_delegates_updated_id_idx. Spelling -id in the viewset's default
+        makes the filter pass the ordering through untouched, and this pins that.
         """
-        self.assertEqual(self.compiled_ordering(), ["-created_at", "-id"])
+        self.assertEqual(self.compiled_ordering(), ["-updated_at", "-id"])
+
+    def test_updated_at_ordering_still_reaches_the_database(self):
+        """
+        BookingsPage.jsx sends `updated_at` as the Modified Time column's
+        serverOrdering, and DRF silently DROPS a term that is not in
+        ordering_fields — which is exactly why that header did nothing before
+        this change. Explicit and default compile differently on purpose: an
+        explicit term takes StableOrderingFilter's ascending pk tiebreak, which is
+        deterministic and is all a user-picked sort needs.
+        """
+        self.assertEqual(
+            self.compiled_ordering("?ordering=-updated_at"),
+            ["-updated_at", "pk"],
+        )
 
     def test_booked_on_ordering_still_reaches_the_database(self):
         """
@@ -325,10 +382,15 @@ class BookedOnDefaultOrderingTests(TestCase):
         End to end, so the ordering is proven against real rows.
 
         THE INVOICE DATE IS DELIBERATELY THE OLDEST IN THE SET. This is the
-        reported bug in miniature: a delegate entered LAST against an invoice
-        raised FIRST. Under the old -booked_on default it sorted to the bottom;
-        under ["-created_at", "-id"] it is row one. Giving the new row a newer
-        request_date instead would pass under both orderings and pin nothing.
+        original reported bug in miniature: a delegate entered LAST against an
+        invoice raised FIRST. Under the old -booked_on default it sorted to the
+        bottom, and it must not go back there.
+
+        STILL VALID UNDER -updated_at, and not by luck: auto_now stamps updated_at
+        on INSERT as well as on save, so a row nobody has edited since carries its
+        creation instant and a never-edited set sorts identically either way. What
+        this no longer pins on its own is the edit case, which is why the test
+        below exists.
         """
         BookEvent.objects.create(
             invoice_number="ORDBO-2", event_code="ORDBO - AA",
@@ -347,3 +409,69 @@ class BookedOnDefaultOrderingTests(TestCase):
         resp.render()
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(resp.data["results"][0]["id"], newest.id)
+
+    def test_editing_an_old_row_moves_it_to_the_top(self):
+        """
+        THE PROPERTY THE CHANGE WAS ASKED FOR. A row created FIRST and edited LAST
+        must be row one.
+
+        Created first is the load-bearing half. Every other ordering this table
+        has had — -booked_on, -created_at — puts this row at or near the BOTTOM,
+        so a test that edited the newest row instead would pass under all three
+        and prove nothing about the new default.
+
+        The edit goes through instance.save(), which is the path
+        BookDelegateListSerializer.update() takes and the path
+        accounts/bulk_update.py takes, so auto_now is what does the stamping here
+        rather than the test writing updated_at by hand. A test that assigned the
+        timestamp would still pass if auto_now stopped firing.
+        """
+        oldest = BookDelegate.objects.order_by("created_at", "id").first()
+        newest = BookDelegate.objects.order_by("-created_at", "-id").first()
+        self.assertNotEqual(oldest.id, newest.id, "fixture has only one row")
+
+        # Sanity: before the edit the table leads with the newest row, so the
+        # assertion after it is measuring the edit and not the fixture order.
+        self.assertEqual(self.list_ids()[0], newest.id)
+
+        oldest.position = "Edited"
+        oldest.save()
+
+        self.assertGreater(oldest.updated_at, newest.updated_at,
+                           "auto_now did not stamp updated_at on save()")
+        self.assertEqual(self.list_ids()[0], oldest.id)
+
+    def test_clearing_overrides_stamps_updated_at(self):
+        """
+        book_delegate/services.py clear_delegate_overrides() is a queryset
+        .update(), which does NOT fire auto_now — the ORM never instantiates the
+        rows, so no pre_save() runs. It sets updated_at explicitly for that
+        reason, and this pins it: clearing a delegate's payment overrides is a
+        real edit that visibly changes five cells, and without the explicit stamp
+        it was the one edit that left the row where it was while every lesser edit
+        floated to the top.
+        """
+        from book_delegate.services import DelegatePaymentOverrideResolver
+
+        target = BookDelegate.objects.order_by("created_at", "id").first()
+        target.delegate_payment_type = "Card"
+        target.save()
+        before = BookDelegate.objects.get(pk=target.pk).updated_at
+
+        resolver = DelegatePaymentOverrideResolver(target.invoice)
+        resolver.clear_delegate_overrides([target.id], fields=["payment_type"])
+
+        after = BookDelegate.objects.get(pk=target.pk).updated_at
+        self.assertGreater(after, before,
+                           "clear_delegate_overrides() left updated_at untouched")
+        self.assertEqual(self.list_ids()[0], target.id)
+
+    def list_ids(self):
+        """The ids the list endpoint returns, in order, under the default sort."""
+        factory = APIRequestFactory()
+        req = factory.get("/api/delegates/")
+        force_authenticate(req, user=self.user)
+        resp = BookDelegateViewSet.as_view({"get": "list"})(req)
+        resp.render()
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return [row["id"] for row in resp.data["results"]]

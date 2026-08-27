@@ -222,6 +222,20 @@ class BookDelegate(models.Model):
                 models.F("id").desc(),
                 name="book_delegates_created_id_idx",
             ),
+            # The CURRENT default Bookings sort, ["-updated_at", "-id"] — newest
+            # MODIFIED first; see the note on BookDelegateViewSet.ordering. Without
+            # this, every page of ~14,800 delegates is a full sort rather than one
+            # index scan, because the created_at index above cannot serve an
+            # updated_at ORDER BY.
+            #
+            # updated_at is auto_now=True and therefore NOT NULL, so no nulls_last
+            # clause is needed or wanted. Spelled DESC/DESC to match the ORDER BY
+            # exactly, in the expression form the two indexes above use.
+            models.Index(
+                models.F("updated_at").desc(),
+                models.F("id").desc(),
+                name="book_delegates_updated_id_idx",
+            ),
         ]
 
     def __str__(self):

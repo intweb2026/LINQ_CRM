@@ -109,8 +109,19 @@ function isDateCondition(cond) {
  * that happened during the day the user asked for — the same trap
  * accounts/period_filter.day_bounds() documents. So a datetime field gets an
  * explicit instant at the requested EDGE of the day, offset stated rather than
- * naive: `TIME_ZONE` is UTC, and a naive string would be interpreted by Django
- * under a warning instead of by this file's intent.
+ * naive: a naive string would be interpreted by Django under a warning instead
+ * of by this file's intent.
+ *
+ * THE EDGE IS AN IST DAY, NOT A UTC ONE. It was +00:00, which matched
+ * `TIME_ZONE` and matched nothing the user could see. The cell is rendered in
+ * IST (lib/helpers.js fdate/ftime, and rowDateISO in the module above), so a UTC
+ * edge put every timestamp between 00:00 and 05:30 IST outside the day it
+ * DISPLAYED: a booking edited at 01:00 IST on the 28th read as 28 Aug in the
+ * table and was returned by "Modified Time Is 27 Aug". Storage stays UTC and the
+ * comparison is still against an absolute instant; only which instant bounds
+ * "the 28th" has changed, and it is now the same day boundary the column shows.
+ * A picked date on a plain DateField is a zone-free calendar date and is still
+ * sent bare, which is why this only touches the has_time branch.
  *
  * `has_time` comes from the field's own schema entry, which build_filter_spec_
  * fields() sets from the Django field class. Absent (an older backend), the bare
@@ -118,7 +129,7 @@ function isDateCondition(cond) {
  */
 function dateEdge(iso, edge, hasTime) {
   if (!hasTime) return iso;
-  return edge === 'end' ? `${iso}T23:59:59.999999+00:00` : `${iso}T00:00:00+00:00`;
+  return edge === 'end' ? `${iso}T23:59:59.999999+05:30` : `${iso}T00:00:00+05:30`;
 }
 
 function dateCriterion(cond, field, cfg) {

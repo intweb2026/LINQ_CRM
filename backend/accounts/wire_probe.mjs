@@ -89,11 +89,22 @@ const patchClientImport = (s) =>
 
 const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMod;
 // lib/filterSpec.js imports lib/dateFilter.js — the date vocabulary the
-// Advanced Filter's date columns speak. Loaded FIRST and its path substituted
-// in, the same redirection lib/liveData.js gets above, because everything here
-// is flattened into one temp directory and a bare './dateFilter' would resolve
-// to nothing once it lands there.
-const dateFilterMod = await load("lib/dateFilter.js");
+// Advanced Filter's date columns speak — and lib/dateFilter.js in turn imports
+// IST_OFFSET_MS from lib/helpers.js, the shift that decides which DAY a
+// timestamp belongs to. All three are loaded in dependency order and their
+// paths substituted in, the same redirection lib/liveData.js gets above,
+// because everything here is flattened into one temp directory and a bare
+// './dateFilter' or './helpers' would resolve to nothing once it lands there.
+//
+// THE CHAIN IS THE POINT, not an inconvenience. helpers.js is where a RENDERED
+// cell's day comes from and dateFilter.js is where a FILTERED row's day comes
+// from; they have to be the same number, which is why dateFilter.js imports the
+// offset rather than restating it. This probe is what would notice if that
+// import were quietly dropped to keep the harness simpler.
+const helpersMod = await load("lib/helpers.js");
+const helpersPath = join(dir, "lib_helpers.mjs").replace(/\\/g, "/");
+const dateFilterMod = await load("lib/dateFilter.js", (s) =>
+  s.replace(/from ['"]\.\/helpers['"]/g, `from "file://${helpersPath}"`));
 const dateFilterPath = join(dir, "lib_dateFilter.mjs").replace(/\\/g, "/");
 const spec = await load("lib/filterSpec.js", (s) =>
   s.replace(/from ['"]\.\/dateFilter['"]/g, `from "file://${dateFilterPath}"`));
@@ -216,13 +227,29 @@ check("a date window is sent as an inclusive two-value between",
 
 // The bug this one exists to prevent: a bare date against a DateTimeField is
 // compared with MIDNIGHT, so the whole of the day the user asked for is dropped.
-check("a datetime column gets instants at the edges of the day, not bare dates",
+//
+// THE OFFSET IS +05:30, AND THAT IS THE ASSERTION, not incidental formatting. It
+// was +00:00, which matched settings.TIME_ZONE and matched nothing the user could
+// see: the cell is rendered in IST (lib/helpers.js), so a UTC day edge put every
+// timestamp between 00:00 and 05:30 IST outside the day it DISPLAYED. Storage is
+// still UTC and the comparison is still against an absolute instant; which
+// instant bounds "the 25th" is what moved.
+check("a datetime column gets instants at the edges of the IST day, not bare dates",
   JSON.stringify(datePartition.criteria[1])
     === JSON.stringify({
       field: "received_at", op: "between",
-      values: ["2026-08-25T00:00:00+00:00", "2026-08-25T23:59:59.999999+00:00"],
+      values: ["2026-08-25T00:00:00+05:30", "2026-08-25T23:59:59.999999+05:30"],
     }),
   JSON.stringify(datePartition.criteria[1]));
+
+// A plain DateField is NOT given an offset, and this is the control for the one
+// above: a picked calendar date has no instant in it, so shifting it would move a
+// date the user typed. criteria[0] is the request_date window, asserted bare a
+// few lines up; this states the reason rather than leaving it to be inferred.
+check("a plain date column is still sent as a bare calendar date",
+  !JSON.stringify(datePartition.criteria[0]).includes("+05:30")
+    && !JSON.stringify(datePartition.criteria[0]).includes("T00:00:00"),
+  JSON.stringify(datePartition.criteria[0]));
 
 const notBetween = toCriterion(
   dateCond("request_date", "Is Not", { mode: "range", from: "2026-08-01", to: "2026-08-31" }),

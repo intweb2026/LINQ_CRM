@@ -140,3 +140,12 @@ $RECYCLE.BIN/
 # A file literally named `nul`, which Windows creates when a command redirects
 # to NUL from a POSIX shell (`… > /dev/null` is the portable form here).
 nul
+
+# One-file production fix scripts, run-time output
+backend/fix_backup_*.json
+backend/fix_report_*.md
+backend/fix_source_*.xlsx
+
+# docs/ is tracked; the repo ignores *.md globally on line 32
+!docs/
+!docs/*.md

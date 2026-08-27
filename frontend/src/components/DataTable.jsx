@@ -195,16 +195,51 @@ function condPasses(row, cond) {
 const STORE_PREFIX = 'iqhub.table.';
 const STORE_VERSION = 1;
 
-function readStored(tableId) {
+/**
+ * RETIRING A STORED SORT WHEN THE PAGE'S DEFAULT MOVES.
+ *
+ * THE BUG THIS FIXES. A stored sort beats `defaultSort` on purpose, and that is
+ * right for a sort the USER chose. But it also beat a default the user had never
+ * chosen and could not see: Bookings changed its default from Request Date to
+ * Modified Time, and every person who had ever loaded that page — which is
+ * everyone, since merely visiting it writes the blob — kept opening on Request
+ * Date with no indication why. The change was invisible in the only place it was
+ * supposed to appear.
+ *
+ * WHY NOT BUMP STORE_VERSION. That discards the WHOLE blob, on EVERY table, so a
+ * moved sort default would also throw away filter sets people had built by hand
+ * and every hidden-column choice. The cost has to land on the one thing that
+ * actually changed.
+ *
+ * So the sort carries its own generation, declared per page as
+ * `defaultSortVersion`. A stored sort written under an older generation is
+ * retired once; conds and hidden come back untouched. Bumping the number is what
+ * a page does when it changes its default, and it is a ONE-TIME reset: the next
+ * write stamps the current generation, so a user who re-picks Request Date keeps
+ * it forever after.
+ *
+ * `sortStale` is returned rather than just nulling `sort`, because a null sort is
+ * already meaningful — it is "I cycled sort off" and must survive a reload. The
+ * caller needs to tell "retired, use your default" apart from "deliberately off".
+ */
+// Exported for components/DataTable.storedSort.test.js. Not for use elsewhere:
+// the table owns this state. They are pinned by a test because the failure they
+// caused is SILENT — a moved default that reaches nobody looks exactly like a
+// default that was never changed, and no error is raised anywhere.
+export function readStored(tableId, sortVersion = 0) {
   if (!tableId) return null;
   try {
     const raw = window.localStorage.getItem(STORE_PREFIX + tableId);
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!p || p.version !== STORE_VERSION) return null;
+    // Absent on a blob written before sorts were generationed, which reads as
+    // generation 0 — so a page that has never bumped is unaffected.
+    const stale = (p.sortVersion || 0) !== sortVersion;
     return {
       conds: Array.isArray(p.conds) ? p.conds.map((c) => ({ ...c, _live: '' })) : [],
-      sort: p.sort || null,
+      sort: stale ? null : (p.sort || null),
+      sortStale: stale,
       hidden: Array.isArray(p.hidden) ? p.hidden : null,
     };
   } catch {
@@ -212,11 +247,12 @@ function readStored(tableId) {
   }
 }
 
-function writeStored(tableId, { conds, sort, hidden }) {
+export function writeStored(tableId, { conds, sort, hidden }, sortVersion = 0) {
   if (!tableId) return;
   try {
     window.localStorage.setItem(STORE_PREFIX + tableId, JSON.stringify({
       version: STORE_VERSION,
+      sortVersion,
       conds: (conds || []).map(({ _live, ...c }) => c),
       sort: sort || null,
       hidden: [...(hidden || [])],
@@ -601,6 +637,15 @@ const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, o
 export default function DataTable({
   rows, cols, noun = 'records', groups, hiddenDefault = [], select = false, infinite = false,
   pageSize = PAGE_SIZE_DEFAULT, defaultSort = null, scope = null, searchPlaceholder = 'Search…',
+  /**
+   * Generation of `defaultSort`. BUMP IT WHENEVER defaultSort CHANGES.
+   *
+   * A stored sort outranks defaultSort, which is correct for a sort the user
+   * picked and wrong for a default they never saw — without this, changing a
+   * page's default changes nothing for anyone who has already visited it. See
+   * readStored. Filters and hidden columns are NOT reset; only the stale sort is.
+   */
+  defaultSortVersion = 0,
   card, onRow, bulkActions, extraToolbar, tableId, server = null,
   // Whether this table may edit a cell in place. Defaults to FALSE, so a column
   // carrying editOpts is inert until its page explicitly opts in with the
@@ -639,7 +684,7 @@ export default function DataTable({
 }) {
   const storeId = tableId || noun;
   const storedRef = useRef(undefined);
-  if (storedRef.current === undefined) storedRef.current = readStored(storeId);
+  if (storedRef.current === undefined) storedRef.current = readStored(storeId, defaultSortVersion);
   const stored = storedRef.current;
 
   const [q, setQ] = useState('');
@@ -648,7 +693,14 @@ export default function DataTable({
   // Falling back to defaultSort on a null would make turning sort off impossible
   // to keep across a reload, even though it is exactly as deliberate an action as
   // choosing a column.
-  const [sort, setSort] = useState(() => (stored ? stored.sort : defaultSort));
+  //
+  // UNLESS IT IS STALE. A sort stored under an older defaultSortVersion is not a
+  // choice the user is defending, it is a default they were given before the page
+  // changed its mind, so the new default wins exactly once. This is the only way
+  // a moved default reaches anyone who has already loaded the table. See
+  // readStored for why the whole blob is not simply discarded.
+  const [sort, setSort] = useState(() => (
+    stored && !stored.sortStale ? stored.sort : defaultSort));
   const [conds, setConds] = useState(() => reconcileConds(stored ? stored.conds : [], cols));
   const [page, setPage] = useState(1);
   const [shown, setShown] = useState(pageSize);
@@ -669,10 +721,12 @@ export default function DataTable({
   const [hidden, setHidden] = useState(() => new Set(stored && stored.hidden ? stored.hidden : hiddenDefault));
   const [view, setView] = useState('table');
 
-  // Persist whenever any persisted slice changes.
+  // Persist whenever any persisted slice changes. The generation goes WITH the
+  // write, so the retirement above happens once and the user's next choice —
+  // including re-picking the column the default just replaced — sticks for good.
   useEffect(() => {
-    writeStored(storeId, { conds, sort, hidden });
-  }, [storeId, conds, sort, hidden]);
+    writeStored(storeId, { conds, sort, hidden }, defaultSortVersion);
+  }, [storeId, conds, sort, hidden, defaultSortVersion]);
 
   // Memoised because it is a prop on every rendered row: a fresh array here would
   // give each row a changed prop on every render and defeat the memo on Row. This

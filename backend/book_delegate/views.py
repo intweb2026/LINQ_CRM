@@ -11,7 +11,7 @@ from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
 from accounts.period_filter import PeriodFilterMixin
-from accounts.permissions import RBACMixin, IsAdminRole
+from accounts.permissions import RBACMixin
 from accounts.crm_permissions import crm_permission, has_module_action
 from book_event.models import BookEvent
 from .models import BookDelegate
@@ -390,8 +390,19 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         # term it does not find here, so an unlisted default would degrade to the
         # pk tiebreak alone without any error.
         "booked_on",
+        # The Modified Time column, and the DEFAULT below. It was absent, which is
+        # why that column's header was dead: BookingsPage.jsx declares a
+        # serverOrdering only for terms listed here, and DataTable disables the
+        # header when there is none rather than sort one loaded page and imply it
+        # sorted the table.
+        "updated_at",
     ]
-    # DEFAULT ORDERING CHANGED AGAIN, from -booked_on to -created_at.
+    # HISTORY, kept because both columns below are still live sort terms and
+    # still carry indexes. This block explains the move from -booked_on to
+    # -created_at; the CURRENT default is -updated_at and its reasoning sits
+    # immediately above the `ordering` line at the end of this block.
+    #
+    # PREVIOUSLY: DEFAULT ORDERING CHANGED, from -booked_on to -created_at.
     #
     # WHAT THE USER ASKED FOR, AND WHY booked_on COULD NOT GIVE IT
     # The Bookings table must show the most RECENTLY ADDED rows first. booked_on
@@ -452,7 +463,55 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # ordering_fields: frontend/src/pages/BookingsPage.jsx sends it as the Request
     # Date column's serverOrdering, and dropping it would silently disable that
     # header. The same is true of created_at, which the Added Time column sends.
-    ordering        = ["-created_at", "-id"]
+    # DEFAULT ORDERING CHANGED AGAIN, from -created_at to -updated_at, BY REQUEST.
+    #
+    # WHAT WAS ASKED FOR. The table must lead with the row someone touched LAST,
+    # not the row entered last. Those are the same thing only until the first
+    # edit; -created_at pinned a booking to its entry position forever, so a
+    # correction made this morning to a row entered in July stayed in July and
+    # the person who made it had no way to see their own work.
+    #
+    # updated_at IS auto_now=True, so every full save() stamps it and the rows
+    # reorder themselves with no extra bookkeeping. The write paths that matter
+    # all take that route: BookDelegateListSerializer.update() calls a bare
+    # instance.save(), and accounts/bulk_update.py deliberately saves object by
+    # object rather than through queryset.update() (see its module docstring), so
+    # a mass edit stamps every row it touches.
+    #
+    # THE GAPS, BOTH NOW CLOSED, stated because neither is visible from here.
+    #
+    # A queryset .update() bypasses auto_now entirely, so every such path has to
+    # stamp updated_at itself. There are four: services.py
+    # clear_delegate_overrides() and sync_invoice_to_delegates(),
+    # book_event/serializers.py's invoice-number cascade, and — the one that
+    # mattered — the per-delegate branch of BookEventSerializer.update(), which
+    # is where EVERY delegate edit made in the Bookings modal lands.
+    #
+    # And an invoice-level edit used to bump BookEvent.updated_at and NOT the
+    # delegates', so a booking changed through the invoice panel did not rise.
+    # That was written down here as defensible, on the grounds that fixing it
+    # meant touching every delegate on an invoice on every invoice save. It was
+    # defensible for SORT ORDER and indefensible for the Data API's
+    # ?updated_since= delta feed, which reads this column and nothing else, so an
+    # invoice payment edit left an external consumer showing the old status for
+    # good. BookEvent.save() now stamps the delegates, but only when a column in
+    # BookEvent.DELEGATE_EXPORT_FIELDS actually moved, so an invoice save that
+    # touched none of them still writes nothing.
+    #
+    # A BULK EDIT MOVES EVERY ROW IT TOUCHED to the top of the table. That is
+    # inherent to the request, not a defect, and it is accepted knowingly.
+    #
+    # -id IS PART OF THE DEFAULT, NOT LEFT TO StableOrderingFilter, for exactly
+    # the reason spelled out for -created_at above: the filter would append `pk`
+    # ASCENDING, resolving ties oldest-first inside a tied microsecond.
+    #
+    # Served by book_delegates_updated_id_idx — (updated_at DESC, id DESC), added
+    # in backend/sql/2026_08_bookings_modified_order.sql. updated_at is NOT NULL,
+    # so there is no nulls_first hazard and no nulls_last spelling is needed.
+    #
+    # created_at stays in ordering_fields and keeps its index: it is still the
+    # Added Time column's serverOrdering and still a sort the user can pick.
+    ordering        = ["-updated_at", "-id"]
     # The date columns are all nullable, and Postgres orders NULLs FIRST on a
     # DESC sort: "newest first" on Date Paid came back led by every delegate
     # with no payment date at all. Undated rows now land at the END in both
@@ -510,17 +569,30 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         qs = self.get_queryset().filter(invoice__invoice_number=invoice_number)
         return Response(BookDelegateListSerializer(qs, many=True).data)
 
-    @action(detail=False, methods=["post"], url_path="bulk_delete",
-            permission_classes=[IsAdminRole])
+    # NO permission_classes OVERRIDE — the viewset's crm_permission("bookings")
+    # gates this, and "bulk_delete" is in its _DELETE_ACTIONS set, so the caller
+    # needs the `delete` cell on Bookings and nothing more.
+    #
+    # It used to carry permission_classes=[IsAdminRole], which REPLACES the module
+    # gate rather than adding to it. IsAdminRole admits only HP, `role == "admin"`,
+    # or a team flagged is_all_access — so granting somebody Bookings → delete in
+    # the permission grid did not let them delete. The UI shows the Delete button on
+    # exactly that grant (BookingsPage.jsx), so the button appeared, the click 403'd,
+    # and the rows stayed: the reported "delete does nothing". The two gates have to
+    # read the same cell or the grid is not the answer to "who may delete a booking".
+    #
+    # This is not a widening past what the grid says: reach is still bounded by
+    # get_queryset() -> rbac_filter_invoice() below, so the delete cell buys the
+    # ACTION, never rows outside the caller's scope.
+    @action(detail=False, methods=["post"], url_path="bulk_delete")
     def bulk_delete(self, request):
         """
         Delete up to 1000 delegate records by ID, RBAC-SCOPED.
 
         Previously this ran `BookDelegate.objects.filter(id__in=ids)` — the default
-        manager, not the scoped queryset — so any caller who passed the IsAdminRole
-        gate could delete ANY delegate row by guessing its id, regardless of event
-        assignment. IsAdminRole admits HP, any `is_admin` user, and any custom role
-        with is_all_access, so that was wider than the role's read access.
+        manager, not the scoped queryset — so any caller past the permission gate
+        could delete ANY delegate row by guessing its id, regardless of event
+        assignment.
 
         Resolving through self.get_queryset() routes the deletion through
         rbac_filter_invoice(), so a caller can only ever delete rows already inside

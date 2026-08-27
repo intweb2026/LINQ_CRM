@@ -8,6 +8,7 @@ import * as eventsApi from '../../api/events';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import { useSession } from '../../context/SessionContext';
 import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
@@ -55,6 +56,7 @@ const snapshot = (invoiceNumber, eventCode, rows) =>
 export default function EditBookingModal({ delegateRows, onClose, onSaved, onTransfer }) {
   const toast = useToast();
   const confirm = useConfirm();
+  const { can } = useSession();
   const first = delegateRows[0];
   const today = new Date().toISOString().slice(0, 10);
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
@@ -128,7 +130,18 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
       title: 'Delete booking?', sub: invoiceNumber + ' · ' + delegates.length + ' delegate' + (delegates.length === 1 ? '' : 's'), danger: true, ok: 'Delete booking',
       body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This removes the invoice and every delegate on it. This cannot be undone.</p>,
     });
-    if (ok) { await bookingsApi.removeInvoice(first.book_event_id); toast(invoiceNumber + ' deleted', 'ok'); onSaved && onSaved(); }
+    if (!ok) return;
+    // Same reason as the bulk Delete in BookingsPage: only 401 is handled
+    // globally (api/client.js), so an unwrapped 403 here closed the dialog and
+    // left the booking in place with nothing said.
+    try {
+      await bookingsApi.removeInvoice(first.book_event_id);
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not delete this booking.'), 'er');
+      return;
+    }
+    toast(invoiceNumber + ' deleted', 'ok');
+    onSaved && onSaved();
   }
 
   return (
@@ -165,7 +178,14 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
       footJustify="space-between"
       footer={<>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button className="btn btn-g" style={{ color: 'var(--red)' }} onClick={del}><Icon name="trash" size={14} />Delete booking</button>
+          {/* Gated on the SAME cell the server reads (crm_permission("bookings")
+              -> destroy -> `delete`), so the button is never offered to somebody
+              whose click can only come back 403. BookingsPage gates its bulk
+              Delete this way already; this one did not, which is why it showed
+              for everyone who could open a booking. */}
+          {can('delete', 'bookings')
+            ? <button className="btn btn-g" style={{ color: 'var(--red)' }} onClick={del}><Icon name="trash" size={14} />Delete booking</button>
+            : null}
           <span className="tb-m"><b>{delegates.length}</b> delegate{delegates.length === 1 ? '' : 's'}</span>
         </div>
         <div style={{ display: 'flex', gap: 7 }}>

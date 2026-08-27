@@ -17,6 +17,7 @@ import NewBookingModal from './bookings/NewBookingModal';
 import TransferBookingModal from './bookings/TransferBookingModal';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
+import { apiErrorMessage } from '../api/client';
 import ClearAllButton from '../components/ClearAllButton';
 import DateRangeFilter from '../components/DateRangeFilter';
 import * as bookingsApi from '../api/bookings';
@@ -143,7 +144,14 @@ const bkCols = ({ onTransfer } = {}) => [
   }] : []),
   { key: 'added_time', label: 'Added Time', type: 'date', group: 'audit', serverField: 'added_time', serverOrdering: 'created_at',
     cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
-  { key: 'modified_time', label: 'Modified Time', type: 'date', group: 'audit', serverField: 'modified_time', cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
+  // serverOrdering, and the table's defaultSort below, both point here now.
+  // The header was dead without it: DataTable disables a header that has no
+  // ordering term rather than sort the loaded page and imply it sorted the
+  // table. The term must also be in BookDelegateViewSet.ordering_fields, or
+  // DRF drops it silently and the rows come back in default order under a
+  // header claiming otherwise. Rendered {fdate} {ftime}, both IST — see
+  // lib/helpers.js; the value on the wire stays UTC.
+  { key: 'modified_time', label: 'Modified Time', type: 'date', group: 'audit', serverField: 'modified_time', serverOrdering: 'updated_at', cell: (v) => (v ? <span className="dim">{fdate(v)} {ftime(v)}</span> : <span className="dim">—</span>) },
   { key: 'owner', label: 'Sales Executive', group: 'team', serverField: 'owner', cell: (v) => <Who name={v} avatar={false} /> },
   // ONE attendance column, backed by `attendance`. There were two: this one, and a
   // "Attendance - IN?" Yes/No column with no backend field behind it at all — it
@@ -313,7 +321,29 @@ export default function BookingsPage() {
         serverParams={{ period }}
         onServerReady={keepRefetch}
         noun="bookings" select={can('delete', 'bookings') || can('update', 'bookings')} infinite pageSize={1000}
-        defaultSort={{ key: 'request_date', dir: 'desc' }} searchPlaceholder="Search invoice, delegate, company…"
+        // DEFAULT SORT IS MODIFIED TIME, newest first, by request.
+        //
+        // This prop is not decoration: DataTable sends an explicit `ordering`
+        // for whatever sort is in effect, so BookDelegateViewSet.ordering is
+        // the fallback for callers that send none and NOT what this table
+        // opens on. Changing the viewset default alone would have changed
+        // nothing here, which is why both moved together.
+        //
+        // It was request_date, a BUSINESS date on the invoice; a booking
+        // corrected this morning against a July invoice sat in July. The
+        // viewset's matching default is ["-updated_at", "-id"], served by
+        // book_delegates_updated_id_idx. Request Date keeps its column and its
+        // own index, so the chronological read is one header click away.
+        //
+        // defaultSortVersion RETIRES THE OLD STORED SORT, ONCE. Without it this
+        // change reached nobody: DataTable persists each table's sort per browser
+        // and a stored sort outranks defaultSort, so everyone who had ever opened
+        // Bookings kept getting Request Date. Merely visiting the page writes that
+        // blob, so "everyone" is not an exaggeration. Filters and hidden columns
+        // are untouched; only the stale sort is dropped. BUMP THIS AGAIN if this
+        // table's default ever moves again.
+        defaultSort={{ key: 'modified_time', dir: 'desc' }} defaultSortVersion={1}
+        searchPlaceholder="Search invoice, delegate, company…"
         groups={[
           { key: 'id', label: 'Identification' }, { key: 'del', label: 'Delegate' }, { key: 'pay', label: 'Payment & logistics' },
           { key: 'audit', label: 'Event & audit trail' }, { key: 'team', label: 'Team & check-in' },
@@ -358,7 +388,20 @@ export default function BookingsPage() {
                 // asked for. Those differ whenever RBAC scoping skips a row, and
                 // that gap widens with select-all — "13,264 records deleted" over
                 // a scoped delete of 900 is the kind of number people act on.
-                if (ok) { const res = await bookingsApi.bulkRemove(ids); clear(); refresh(); toast(plur(res.deleted, 'record') + ' deleted', 'ok'); }
+                if (!ok) return;
+                // WRAPPED, because a rejected delete used to be INVISIBLE. The
+                // response interceptor only acts on 401 (api/client.js), so a 403
+                // — the shape a permission or scoping refusal arrives in — threw
+                // past this handler, the confirm dialog closed, and nothing else
+                // happened. "I pressed Delete and the row is still there" with no
+                // message is indistinguishable from a bug in the delete itself.
+                try {
+                  const res = await bookingsApi.bulkRemove(ids);
+                  clear(); refresh();
+                  toast(plur(res.deleted, 'record') + ' deleted', 'ok');
+                } catch (err) {
+                  toast(apiErrorMessage(err, 'Could not delete those bookings.'), 'er');
+                }
               }}><Icon name="trash" size={13} />Delete</button>
             ) : null}
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
