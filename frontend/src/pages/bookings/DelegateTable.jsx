@@ -80,13 +80,24 @@ export function delegateProblem(rows) {
  */
 const DEFAULT_BOOKING_CODE = 'Delegate';
 
+/**
+ * `options` with blank offered first.
+ *
+ * Payment Status and Payment Type start blank on a new row — neither is known at
+ * the moment a booking is entered, and the old defaults ('Pending', 'Stripe')
+ * asserted facts nobody had stated. Blank therefore has to be a value the picker
+ * can go BACK to; without an entry here a row set to Paid by mistake could never
+ * be returned to "not yet known". Select renders it as a dim "Blank".
+ */
+const BLANK_FIRST = (options) => ['', ...options];
+
 export function blankDelegate(today, defaultOwner = '') {
   const now = new Date().toISOString();
   return {
     key: 'new-' + Math.random().toString(36).slice(2),
-    id: null, payment_status: 'Pending', booking_code: DEFAULT_BOOKING_CODE, request_date: today, invoice_date: today,
+    id: null, payment_status: '', booking_code: DEFAULT_BOOKING_CODE, request_date: today, invoice_date: today,
     name: '', company_name: '', email: '', phone_number: '', accounts_contact_email_raw: '',
-    delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: 'Stripe', ticket_tier: 'Regular',
+    delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: '', ticket_tier: 'Regular',
     discount: 0, add_ons: '', reference: '', added_time: now, modified_time: now,
     owner: defaultOwner, attendance: 'Pending',
   };
@@ -119,7 +130,7 @@ export function blankDelegate(today, defaultOwner = '') {
  * display for a different reason — it is owned by the Events tab, not by this form.
  */
 const baseCols = ({ onTransfer } = {}) => [
-  { key: 'payment_status', label: 'Payment Status', type: 'select', options: PAYMENT_STATUSES, width: 160 },
+  { key: 'payment_status', label: 'Payment Status', type: 'select', options: BLANK_FIRST(PAYMENT_STATUSES), width: 160 },
   { key: 'event_code', label: 'Event Code', type: 'display', width: 130, mono: true, from: 'eventCode' },
   { key: 'booking_code', label: 'Booking Code', type: 'select', options: BOOKING_CODES, width: 170 },
   // Per delegate, like Date Paid below it. Both dates resolve through the
@@ -143,7 +154,7 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, strictOptions: true, width: 140 },
   { key: 'paid_or_free', label: 'Payable/Free', type: 'select', options: PAID_OR_FREE, optionLabel: paidOrFreeLabel, width: 110 },
   { key: 'payment_date', label: 'Date Paid', type: 'date', width: 140 },
-  { key: 'payment_type', label: 'Payment Type', type: 'select', options: PAYMENT_TYPES, width: 120 },
+  { key: 'payment_type', label: 'Payment Type', type: 'select', options: BLANK_FIRST(PAYMENT_TYPES), width: 120 },
   { key: 'ticket_tier', label: 'Ticket Tier', type: 'select', options: TICKET_TIERS, width: 110 },
   { key: 'discount', label: 'Discount', type: 'select', options: DISCOUNTS, width: 100, percent: true },
   { key: 'add_ons', label: 'Add-Ons', type: 'text', width: 140 },

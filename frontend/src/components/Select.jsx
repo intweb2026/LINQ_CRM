@@ -81,7 +81,10 @@ function SelectMenu({ options, value, onChange, close, text, subOf, search, sear
             <button type="button" className={'pop-i' + (sub ? ' pop-i-2' : '')} key={o} onClick={() => { onChange(o); close(); }}>
               {o === value ? <Icon name="check" size={14} /> : <span style={{ width: 14, flexShrink: 0 }} />}
               <span className="sel-o">
-                <span className="sel-o-t">{text(o)}</span>
+                {/* A blank option is a real choice on some pickers (Payment Status,
+                    Payment Type), and it must be clickable — text('') renders an
+                    empty row nobody can see or aim at. */}
+                <span className="sel-o-t">{text(o) === '' ? <span className="dim">Blank</span> : text(o)}</span>
                 {sub ? <span className="sel-o-s">{sub}</span> : null}
               </span>
             </button>
