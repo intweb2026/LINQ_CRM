@@ -354,6 +354,12 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
           <>
             <PermissionGrid value={grid} inherited={teamGrid} onToggle={toggleCell} disabled={busy} />
             <PermissionLegend />
+            <p style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.45 }}>
+              <b>All records</b> is how one person is given a whole module — tick it on Paper
+              Review and they see every paper review, not only the ones their assigned events
+              cover. It works module by module, so nothing else widens with it. The modules
+              showing a dash were never restricted by event.
+            </p>
           </>
         )}
       </div>

@@ -98,6 +98,8 @@ BOOKING_IMPORT_FIELDS = (
 
 class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+    # Whose "all" cell widens these rows to every booking. See RBACMixin.
+    rbac_module        = "bookings"
     filterset_class = BookEventFilter
     search_fields   = [
         "invoice_number", "event_code", "contact_name",

@@ -66,6 +66,10 @@ class TeamPermission(models.Model):
     can_create = models.BooleanField(default=False)
     can_update = models.BooleanField(default=False)
     can_delete = models.BooleanField(default=False)
+    # Row scope, not an action: on, this team sees every row in the module rather
+    # than only the ones its assigned events cover. Only the modules in
+    # accounts.models.SCOPED_MODULES read it.
+    can_all    = models.BooleanField(default=False)
 
     class Meta:
         db_table        = "team_permissions"

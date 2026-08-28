@@ -29,17 +29,31 @@ MR_ROLES = ("market_research",)
 
 def has_full_visibility(user) -> bool:
     """
-    The three bypasses this codebase already recognises: the admin role, the HP
-    account, and a TEAM flagged is_all_access.
+    Four bypasses: the admin role, the HP account, a TEAM flagged is_all_access,
+    and the per-module "all" cell of the permission grid.
 
     The third used to be a per-user CustomRole. It now lives on the team, and
-    User.has_all_access covers both it and the HP account.
+    User.has_all_access covers both it and the HP account. The fourth is the
+    narrow one, and the reason it exists: the first three are all-or-nothing
+    across every module, so before it the only way to show somebody every paper
+    review was to show them everything else too.
     """
     if user is None or not getattr(user, "is_authenticated", False):
         return False
     if getattr(user, "is_admin", False):
         return True
-    return bool(getattr(user, "has_all_access", False))
+    if getattr(user, "has_all_access", False):
+        return True
+    # The fourth bypass, and the only one that is per module: the "all" cell of
+    # the permission grid. It is what lets one person be handed every paper review
+    # without also being handed every booking and every event, which an
+    # is_all_access team or the admin role would do. The cell is inert on any
+    # module whose queryset was never row-scoped; see SCOPED_MODULES.
+    #
+    # Imported inside the function: crm_permissions pulls in rest_framework and
+    # this module is imported from serializers as well as views.
+    from accounts.crm_permissions import has_all_records
+    return has_all_records(user, "paper_review")
 
 
 def may_see_mr_fields(user) -> bool:

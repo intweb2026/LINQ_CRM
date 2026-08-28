@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Av } from '../components/Badge';
-import { CRM_MODULES } from '../lib/constants';
+import { CRM_MODULES, PERM_ACTIONS } from '../lib/constants';
 import * as teamsApi from '../api/teams';
 import * as usersApi from '../api/users';
 import { useFetch } from '../hooks/useFetch';
@@ -37,7 +37,10 @@ export default function TeamPermissionsPage() {
   // Someone whose own grid differs from their team's. Surfaced on the card
   // because an exception nobody can see is an exception nobody reviews.
   const exceptionsIn = (t) => membersOf(t).filter(
-    (u) => CRM_MODULES.some((mo) => ['view', 'create', 'update', 'delete'].some(
+    // PERM_ACTIONS, not the four spelled out: a shared module is an exception
+    // like any other, and a hardcoded list would leave the card reading "no
+    // exceptions" for somebody who had been given a whole module on their own.
+    (u) => CRM_MODULES.some((mo) => PERM_ACTIONS.some(
       (a) => (u.permission_overrides[mo.k] || {})[a] !== null
         && (u.permission_overrides[mo.k] || {})[a] !== undefined,
     )),

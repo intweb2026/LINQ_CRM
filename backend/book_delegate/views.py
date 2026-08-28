@@ -127,6 +127,8 @@ def _discount_percent():
 class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                           RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+    # Whose "all" cell widens these rows to every booking. See RBACMixin.
+    rbac_module        = "bookings"
 
     # ?period= presets, over the same date the Dashboard's monthly chart is keyed
     # on: request_date, falling back to invoice_date. Coalesced rather than

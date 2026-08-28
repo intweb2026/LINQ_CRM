@@ -371,6 +371,9 @@ table.gt th.num,table.gt td.num{text-align:right}
 .pm-c.pm-granted,.pm-sw.pm-granted{background:color-mix(in srgb,var(--green) 16%,transparent)}
 .pm-c.pm-revoked,.pm-sw.pm-revoked{background:color-mix(in srgb,var(--red) 16%,transparent)}
 .pm-grid td.pm-c{position:relative}
+/* Row scope is a different question from the four action columns, so it is ruled off from them rather than reading as a fifth verb. */
+.pm th.pm-scope,.pm td.pm-scope{border-left:1px solid var(--border)}
+.pm td.pm-scope.dim{color:var(--text-4)}
 .rcd{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;transition:all .15s var(--ease);position:relative;overflow:hidden;cursor:pointer;box-shadow:var(--sh-xs)}
 .rcd:hover{box-shadow:var(--sh-md);transform:translateY(-1px)}
 .rcd-b{position:absolute;top:0;left:0;right:0;height:3px}

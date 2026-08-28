@@ -324,11 +324,6 @@ class User(AbstractUser):
         if cached is not None:
             return cached
 
-        if self.has_all_access:
-            resolved = {m: {a: True for a in PERM_ACTIONS} for m in CRM_MODULES}
-            self._effective_permissions = resolved
-            return resolved
-
         resolved = {m: {a: False for a in PERM_ACTIONS} for m in CRM_MODULES}
 
         if self.team_id:
@@ -347,6 +342,24 @@ class User(AbstractUser):
                 override = getattr(row, f"can_{action}")
                 if override is not None:
                     resolved[row.module][action] = override
+
+        # Full access, applied LAST so no grid row can take it away — and applied
+        # to the four ACTIONS only.
+        #
+        # "all" is left as the grid stored it, on purpose. It is row scope, not a
+        # capability, and this codebase has always kept the two apart for
+        # bookings and events: an is_all_access team passes every module gate
+        # while rbac_filter still narrows it to that person's assigned events,
+        # and only role=admin bypasses that. accounts/tests_write_scoping.py
+        # exists because a caller who was is_all_access AND still scoped could
+        # once delete rows they could not read. Blanket-Truing this cell here
+        # would hand that same caller every booking in the database as a side
+        # effect of a feature about sharing one module.
+        if self.has_all_access:
+            for cells in resolved.values():
+                for action in PERM_ACTIONS:
+                    if action != "all":
+                        cells[action] = True
 
         self._effective_permissions = resolved
         return resolved
@@ -461,8 +474,26 @@ CRM_MODULES = [
     "paper_review", "proposal_submission",
 ]
 
-PERM_ACTIONS = ("view", "create", "update", "delete")
+# "all" is not a verb like the other four. The first four say whether a module
+# OPENS; "all" says whether the rows inside it are the caller's own or every row
+# there is. It rides in this tuple anyway because every layer between the
+# database and the checkbox — the two permission models, the resolver below, the
+# serializers, the PUT validators, the grid and its delta — walks PERM_ACTIONS
+# generically, so a fifth entry reaches all of them without a fifth copy of the
+# loop. Read by paper_review/access.py, proposal_submission/access.py,
+# RBACMixin.rbac_filter and EventViewSet.get_queryset, and by nothing else:
+# crm_permission never maps a request onto it, so ticking it on an unscoped
+# module grants nothing.
+PERM_ACTIONS = ("view", "create", "update", "delete", "all")
 PERM_FIELDS = tuple(f"can_{a}" for a in PERM_ACTIONS)
+
+# The modules whose querysets are row-scoped, and therefore the only ones where
+# can_all changes anything. Mirrored by `scoped` in frontend lib/constants.js,
+# which greys the cell out everywhere else rather than offering a tick that does
+# nothing.
+SCOPED_MODULES = frozenset({
+    "bookings", "events", "paper_review", "proposal_submission",
+})
 
 
 class UserPermission(models.Model):
@@ -493,6 +524,10 @@ class UserPermission(models.Model):
     can_create = models.BooleanField(null=True, default=None)
     can_update = models.BooleanField(null=True, default=None)
     can_delete = models.BooleanField(null=True, default=None)
+    # Three-state like the rest: None inherits the team's row scope, True hands
+    # this one person every row in the module, False pins them back to their own
+    # rows even where the team sees everything.
+    can_all    = models.BooleanField(null=True, default=None)
 
     class Meta:
         db_table        = "user_permissions"

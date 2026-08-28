@@ -73,6 +73,11 @@ export default function TeamPermissionsModal({ team: t, onClose, onSaved }) {
         ) : null}
         <div style={allAccess ? { opacity: 0.45, pointerEvents: 'none' } : undefined}>
           <PermissionGrid value={grid} onToggle={toggle} disabled={allAccess} />
+          <p style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.45 }}>
+            <b>All records</b> shares the whole module with this team — every paper review,
+            say, rather than only the ones their assigned events cover. It applies to that
+            module alone; the modules showing a dash were never restricted by event.
+          </p>
         </div>
       </div>
     </Modal>

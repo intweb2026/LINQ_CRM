@@ -35,13 +35,14 @@ export function toMatrix(raw) {
 export function toPermissionRows(matrix) {
   return ALL_MODULES.map((module) => {
     const p = matrix[module] || {};
-    return {
-      module,
-      can_view: !!p.view,
-      can_create: !!p.create,
-      can_update: !!p.update,
-      can_delete: !!p.delete,
-    };
+    // Built from PERM_ACTIONS rather than spelled out, so a cell added to the
+    // grid cannot reach the checkbox and stop at this function. can_all was
+    // exactly that shape of omission waiting to happen: the endpoint REPLACES
+    // the team's rows from this payload, so a key missing here is not a key left
+    // alone, it is one revoked on every save.
+    const row = { module };
+    PERM_ACTIONS.forEach((a) => { row[`can_${a}`] = !!p[a]; });
+    return row;
   });
 }
 

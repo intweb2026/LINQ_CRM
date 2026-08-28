@@ -85,10 +85,26 @@ class RBACMixin:
     """
     permission_classes = [IsSalesOrAdminOrReadOnly]
 
+    # Which permission-grid module this viewset's rows belong to, so rbac_filter
+    # can honour that module's "all" cell. Stated explicitly rather than read off
+    # permission_classes[0].crm_module: the two are the same string today, and a
+    # viewset that swapped its permission class would silently change who sees
+    # every row.
+    #
+    # None means no module owns these rows, and the scope stays as it was.
+    rbac_module = None
+
     def rbac_filter(self, qs, event_code_field="event_code", owner_path=None):
         user = self.request.user
         if user.is_admin:
             return qs
+
+        # Granted every row in this module by the grid. Same answer as is_admin
+        # for these rows and only these rows — see accounts.models.PERM_ACTIONS.
+        if self.rbac_module:
+            from .crm_permissions import has_all_records
+            if has_all_records(user, self.rbac_module):
+                return qs
 
         from django.db.models import Q
 
