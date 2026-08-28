@@ -62,6 +62,47 @@ def _delegate_changes(stored, clean):
     return changed
 
 
+# The two date overrides, named once. booked_on is derived from them, so the
+# update path below has to know which keys move it.
+_DATE_OVERRIDES = ("delegate_request_date", "delegate_invoice_date")
+
+
+def _booked_on_write(stored, changed, invoice):
+    """
+    The `booked_on` term to add to a delegate's queryset .update(), or {} when
+    this write cannot have moved it.
+
+    WHY IT IS NEEDED HERE. book_delegates.booked_on is the denormalised booking
+    date, COALESCE(delegate_request_date, invoice.request_date,
+    delegate_invoice_date, invoice.invoice_date), and it is the column the
+    period window filters on (accounts/period_filter.py, period_date_fields on
+    BookDelegateViewSet). BookDelegate.save() derives it on every ordinary
+    write, but the modal's delegate branch deliberately does NOT go through
+    save(), so a per-delegate Request Date set here would store the override and
+    leave booked_on holding the invoice's date. The row would then show one date
+    in the Bookings table and be windowed by another, which is precisely the
+    kind of disagreement booked_on exists to prevent.
+
+    Values are normalised through the model fields because the nested delegate
+    rows arrive as raw JSON, so an override reaches this function as the string
+    "2026-03-04" while the invoice's own column is already a date.
+    """
+    if not any(key in changed for key in _DATE_OVERRIDES):
+        return {}
+
+    def _delegate_date(key):
+        raw = changed[key] if key in changed else getattr(stored, key, None)
+        return stored._meta.get_field(key).to_python(raw)
+
+    def _invoice_date(key):
+        return invoice._meta.get_field(key).to_python(getattr(invoice, key, None))
+
+    return {"booked_on": (_delegate_date("delegate_request_date")
+                          or _invoice_date("request_date")
+                          or _delegate_date("delegate_invoice_date")
+                          or _invoice_date("invoice_date"))}
+
+
 _ALLOWED_DELEGATE = frozenset({
     "first_name", "last_name", "email", "phone_number",
     "company_name_raw",
@@ -69,6 +110,11 @@ _ALLOWED_DELEGATE = frozenset({
     "attendance", "notes", "dietary_requirements",
     "delegate_payment_status", "delegate_payment_type", "delegate_payment_date",
     "delegate_paid_or_free", "delegate_ticket_tier",
+    # The per-delegate Request Date and Invoice Date. Absent from this set they
+    # would be filtered out of the modal's payload after surviving the trip from
+    # the browser, which is the exact silent failure booking_code and
+    # delegate_number each suffered once already.
+    "delegate_request_date", "delegate_invoice_date",
     "booking_code", "delegate_number",
     "delegate_count", "discount", "add_ons", "reference",
 })
@@ -329,7 +375,7 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                     logger.info("DELETED %d delegates from invoice %s", cnt, instance.invoice_number)
 
                 created_count = updated_count = 0
-                emails_seen = set()
+                people_seen = set()
 
                 for d_data in delegates_data:
                     d_id = d_data.get("id")
@@ -339,11 +385,25 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                     if d_id and d_id in existing:
                         # Existing delegate — update by ID, email not required
                         email = d_data.get("email", "").strip().lower()
+                        # THE SAME PERSON, not the same address. One email may
+                        # cover several delegates on one invoice (see
+                        # BookDelegate.Meta.constraints), so an address-only test
+                        # refused to save a booking that legitimately holds two
+                        # people on one address — which is every booking the
+                        # website intake now stores that way. What is still
+                        # refused is a save that would make this row a copy of
+                        # another one, caught here so the modal gets a sentence
+                        # rather than an IntegrityError.
                         if email and BookDelegate.objects.filter(
-                            invoice=instance, email=email
+                            invoice=instance,
+                            email=email,
+                            first_name__iexact=clean.get("first_name", ""),
+                            last_name__iexact=clean.get("last_name", ""),
                         ).exclude(id=d_id).exists():
                             raise serializers.ValidationError(
-                                {"delegates": f"Email {email} already exists on this invoice."}
+                                {"delegates": f"{clean.get('first_name', '')} "
+                                              f"{clean.get('last_name', '')} <{email}> is "
+                                              f"already on this invoice.".strip()}
                             )
                         # updated_at IS SET BY HAND, and this is the write path
                         # it matters most on: frontend saveInvoiceDelegates()
@@ -367,16 +427,44 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                         changed = _delegate_changes(existing[d_id], clean)
                         if changed:
                             BookDelegate.objects.filter(id=d_id).update(
-                                **changed, updated_at=timezone.now()
+                                **changed,
+                                # Derived, and only when one of the two date
+                                # overrides moved; see _booked_on_write.
+                                **_booked_on_write(existing[d_id], changed, instance),
+                                updated_at=timezone.now(),
                             )
                             updated_count += 1
                     else:
-                        # New delegate — email required and must be unique on this invoice
+                        # New delegate — email required, and the PERSON must be
+                        # new to this invoice. Keyed on email plus name, not on
+                        # email alone, for two separate reasons.
+                        #
+                        # Adding a second person on one address used to be
+                        # impossible from the modal: `emails_seen` dropped the
+                        # second of two rows sharing an address, and the branch
+                        # below then found the first person's row and treated the
+                        # second person as an edit of them.
+                        #
+                        # And the update was `filter(invoice, email).update(...)`,
+                        # which is a filter that can now match MORE THAN ONE ROW.
+                        # Editing one of two people on a shared address would have
+                        # written that person's name over both of them.
                         email = d_data.get("email", "").strip().lower()
-                        if not email or email in emails_seen:
+                        if not email:
                             continue
-                        emails_seen.add(email)
-                        if not BookDelegate.objects.filter(invoice=instance, email=email).exists():
+                        person = BookDelegate.person_key(
+                            email, clean.get("first_name", ""), clean.get("last_name", ""))
+                        if person in people_seen:
+                            continue
+                        people_seen.add(person)
+
+                        stored = BookDelegate.objects.filter(
+                            invoice=instance,
+                            email=email,
+                            first_name__iexact=clean.get("first_name", ""),
+                            last_name__iexact=clean.get("last_name", ""),
+                        ).first()
+                        if stored is None:
                             BookDelegate.objects.create(
                                 invoice=instance,
                                 event_code=instance.event_code,
@@ -384,10 +472,18 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                             )
                             created_count += 1
                         else:
-                            BookDelegate.objects.filter(
-                                invoice=instance, email=email
-                            ).update(**clean)
-                            updated_count += 1
+                            # updated_at BY HAND, for the reason spelled out on
+                            # the id path above, and it was missing here. An edit
+                            # that came in without an id left the row's watermark
+                            # untouched, so it neither rose to the top of the
+                            # Bookings table nor reached the Data API's
+                            # ?updated_since= feed.
+                            changed = _delegate_changes(stored, clean)
+                            if changed:
+                                BookDelegate.objects.filter(id=stored.id).update(
+                                    **changed, updated_at=timezone.now()
+                                )
+                                updated_count += 1
 
                 logger.info(
                     "NESTED UPDATE invoice %s: %d created, %d updated, %d removed",

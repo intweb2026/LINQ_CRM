@@ -122,10 +122,12 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'payment_status', label: 'Payment Status', type: 'select', options: PAYMENT_STATUSES, width: 160 },
   { key: 'event_code', label: 'Event Code', type: 'display', width: 130, mono: true, from: 'eventCode' },
   { key: 'booking_code', label: 'Booking Code', type: 'select', options: BOOKING_CODES, width: 170 },
-  // Both dates belong to the INVOICE, not to the person, so an edit here is
-  // applied to every row and saved once on the booking; see invoiceWide below.
-  { key: 'request_date', label: 'Request Date', type: 'date', width: 140, invoiceWide: true },
-  { key: 'invoice_date', label: 'Invoice Date', type: 'date', width: 140, invoiceWide: true },
+  // Per delegate, like Date Paid below it. Both dates resolve through the
+  // delegate's own override to the invoice's column (api/bookings.js
+  // OVERRIDE_FIELDS), so editing one row changes that row; the invoice keeps the
+  // shared value for as long as every delegate on it agrees.
+  { key: 'request_date', label: 'Request Date', type: 'date', width: 140 },
+  { key: 'invoice_date', label: 'Invoice Date', type: 'date', width: 140 },
   { key: 'invoice_number', label: 'Invoice Number', type: 'display', width: 150, mono: true, from: 'invoiceNumber' },
   { key: 'name', label: 'Name', type: 'text', width: 160, required: true },
   { key: 'company_name', label: 'Delegate Company', type: 'text', width: 170, required: true },
@@ -211,21 +213,6 @@ function autoPaidStatus(row, date) {
   return 'Paid';
 }
 
-/**
- * What an `invoiceWide` column is, and why the edit spreads.
- *
- * Request Date and Invoice Date are ONE value for the whole booking. They are
- * columns on the invoice with no per-delegate override behind them;
- * book_delegate/serializers.py reads both off the invoice and marks them
- * read_only. The grid shows them per row because this modal is where a booking
- * is opened, so leaving each cell independent would offer a state the database
- * cannot hold, two delegates on one invoice with different request dates.
- * Writing the edit across the rows keeps what is on screen equal to what will be
- * saved; api/bookings.js splitPersonLevel then lifts the agreed value onto the
- * invoice.
- */
-const INVOICE_WIDE_TITLE = 'One date for the whole booking. Editing any row sets it on all of them.';
-
 export default function DelegateTable({ rows, onChange, onRemove, eventCode, eventName, invoiceNumber, salesExec, onTransfer }) {
   const ctx = { eventCode, eventName, invoiceNumber, salesExec };
   const COLS = baseCols({ onTransfer });
@@ -247,14 +234,6 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
       row.delegate_number = 0;
     }
     next[i] = row;
-    // An invoice-level column: the same value goes on every delegate row, so the
-    // grid never shows two request dates for one invoice and the save has an
-    // agreed value to lift onto the booking.
-    if (COLS.some((c) => c.key === key && c.invoiceWide)) {
-      for (let j = 0; j < next.length; j++) {
-        if (j !== i) next[j] = { ...next[j], [key]: value };
-      }
-    }
     onChange(next);
   }
 
@@ -308,8 +287,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     return (
       <input className="in in-xs" type={c.type} value={row[c.key] || ''}
         placeholder={c.placeholderFrom ? (row[c.placeholderFrom] || '') : undefined}
-        title={c.invoiceWide ? INVOICE_WIDE_TITLE
-          : (c.placeholderFrom && !row[c.key] && row[c.placeholderFrom] ? "Blank — the delegate's own email is used" : undefined)}
+        title={c.placeholderFrom && !row[c.key] && row[c.placeholderFrom] ? "Blank — the delegate's own email is used" : undefined}
         onChange={(e) => update(i, c.key, e.target.value)} />
     );
   }
@@ -344,7 +322,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
             <tr>
               {onRemove ? <th className="pin1" /> : null}
               <th className={onRemove ? 'pin2' : 'pin1'}>#</th>
-              {COLS.map((c) => <th key={c.key} style={{ minWidth: c.width }} title={c.invoiceWide ? INVOICE_WIDE_TITLE : undefined}>{c.label}{c.required ? <span className="req">*</span> : null}</th>)}
+              {COLS.map((c) => <th key={c.key} style={{ minWidth: c.width }}>{c.label}{c.required ? <span className="req">*</span> : null}</th>)}
             </tr>
           </thead>
           <tbody>

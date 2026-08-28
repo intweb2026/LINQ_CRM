@@ -192,10 +192,18 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                            "source": "invoice__company_name"},
         "event_name":     {"type": "text", "label": "Event Name",
                            "source": "invoice__event_name"},
-        "request_date":   {"type": "date", "label": "Request Date",
-                           "source": "invoice__request_date", "nullable": True},
-        "invoice_date":   {"type": "date", "label": "Invoice Date",
-                           "source": "invoice__invoice_date", "nullable": True},
+        # RESOLVED, not invoice-sourced: both dates have a per-delegate
+        # override now, and filtering the invoice's column would miss every row
+        # carrying one while claiming to filter the column the table displays.
+        # Declared here rather than in _RESOLVED because that comprehension has
+        # no place to carry `nullable`, and a nullable date is what makes the
+        # is-empty operators available on these two.
+        "request_date":   {"type": "date", "label": "Request Date", "nullable": True,
+                           "resolved": {"override": "delegate_request_date",
+                                        "invoice": "invoice__request_date"}},
+        "invoice_date":   {"type": "date", "label": "Invoice Date", "nullable": True,
+                           "resolved": {"override": "delegate_invoice_date",
+                                        "invoice": "invoice__invoice_date"}},
         "total_amount":   {"type": "number", "label": "Total Amount",
                            "source": "invoice__total_amount", "nullable": True},
         "currency":       {"type": "choice", "label": "Currency",
@@ -262,7 +270,7 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         **build_bulk_update_fields(
             BookDelegate,
             exclude=(
-                # identity: email is half of unique_together (invoice, email),
+                # identity: email and name together ARE the key (Meta.constraints),
                 # and a name is not a batch property of anybody.
                 "email", "first_name", "last_name",
                 # derived in save() (models.py:88-97): event_code is re-parsed
@@ -296,6 +304,8 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 "delegate_ticket_tier":    "Ticket Tier (override)",
                 "delegate_paid_or_free":   "Payable / Free (override)",
                 "delegate_payment_date":   "Payment Date (override)",
+                "delegate_request_date":   "Request Date (override)",
+                "delegate_invoice_date":   "Invoice Date (override)",
                 "company_name_raw":        "Company (raw)",
                 "add_ons":                 "Add-ons",
             },
@@ -531,8 +541,12 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             # Payment Status cell displays. Kept because existing callers pass it,
             # but the table should use _sort_effective_payment_status below.
             _sort_status=F("invoice__payment_status"),
-            _sort_date=F("invoice__invoice_date"),
-            _sort_request_date=F("invoice__request_date"),
+            # Both spelled as the RESOLVED value for the same reason as the
+            # effective_* terms below: a delegate can carry its own request or
+            # invoice date, and sorting the invoice's column would order the
+            # table by a value the cell is not showing.
+            _sort_date=Coalesce("delegate_invoice_date", "invoice__invoice_date"),
+            _sort_request_date=Coalesce("delegate_request_date", "invoice__request_date"),
             _sort_name=Concat(F("first_name"), Value(" "), F("last_name")),
             # ── Ordering over the RESOLVED person-level values ────────────────
             # Same expression as accounts/filter_spec.py _resolved_expression and
@@ -870,11 +884,10 @@ def _perform_transfer(request, delegates, target_code, new_number):
         return Response(
             {"detail": f"This booking is already on {target_code}."}, status=400)
 
-    # No duplicate-email check over the selection itself. Every delegate here is on
-    # ONE invoice (the caller enforces that), and BookDelegate declares
-    # unique_together = [("invoice", "email")] — so two rows for the same person on
-    # one invoice cannot exist to be selected. The reuse check below is still needed:
-    # it compares against a DIFFERENT invoice's delegates.
+    # No duplicate check over the selection itself. Every delegate here is on ONE
+    # invoice (the caller enforces that), and BookDelegate's key refuses the same
+    # PERSON twice on one invoice — see Meta.constraints. The reuse check below is
+    # still needed: it compares against a DIFFERENT invoice's delegates.
 
     # An invoice number already in use may be REUSED, but only when it is the same
     # event — that is how a second delegate joins a transfer already made. Anywhere
@@ -887,13 +900,20 @@ def _perform_transfer(request, delegates, target_code, new_number):
                            f"{existing.event_code}. Use a different number."},
                 status=409,
             )
-        taken = set(
-            e.lower() for e in existing.delegates.values_list("email", flat=True) if e
-        )
-        clash = [d.email for d in delegates if (d.email or "").lower() in taken]
+        # Matched on the PERSON, not on the email alone. Two delegates on one
+        # invoice may share an email address — one office address covering two
+        # owners is ordinary — so an email-only test refused to transfer Emily
+        # onto an invoice already holding Brendon, and refused it by naming an
+        # address that belongs to somebody else as well as to her.
+        taken = {
+            BookDelegate.person_key(*row)
+            for row in existing.delegates.values_list("email", "first_name", "last_name")
+        }
+        clash = [d for d in delegates if d.own_person_key in taken]
         if clash:
             return Response(
-                {"detail": f"{clash[0]} is already on invoice {new_number}."
+                {"detail": f"{clash[0].full_name} <{clash[0].email}> is already on "
+                           f"invoice {new_number}."
                            + (f" ({len(clash) - 1} more of the selected bookings are "
                               "too.)" if len(clash) > 1 else "")},
                 status=409,

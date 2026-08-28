@@ -445,9 +445,19 @@ class FilterSpecMixin:
           "null_or_blank"  — text-ish column: '' or NULL both count as empty.
           "null_only"      — date/number/boolean/fk: only NULL is empty; a ''
                              comparison would be a database type error.
+
+        A RESOLVED DATE IS null_only, not resolved. `resolved` is not a third
+        kind of emptiness, it is null_or_blank evaluated on the annotation
+        instead of on a column, so it carries that shape's '' comparison with
+        it — and against a date annotation that comparison is the same type
+        error the null_only line describes. is_empty on a resolved date raised
+        ValidationError("'' value has an invalid date format") for as long as
+        both existed; payment_date has been resolved since the overrides went
+        in, and it went unnoticed only because nothing asked that column
+        whether it was empty until Request Date became resolved too.
         """
         if cfg.get("resolved"):
-            return "resolved"
+            return "resolved" if cfg["type"] in _TEXTISH else "null_only"
         if cfg["type"] in _TEXTISH:
             return "null_or_blank"
         return "null_only"
@@ -458,6 +468,7 @@ class FilterSpecMixin:
             return Q(**{f"{path}__isnull": True})
         # resolved and null_or_blank share the predicate; for resolved, `path` is
         # the annotation, so NULL there already means "neither side had a value".
+        # Only the text-ish ones reach here — see _empty_shape_name.
         return Q(**{f"{path}__isnull": True}) | Q(**{path: ""})
 
     # ── Path resolution + annotations ─────────────────────────────────────────

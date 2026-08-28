@@ -596,17 +596,47 @@ const invBody = captured[captured.length - 1].body;
 const invDel = invBody.delegates[0];
 results.literals.invoice_patch_body = invBody;
 
+// request_date and invoice_date USED to be in this list. They were invoice
+// columns nobody could edit, and they are a per-delegate override pair now
+// (book_delegate/models.py delegate_request_date), so they travel exactly like
+// payment_status below: the delegates' agreed value goes on the invoice, and a
+// disagreement stays on the rows. The keys named here are the ones no delegate
+// row carries at all, which is what makes their absence the whole assertion.
 check("invoice PATCH omits invoice fields the caller never set",
   !["company_name", "contact_name", "contact_email", "contact_phone", "source",
-    "currency", "request_date", "invoice_date", "discount", "reference",
+    "currency", "discount", "reference",
    ].some((k) => k in invBody),
   Object.keys(invBody).join(","));
 check("invoice PATCH carries the delegates' agreed payment status, not 'Pending'",
   invBody.payment_status === "Paid", invBody.payment_status);
+check("invoice PATCH carries the delegates' agreed booking dates",
+  invBody.request_date === "2026-01-02" && invBody.invoice_date === "2026-01-03",
+  JSON.stringify({ r: invBody.request_date, i: invBody.invoice_date }));
 check("agreed person-level values clear the per-delegate override",
   invDel.delegate_payment_status === null && invDel.delegate_ticket_tier === null
-  && invDel.delegate_payment_date === null,
-  JSON.stringify({ s: invDel.delegate_payment_status, t: invDel.delegate_ticket_tier, d: invDel.delegate_payment_date }));
+  && invDel.delegate_payment_date === null
+  && invDel.delegate_request_date === null && invDel.delegate_invoice_date === null,
+  JSON.stringify({ s: invDel.delegate_payment_status, t: invDel.delegate_ticket_tier,
+                   d: invDel.delegate_payment_date, rd: invDel.delegate_request_date,
+                   id_: invDel.delegate_invoice_date }));
+
+// TWO DELEGATES, TWO DIFFERENT REQUEST DATES. The reason the override columns
+// were added: correcting one person's booking date used to move everybody on
+// the invoice with it, because the date was one shared invoice value. Each row
+// now carries its own, and the invoice's shared column is left alone rather
+// than being handed one of the two dates arbitrarily.
+captured.length = 0;
+await bookings.saveInvoiceDelegates("INV-9", EDIT_META, [
+  feDelegate({ request_date: "2026-01-02" }),
+  feDelegate({ id: 502, email: "grace@acme.test", request_date: "2026-04-20" }),
+], 77);
+const splitBody = captured[captured.length - 1].body;
+check("delegates that disagree each keep their own request date",
+  splitBody.delegates.map((d) => d.delegate_request_date)
+    .join("|") === "2026-01-02|2026-04-20",
+  JSON.stringify(splitBody.delegates.map((d) => d.delegate_request_date)));
+check("a disagreed request date is not written to the shared invoice",
+  !("request_date" in splitBody), Object.keys(splitBody).join(","));
 check("delegate payload carries booking_code", invDel.booking_code === "Speaker", invDel.booking_code);
 check("delegate payload carries delegate_number", invDel.delegate_number === 2, invDel.delegate_number);
 check("delegate payload carries the Attendance - IN? value",

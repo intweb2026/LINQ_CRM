@@ -82,6 +82,16 @@ const OVERRIDE_FIELDS = [
   ['payment_date', 'delegate_payment_date'],
   ['paid_or_free', 'delegate_paid_or_free'],
   ['ticket_tier', 'delegate_ticket_tier'],
+  // Request Date and Invoice Date, which became a pair like the five above when
+  // BookDelegate gained delegate_request_date and delegate_invoice_date. They
+  // were invoice columns and nothing else, so the two cells the modal shows on
+  // every delegate row were ONE shared value; setting one person's request date
+  // set it for everybody on the invoice, and before that the typed value reached
+  // nothing at all. Delegates on one invoice are usually booked on the same day,
+  // which is why the invoice column carries it whenever they agree, but they are
+  // not required to be, and a correction to one row must leave the others alone.
+  ['request_date', 'delegate_request_date'],
+  ['invoice_date', 'delegate_invoice_date'],
 ];
 
 /**
@@ -94,33 +104,12 @@ const OVERRIDE_FIELDS = [
  * the save returned 200, and the date was back on the next refetch, which is
  * what made the Booking Code to SPP rule look like it did nothing.
  *
- * Only payment_date is listed. It is the one nullable column of the five; the
- * others are non-null CharFields whose empty value is '' and whose blank simply
- * means "nothing to push up", so clearing them on the invoice is neither
- * expressible nor asked for.
+ * The three DATE fields are listed and the rest are not. They are the nullable
+ * columns; the others are non-null CharFields whose empty value is '' and whose
+ * blank simply means "nothing to push up", so clearing them on the invoice is
+ * neither expressible nor asked for.
  */
-const CLEARABLE_ON_INVOICE = ['payment_date'];
-
-/**
- * The two INVOICE-ONLY date columns shown as a cell on every delegate row.
- *
- * Request Date and Invoice Date live on the invoice (BookEvent.request_date and
- * BookEvent.invoice_date) and have NO per-delegate override behind them; the
- * delegate serializer reads both straight off the invoice and marks them
- * read_only (book_delegate/serializers.py). They are edited from the delegate
- * grid all the same, because the booking modals are the only place a booking is
- * opened.
- *
- * THE BUG THIS FIXES
- * The pair was in neither OVERRIDE_FIELDS nor delegateToBackend, so nothing ever
- * carried it out of the grid. "Save changes" posted an invoice payload with no
- * request_date in it, the PATCH answered 200, and the old date was back on the
- * next refetch. Request Date is the Bookings default sort and one half of the
- * reporting window, COALESCE(request_date, invoice_date) in
- * accounts/period_filter.py, so it is a value people genuinely need to correct,
- * and NOBODY COULD CHANGE IT.
- */
-const INVOICE_ONLY_FIELDS = ['request_date', 'invoice_date'];
+const CLEARABLE_ON_INVOICE = ['payment_date', 'request_date', 'invoice_date'];
 
 /** The value every delegate shares for `key`, or undefined if they differ. */
 function agreedValue(delegates, key) {
@@ -182,22 +171,6 @@ function splitPersonLevel(delegates) {
       .filter(Boolean);
     invoiceFields.accounts_contact_email = contacts[0] || '';
   }
-  // The invoice-only dates. DelegateTable applies an edit to one of these cells
-  // across every row, see its invoiceWide columns, so the delegates agreeing is
-  // the normal case; the first non-empty value is the fallback for a caller that
-  // assembled its rows some other way. All blank writes null, which is the only
-  // way the date can be CLEARED; both columns are null=True.
-  //
-  // Guarded on the key being PRESENT for the same reason accounts_contact_email
-  // is, rows that never carried it must not null the invoice's stored date.
-  INVOICE_ONLY_FIELDS.forEach((key) => {
-    if (!delegates.some((d) => d[key] !== undefined)) return;
-    const agreed = agreedValue(delegates, key);
-    const value = agreed !== undefined
-      ? agreed
-      : delegates.map((d) => d[key]).find((v) => String(v ?? '').trim());
-    invoiceFields[key] = String(value ?? '').trim() || null;
-  });
   return { invoiceFields, inherited };
 }
 
@@ -208,8 +181,13 @@ function toFrontend(d) {
     payment_status: d.effective_payment_status,
     event_code: d.event_code,
     booking_code: d.booking_code || '',
-    request_date: d.request_date,
-    invoice_date: d.invoice_date,
+    // The RESOLVED dates, delegate override first and the invoice's own column
+    // behind it, exactly as payment_status reads effective_payment_status above.
+    // `d.request_date` is still the INVOICE's raw value and is deliberately not
+    // used here; showing it would hide the override the row actually carries.
+    // The `??` chain keeps a payload that predates the override fields working.
+    request_date: d.effective_request_date ?? d.request_date,
+    invoice_date: d.effective_invoice_date ?? d.invoice_date,
     invoice_number: d.invoice_number,
     name: d.full_name,
     company_name: d.company_display || '',
@@ -349,6 +327,8 @@ function delegateToBackend(d, inherited = {}) {
     delegate_payment_date: override('delegate_payment_date', d.payment_date),
     delegate_paid_or_free: override('delegate_paid_or_free', d.paid_or_free),
     delegate_ticket_tier: override('delegate_ticket_tier', d.ticket_tier),
+    delegate_request_date: override('delegate_request_date', d.request_date),
+    delegate_invoice_date: override('delegate_invoice_date', d.invoice_date),
   };
   Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
   return out;

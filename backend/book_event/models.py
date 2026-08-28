@@ -357,12 +357,53 @@ class BookEvent(models.Model):
             from book_delegate.models import BookDelegate
             _delegate_writes = {}
             if _dates_changed:
-                _delegate_writes["booked_on"] = self.request_date or self.invoice_date
+                _delegate_writes["booked_on"] = self._booked_on_expression()
             if _delegate_export_changed:
                 _delegate_writes["updated_at"] = timezone.now()
             BookDelegate.objects.filter(invoice_id=self.invoice_number).update(
                 **_delegate_writes
             )
+
+    def _booked_on_expression(self):
+        """
+        Each delegate's booked_on, as ONE expression the cascade can hand to a
+        queryset .update().
+
+        It has to be an expression rather than a literal date, because a
+        delegate may carry its OWN request or invoice date now
+        (book_delegate/models.py delegate_request_date). A literal would set
+        every row on the invoice to the invoice's date and silently destroy
+        those overrides, which is the whole thing they exist to express. Same
+        chain as BookDelegate._derive_booked_on, evaluated per row in SQL,
+        COALESCE(delegate_request_date, invoice.request_date,
+                 delegate_invoice_date, invoice.invoice_date).
+
+        The invoice's two dates are passed as VALUES rather than read back
+        through the join, so the update sees what this save is writing rather
+        than what the row held before it. A null one is left out of the chain
+        entirely; Value(None) reaches the database as an untyped parameter and
+        the cast it would need buys nothing, since a NULL term can never be the
+        one COALESCE returns.
+        """
+        from django.db.models import DateField, Value
+        from django.db.models.functions import Coalesce
+
+        def _as_date(attname):
+            # to_python for the reason given at the snapshot read above: an
+            # in-memory instance can still hold the ISO STRING an importer or a
+            # serializer assigned, and that must not reach the database as the
+            # parameter of a date COALESCE.
+            return self._meta.get_field(attname).to_python(getattr(self, attname, None))
+
+        terms = ["delegate_request_date"]
+        request_date = _as_date("request_date")
+        if request_date is not None:
+            terms.append(Value(request_date, output_field=DateField()))
+        terms.append("delegate_invoice_date")
+        invoice_date = _as_date("invoice_date")
+        if invoice_date is not None:
+            terms.append(Value(invoice_date, output_field=DateField()))
+        return Coalesce(*terms, output_field=DateField())
 
     @classmethod
     def auto_assign_sales(cls, event_code: str):

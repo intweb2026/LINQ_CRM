@@ -6,7 +6,8 @@ Individual attendee linked to an invoice.
 - payment_status is READ from invoice (@property) — never stored here.
 - company FK enables CRM contact reuse across events.
 - first_name/last_name stored split for mail-merge use.
-- Unique: (invoice, email) — silently skipped on bulk import.
+- Unique: (invoice, email, first_name, last_name) — one PERSON per invoice.
+  Several delegates may share one email address; see Meta.constraints.
 """
 from django.db import models
 from django.utils import timezone
@@ -122,8 +123,15 @@ class BookDelegate(models.Model):
 
     def _derive_booked_on(self):
         """
-        COALESCE(invoice.request_date, invoice.invoice_date), without a query
+        COALESCE(delegate_request_date, invoice.request_date,
+                 delegate_invoice_date, invoice.invoice_date), without a query
         in the paths that matter.
+
+        The two delegate columns lead because they are this delegate's own
+        booking date where one is set; the flattened COALESCE is the same thing
+        as COALESCE(effective_request_date, effective_invoice_date) written out,
+        so a delegate that overrides only the invoice date still inherits the
+        invoice's request date ahead of it.
 
         The bookings list queryset and the mass-update engine both select_related
         the invoice, so the related object is already in _state.fields_cache and
@@ -139,19 +147,26 @@ class BookDelegate(models.Model):
         varchar is the "unset" value for this column in a way it never is for an
         integer FK.
         """
+        # The delegate's own request date settles it without reading the
+        # invoice at all; the rest of the chain only decides what an
+        # un-overridden row inherits.
+        if self.delegate_request_date:
+            return self.delegate_request_date
         if self.invoice_id is None or self.invoice_id == "":
-            return None
+            return self.delegate_invoice_date
         cached = self._state.fields_cache.get("invoice")
         if cached is not None:
-            return cached.request_date or cached.invoice_date
+            return (cached.request_date
+                    or self.delegate_invoice_date
+                    or cached.invoice_date)
         from book_event.models import BookEvent
         row = (BookEvent.objects
                .filter(invoice_number=self.invoice_id)
                .values_list("request_date", "invoice_date")
                .first())
         if not row:
-            return None
-        return row[0] or row[1]
+            return self.delegate_invoice_date
+        return row[0] or self.delegate_invoice_date or row[1]
 
     # Per-delegate payment overrides (null = inherit from invoice)
     delegate_payment_status = models.CharField(max_length=50, blank=True, null=True, default=None)
@@ -159,6 +174,25 @@ class BookDelegate(models.Model):
     delegate_payment_date   = models.DateField(blank=True, null=True, default=None)
     delegate_paid_or_free   = models.CharField(max_length=20, blank=True, null=True, default=None)
     delegate_ticket_tier    = models.CharField(max_length=50, blank=True, null=True, default=None)
+    # Per-delegate BOOKING DATE overrides, same rule; null inherits the invoice.
+    #
+    # WHY THESE EXIST. Request Date and Invoice Date were invoice columns and
+    # nothing else, so the two cells the booking modal shows on every delegate
+    # row were one shared value; setting one delegate's request date set it for
+    # everybody on the invoice. Delegates on a single invoice are routinely
+    # booked on the same day, which is why one column was enough for so long,
+    # but they are not required to be, and a correction to one person's row must
+    # not move the others. That is the same fact the five overrides above
+    # record, and it is recorded the same way.
+    #
+    # The INVOICE columns are NOT retired, for the reason the booking_code note
+    # above gives: BookEvent.request_date is what the invoice-level reads use,
+    # including the dashboards' period window and sync/bookings_sync.py. The
+    # Bookings modal keeps them in step by writing the delegates' shared date
+    # back to the invoice whenever every delegate on it agrees, which is the
+    # normal case; see frontend/src/api/bookings.js splitPersonLevel.
+    delegate_request_date   = models.DateField(blank=True, null=True, default=None)
+    delegate_invoice_date   = models.DateField(blank=True, null=True, default=None)
 
     # Denormalised booking date, COALESCE(invoice.request_date, invoice.invoice_date).
     #
@@ -191,7 +225,31 @@ class BookDelegate(models.Model):
     class Meta:
         db_table       = "book_delegates"
         ordering       = ["invoice__invoice_number", "first_name"]
-        unique_together = [("invoice", "email")]
+        # ONE PERSON per invoice, not one EMAIL per invoice.
+        #
+        # This was unique_together = [("invoice", "email")], which is not what a
+        # booking is. One email address routinely covers several delegates on one
+        # invoice: a ranch office address booking two owners, a PA booking their
+        # whole team, an info@ address on a group pass. Under the old key the
+        # second person could not be stored at all, so the website intake
+        # OVERWROTE the first with the second and reported success, and the Excel
+        # importer invented a `dup-xxxxxxxx@import.local` placeholder to get the
+        # row in at the cost of the real address.
+        #
+        # The name is what separates two people sharing an address, so it belongs
+        # in the key. What the constraint still refuses is the same person twice
+        # on one invoice, which is the duplicate that was ever worth refusing.
+        #
+        # Named explicitly rather than left to unique_together's generated name,
+        # because the migration that replaces the old key has to find it by name
+        # in a database where the old one may never have been created — see
+        # migration 0017.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["invoice", "email", "first_name", "last_name"],
+                name="book_delegates_invoice_person_uniq",
+            ),
+        ]
         indexes = [
             models.Index(fields=["invoice", "email"]),
             models.Index(fields=["event_code"]),
@@ -244,6 +302,30 @@ class BookDelegate(models.Model):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
+
+    @staticmethod
+    def person_key(email, first_name, last_name):
+        """
+        Who a delegate IS, within one invoice; the Meta.constraints key in the
+        form code can compare.
+
+        Lives here rather than in each caller because it is the same question the
+        database constraint answers, and two spellings of it would drift. The
+        webhook ingest path matches incoming delegates with it, and the transfer
+        endpoint tests a destination invoice with it.
+
+        Case- and whitespace-insensitive: the same person arriving as "Emily" on
+        one delivery and " emily " on the next is one person.
+        """
+        return (
+            (email or "").strip().lower(),
+            (first_name or "").strip().lower(),
+            (last_name or "").strip().lower(),
+        )
+
+    @property
+    def own_person_key(self):
+        return self.person_key(self.email, self.first_name, self.last_name)
 
     @property
     def payment_status(self):

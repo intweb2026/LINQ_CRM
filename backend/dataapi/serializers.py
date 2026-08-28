@@ -64,8 +64,13 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
     # report row is one delegate and the invoice carries the half of it that is
     # shared. Pulling them through the FK here is what keeps the consumer from
     # having to join /delegates/ to /bookings/ in the spreadsheet itself.
-    request_date = serializers.DateField(source="invoice.request_date", read_only=True)
-    invoice_date = serializers.DateField(source="invoice.invoice_date", read_only=True)
+    # RESOLVED, like every effective_* column below, and deliberately still
+    # named request_date / invoice_date so the report's column order and
+    # headings are untouched. A delegate may carry its own booking dates
+    # (book_delegate/models.py delegate_request_date), and a feed that exported
+    # the invoice's date would disagree with the CRM for exactly those rows.
+    request_date = serializers.SerializerMethodField()
+    invoice_date = serializers.SerializerMethodField()
     payment_due_date = serializers.DateField(source="invoice.payment_due_date", read_only=True)
     event_name = serializers.CharField(source="invoice.event_name", read_only=True)
     parent_code = serializers.CharField(source="invoice.parent_code", read_only=True)
@@ -155,6 +160,14 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
 
     def get_effective_paid_or_free(self, obj):
         return obj.delegate_paid_or_free or (obj.invoice.paid_or_free if obj.invoice_id else "")
+
+    def get_request_date(self, obj):
+        val = obj.delegate_request_date or obj.invoice.request_date
+        return str(val) if val else None
+
+    def get_invoice_date(self, obj):
+        val = obj.delegate_invoice_date or obj.invoice.invoice_date
+        return str(val) if val else None
 
     def get_effective_ticket_tier(self, obj):
         return obj.delegate_ticket_tier or (obj.invoice.ticket_tier if obj.invoice_id else "")
