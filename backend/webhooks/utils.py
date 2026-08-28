@@ -291,7 +291,7 @@ def coerce_form_wrapped_json(data):
     return parsed if isinstance(parsed, dict) else data
 
 
-def validate_api_key(request, *, record_usage=True):
+def validate_api_key(request, *, record_usage=True, target=""):
     """
     Validates the X-CRM-API-KEY value against the WebhookApiKey database table.
     The key is taken from extract_api_key(), so it may have arrived in the
@@ -302,6 +302,13 @@ def validate_api_key(request, *, record_usage=True):
     record_usage=False validates without touching last_used_at or usage_count.
     A liveness GET is not a delivery, and counting it would make the usage
     figures on the keys page a mixture of two different things.
+
+    target is the endpoint doing the asking, one of WebhookApiKey.Target. The
+    check is OPT-IN FROM BOTH SIDES and has to stay that way: it refuses only
+    when the KEY names a target AND that target differs from this endpoint. A
+    key with a blank target — which is every key issued before the column
+    existed, meaning all of production — is accepted everywhere, exactly as
+    before. Callers that pass no target are likewise unaffected.
     """
     from .models import WebhookApiKey
 
@@ -316,6 +323,12 @@ def validate_api_key(request, *, record_usage=True):
 
     if not api_key.is_active:
         return None, "This API key has been deactivated."
+
+    if target and api_key.target and api_key.target != target:
+        return None, (
+            f"This API key is scoped to {api_key.get_target_display()} "
+            f"and cannot post to this endpoint."
+        )
 
     # Soft narrowing only — NOT a security boundary, and never the thing that
     # grants access. A server-to-server sender transmits no Origin/Referer at all,
@@ -357,7 +370,7 @@ def validate_webhook_secret(request):
     return True, ""
 
 
-def authenticate_request(request, *, record_usage=True):
+def authenticate_request(request, *, record_usage=True, target=""):
     """
     Try X-CRM-API-KEY (DB) first, then X-WEBHOOK-SECRET (legacy static).
     Returns (api_key_obj_or_None, error_str_or_None).
@@ -379,7 +392,9 @@ def authenticate_request(request, *, record_usage=True):
     today can change behaviour because of the fallback.
 
     record_usage=False validates without bumping usage_count/last_used_at; see
-    validate_api_key.
+    validate_api_key. target narrows a key to one ingest endpoint and is opt-in
+    on both sides; see validate_api_key for why a blank target must keep meaning
+    "every endpoint".
 
     There is deliberately NO Origin/Referer fallback. `Origin` and `Referer` are
     ordinary request headers: only a browser is bound to set them truthfully, and
@@ -394,7 +409,9 @@ def authenticate_request(request, *, record_usage=True):
     senders was the same list that granted them access. CORS is a browser policy
     and cannot carry server-to-server authentication; the key does that.
     """
-    api_key_obj, api_key_err = validate_api_key(request, record_usage=record_usage)
+    api_key_obj, api_key_err = validate_api_key(
+        request, record_usage=record_usage, target=target,
+    )
     if api_key_obj is not None:
         return api_key_obj, None
 

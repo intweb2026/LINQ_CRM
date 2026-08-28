@@ -11,6 +11,27 @@ import { useLiveData } from '../../hooks/useLiveData';
 import { useToast } from '../../context/ToastContext';
 
 /**
+ * Destinations a key can be scoped to, mirroring WebhookApiKey.Target.
+ *
+ * A destination only exists once there is an endpoint behind it, which is a
+ * backend change either way, so this list is code and not data. What is NOT
+ * hardcoded here is the path: that arrives per key as `ingest_path`, resolved
+ * server-side from webhooks/urls.py, which is why a scoped key now copies its
+ * own URL instead of the booking one.
+ *
+ * ALL is the empty target and must stay the default. Every key issued before
+ * the column existed holds it, and it means the key posts to every endpoint.
+ */
+const TARGETS = [
+  { value: 'ALL', label: 'ALL, every endpoint' },
+  { value: 'bookings', label: 'Bookings' },
+  { value: 'tickets', label: 'Tickets' },
+  { value: 'paper_review', label: 'Paper reviews' },
+];
+
+const targetLabel = (t) => (TARGETS.find((x) => x.value === (t || 'ALL')) || {}).label || t;
+
+/**
  * The full ingest URL for a key, everything an external team needs in one
  * string, with no header setup.
  *
@@ -21,12 +42,12 @@ import { useToast } from '../../context/ToastContext';
  * only an absolute REACT_APP_API_BASE_URL does, and that one already ends in
  * /api, which has to come off before the path below is appended.
  */
-function ingestUrl(key) {
+function ingestUrl(k) {
   const base = http.defaults.baseURL || '';
   const origin = /^https?:\/\//i.test(base)
     ? base.replace(/\/+$/, '').replace(/\/api$/i, '')
     : window.location.origin;
-  return origin + '/api/webhooks/ingest/?X-CRM-API-KEY=' + encodeURIComponent(key);
+  return origin + k.ingest_path + '?X-CRM-API-KEY=' + encodeURIComponent(k.key);
 }
 
 export default function WebhookKeys() {
@@ -44,7 +65,9 @@ export default function WebhookKeys() {
     e.preventDefault();
     const name = e.target.elements.name.value.trim();
     if (!name) { toast('Name is required', 'er'); return; }
-    await webhooksApi.generateKey(name, e.target.elements.event.value);
+    await webhooksApi.generateKey(
+      name, e.target.elements.event.value, e.target.elements.target.value,
+    );
     setGenOpen(false); refresh();
     toast('Key generated for ' + name, 'ok');
   }
@@ -66,11 +89,12 @@ export default function WebhookKeys() {
         <div className="tw">
           <div className="tsc">
             <table className="dt dt-form">
-              <thead><tr><th>Name</th><th>Event</th><th>Key</th><th className="num">Calls</th><th>Last used</th><th>Status</th><th /></tr></thead>
+              <thead><tr><th>Name</th><th>Destination</th><th>Event</th><th>Key</th><th className="num">Calls</th><th>Last used</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {WH_KEYS.map((k) => (
                   <tr key={k.id}>
                     <td className="st">{k.name}</td>
+                    <td>{targetLabel(k.target)}</td>
                     <td className="mono">{k.event_code}</td>
                     <td className="mono">{k.key || '—'}</td>
                     <td className="num">{nf(k.calls)}</td>
@@ -79,7 +103,7 @@ export default function WebhookKeys() {
                     <td>
                       <div style={{ display: 'flex', gap: 2 }}>
                         <button className="btn btn-g btn-sm btn-ic" title="Copy" onClick={() => { if (!k.key) { toast('No key available yet', 'wn'); return; } navigator.clipboard?.writeText(k.key); toast('Key copied to clipboard', 'ok'); }}><Icon name="copy" size={13} /></button>
-                        <button className="btn btn-g btn-sm btn-ic" title="Copy test URL" onClick={() => { if (!k.key) { toast('No key available yet', 'wn'); return; } navigator.clipboard?.writeText(ingestUrl(k.key)); toast('Ingest URL copied, it contains the key', 'wn'); }}><Icon name="link" size={13} /></button>
+                        <button className="btn btn-g btn-sm btn-ic" title="Copy test URL" onClick={() => { if (!k.key) { toast('No key available yet', 'wn'); return; } navigator.clipboard?.writeText(ingestUrl(k)); toast('Ingest URL copied, it contains the key', 'wn'); }}><Icon name="link" size={13} /></button>
                         <button className="btn btn-g btn-sm btn-ic" title="Regenerate" onClick={() => regenerate(k.id, k.name)}><Icon name="refresh" size={13} /></button>
                         <button className="btn btn-g btn-sm btn-ic" title="Toggle" onClick={() => toggle(k.id, k.name, k.active)}><Icon name={k.active ? 'pause' : 'play'} size={13} /></button>
                       </div>
@@ -95,10 +119,11 @@ export default function WebhookKeys() {
           action={<button className="btn btn-s btn-sm" onClick={() => setGenOpen(true)}><Icon name="plus" size={13} />Generate key</button>} />
       )}
       {genOpen ? (
-        <Modal size="sm" title="Generate API key" sub="Scope it to one event or leave it unscoped." onClose={() => setGenOpen(false)}
+        <Modal size="sm" title="Generate API key" sub="Pick what the key posts, then scope it to one event or leave it unscoped." onClose={() => setGenOpen(false)}
           footer={<><button className="btn btn-s" onClick={() => setGenOpen(false)}>Cancel</button><button className="btn btn-p" type="submit" form="genKeyForm"><Icon name="key" size={15} />Generate</button></>}>
           <form id="genKeyForm" onSubmit={generate}>
             <div className="fd" style={{ marginBottom: 12 }}><label className="fd-l">Name<span className="req">*</span></label><input className="in" name="name" placeholder="e.g. website-prod" /></div>
+            <div className="fd" style={{ marginBottom: 12 }}><label className="fd-l">Destination</label><select className="in" name="target" defaultValue="ALL">{TARGETS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></div>
             <div className="fd"><label className="fd-l">Event</label><select className="in" name="event"><option>ALL</option>{EVENTS.map((e) => <option key={e.id}>{e.event_code}</option>)}</select></div>
           </form>
         </Modal>

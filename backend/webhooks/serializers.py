@@ -10,11 +10,17 @@ from .models import WebhookApiKey, WebhookLog
 class WebhookApiKeySerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     key_preview     = serializers.SerializerMethodField()
+    # The path this key posts to, resolved through urls.py by the model. Served
+    # so the keys page can build a working URL without holding a copy of any
+    # webhook path in JavaScript, which is how its "copy test URL" button came
+    # to hand out the booking URL for every key regardless of destination.
+    ingest_path     = serializers.SerializerMethodField()
 
     class Meta:
         model  = WebhookApiKey
         fields = [
             "id", "name", "api_key", "key_preview", "event",
+            "target", "ingest_path",
             "is_active", "allowed_domains", "notes",
             "created_by", "created_by_name",
             "created_at", "last_used_at", "usage_count",
@@ -23,6 +29,9 @@ class WebhookApiKeySerializer(serializers.ModelSerializer):
 
     def get_created_by_name(self, obj):
         return obj.created_by.username if obj.created_by_id else None
+
+    def get_ingest_path(self, obj):
+        return obj.ingest_path()
 
     def get_key_preview(self, obj):
         k = obj.api_key or ""
@@ -36,7 +45,7 @@ class WebhookApiKeyCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = WebhookApiKey
-        fields = ["name", "event", "is_active", "allowed_domains", "notes"]
+        fields = ["name", "event", "target", "is_active", "allowed_domains", "notes"]
 
     def create(self, validated_data):
         validated_data["api_key"]    = WebhookApiKey.generate_key()

@@ -13,10 +13,40 @@ from django.utils import timezone
 class WebhookApiKey(models.Model):
     """Per-integration API key stored in the database."""
 
+    class Target(models.TextChoices):
+        """
+        Which ingest endpoint a key may post to.
+
+        EMPTY IS THE ONLY SAFE DEFAULT AND MUST STAY THAT WAY. Every key issued
+        before this field existed reads as empty, and empty means unrestricted,
+        so those keys keep working on every endpoint exactly as they did. Any
+        change that makes a blank target refuse a delivery breaks every live
+        website integration at once.
+        """
+        BOOKINGS     = "bookings",     "Bookings"
+        TICKETS      = "tickets",      "Tickets"
+        PAPER_REVIEW = "paper_review", "Paper reviews"
+
+    # url name per target, so the ONE place a path is written stays webhooks/urls.py
+    # and both the API and the keys page read it from there through reverse().
+    # A target missing from this map falls back to the booking URL rather than
+    # raising, since a key is a credential and must not stop being listable
+    # because someone added a choice and forgot a route.
+    TARGET_URL_NAMES = {
+        "":                   "webhook-ingest",
+        Target.BOOKINGS:      "webhook-ingest",
+        Target.TICKETS:       "webhook-ingest-tickets",
+        Target.PAPER_REVIEW:  "webhook-ingest-paper-review",
+    }
+
     name            = models.CharField(max_length=100)
     api_key         = models.CharField(max_length=80, unique=True, db_index=True)
     event           = models.CharField(max_length=50, blank=True, default="",
                                        help_text="Optional: restrict to this event code")
+    target          = models.CharField(
+        max_length=20, choices=Target.choices, blank=True, default="",
+        help_text="Optional: restrict to one ingest endpoint; empty = every endpoint",
+    )
     is_active       = models.BooleanField(default=True, db_index=True)
     allowed_domains = models.JSONField(default=list, blank=True,
                                        help_text="List of allowed origin domains; empty = unrestricted")
@@ -47,6 +77,13 @@ class WebhookApiKey(models.Model):
         self.last_used_at = timezone.now()
         self.usage_count  += 1
         self.save(update_fields=["last_used_at", "usage_count"])
+
+    def ingest_path(self) -> str:
+        """The path this key posts to, resolved from urls.py rather than typed."""
+        from django.urls import reverse
+        return reverse(
+            self.TARGET_URL_NAMES.get(self.target) or "webhook-ingest"
+        )
 
     def regenerate(self) -> str:
         self.api_key = WebhookApiKey.generate_key()
