@@ -536,7 +536,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         take the batch down with it.
         """
         from django.db import transaction
-        from .utils import _coerce_row
+        from .utils import (
+            _coerce_row, assign_next_ticket_number,
+            extract_purpose_code, extract_type_code,
+        )
 
         inserted, updated, skipped_rows, errors = 0, 0, [], []
         seen_in_batch = set()
@@ -584,6 +587,24 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 with transaction.atomic():  # per-row savepoint (CRIT-1 / Finding #1 fix)
                     coerced = _coerce_row(row, request_user=request.user)
                     preserved_created_at = coerced.pop("_preserved_created_at", None)
+                    # A row that carries no Ticket Number gets one here, from the
+                    # same generator TicketCreateSerializer.create uses. This path
+                    # bypasses the serializer, so imports used to land with
+                    # ticket_number="" and wait for the nightly
+                    # backfill_ticket_numbers cron to name them.
+                    # No purpose means no number can be built; the row stays blank,
+                    # exactly as the backfill command skips it.
+                    # ponytail: assign_next_ticket_number re-reads every
+                    # ticket_number for the purpose per row to find reusable gaps,
+                    # so a 500-row batch does 500 scans. Fine at current volumes;
+                    # cache the used-set per purpose for the batch if it drags.
+                    if not coerced.get("ticket_number"):
+                        purpose_code = extract_purpose_code(coerced.get("purpose", ""))
+                        if purpose_code:
+                            coerced["ticket_number"] = assign_next_ticket_number(
+                                purpose_code,
+                                extract_type_code(coerced.get("type_of_ticket", "")),
+                            )
                     ticket = Ticket.objects.create(
                         created_by=request.user, **coerced,
                     )
