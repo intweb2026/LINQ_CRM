@@ -36,6 +36,32 @@ _COMPANY_WRITE_FIELDS = (
 # after surviving the trip: every hand-entered booking stored a blank company,
 # which is the field the Bookings tab displays (BookDelegate.company_display)
 # and searches on (book_delegate/views.py search_fields).
+def _delegate_changes(stored, clean):
+    """
+    The subset of `clean` that would actually change `stored`.
+
+    WHY THIS EXISTS. The Bookings modal PATCHes the invoice with its WHOLE
+    delegate list, so a one-field edit on one person re-sends every other person
+    on that invoice unchanged. Writing them all back is harmless while
+    `updated_at` stands still, and stops being harmless the moment the table is
+    sorted by Modified Time: a correction to one delegate would haul every
+    delegate on the invoice to the top with it, and the sort stops meaning
+    "what I touched last".
+
+    COMPARED AS TEXT, deliberately. The nested delegate rows arrive as raw JSON,
+    so "0.00" is measured against Decimal("0.00") and "2026-08-27" against a
+    date. An exact comparison would call those different and write anyway; str()
+    makes the common cases agree. Where it cannot tell, it reports a change,
+    which is the safe direction — a needless write, never a missed edit.
+    """
+    changed = {}
+    for key, new in clean.items():
+        old = getattr(stored, key, None)
+        if ("" if old is None else str(old)) != ("" if new is None else str(new)):
+            changed[key] = new
+    return changed
+
+
 _ALLOWED_DELEGATE = frozenset({
     "first_name", "last_name", "email", "phone_number",
     "company_name_raw",
@@ -338,10 +364,12 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                         # only the _ALLOWED_DELEGATE keys the modal sent, and
                         # widening it to a full save() here would change what a
                         # modal save does to columns it never named.
-                        BookDelegate.objects.filter(id=d_id).update(
-                            **clean, updated_at=timezone.now()
-                        )
-                        updated_count += 1
+                        changed = _delegate_changes(existing[d_id], clean)
+                        if changed:
+                            BookDelegate.objects.filter(id=d_id).update(
+                                **changed, updated_at=timezone.now()
+                            )
+                            updated_count += 1
                     else:
                         # New delegate — email required and must be unique on this invoice
                         email = d_data.get("email", "").strip().lower()
@@ -366,8 +394,24 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                     instance.invoice_number, created_count, updated_count, len(removed_ids),
                 )
                 
-                # Ensure all delegates (old and new) match the parent invoice's event_code
-                instance.delegates.all().update(event_code=instance.event_code)
+                # Ensure all delegates (old and new) match the parent invoice's
+                # event_code. ONLY the rows that actually disagree, and stamped.
+                #
+                # It was an unconditional .update() over every delegate on the
+                # invoice, which is wrong in both directions at once: it writes
+                # rows that already hold the value, and it writes them WITHOUT
+                # firing auto_now. So it cost a write per delegate on every modal
+                # save and still left updated_at standing.
+                #
+                # Narrowing it to the rows that differ is what makes the stamp
+                # safe to add. Stamping the old unconditional sweep would have
+                # bumped every delegate on the invoice on every save, and the
+                # whole booking would have jumped to the head of a table sorted
+                # by Modified Time whatever the edit actually touched.
+                instance.delegates.exclude(event_code=instance.event_code).update(
+                    event_code=instance.event_code,
+                    updated_at=timezone.now(),
+                )
                 
                 instance.delegate_count = instance.delegates.count()
                 instance.save(update_fields=["delegate_count"])
@@ -431,7 +475,12 @@ class PaymentUpdateSerializer(serializers.ModelSerializer):
 
 class DelegatePayloadSerializer(serializers.Serializer):
     FirstName         = serializers.CharField(max_length=150)
-    LastName          = serializers.CharField(max_length=150, required=False, default="")
+    # allow_blank, like every other optional field below it. Without it an
+    # explicit "LastName": "" failed validation and took the WHOLE delivery
+    # down with a 400, while omitting the key entirely was accepted — and a
+    # booking form that renders an empty input sends the former. A delegate
+    # with one name is a real delegate; FirstName above stays required.
+    LastName          = serializers.CharField(max_length=150, required=False, allow_blank=True, default="")
     Email             = serializers.EmailField()
     PhoneNumber       = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
     Position          = serializers.CharField(max_length=150, required=False, allow_blank=True, default="")

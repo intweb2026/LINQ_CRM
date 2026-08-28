@@ -24,6 +24,8 @@ permission class are all part of what has to work for an edit to stick.
 
     python manage.py test book_event.tests_booking_modal_writes
 """
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -492,3 +494,88 @@ class SppClearsTheDatePaidTests(TestCase):
         self.assertIsNone(self.inv.payment_date)
         self.assertEqual(self.resolved(spp), (None, "Free"))
         self.assertEqual(self.resolved(keep), ("2026-03-01", "Paid"))
+
+
+class RequestDateEditTests(TestCase):
+    """
+    Request Date has to be changeable from the booking modal.
+
+    THE HALF THIS COVERS, AND THE HALF IT DOES NOT
+    Nobody could edit a Request Date, and the endpoint was never the reason; it
+    has always accepted the column. The browser simply never sent it. Request
+    Date and Invoice Date are invoice columns shown as a cell on every delegate
+    row, and the payload builder carried neither, so the PATCH went out without
+    them and answered 200. That half lives in frontend/src/api/bookings.js
+    splitPersonLevel, pinned in api/bookings.invoiceDates.test.js.
+
+    What is pinned HERE is the server end of that contract, which is what the
+    frontend fix now depends on. The modal's PATCH stores the date, a null
+    CLEARS it, and either way the delegates' booked_on follows. That column is
+    the delegate-level copy of the booking date, and a Request Date correction
+    that left it stale would move the booking in the Bookings tab while leaving
+    it where it was in everything reading booked_on.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="rd_admin", is_all_access=True)
+        cls.admin = User.objects.create_user(
+            username="rd_admin_u", password="x", role="admin", email="rd@iq-hub.com",
+        )
+        cls.admin.team = cls.role
+        cls.admin.save()
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        make_event(EVENT_A)
+        self.inv = BookEvent.objects.create(
+            invoice_number="MOD-RD", event_code=EVENT_A,
+            request_date="2026-01-05", invoice_date="2026-01-09",
+        )
+        self.d = BookDelegate.objects.create(
+            invoice=self.inv, event_code=self.inv.event_code,
+            first_name="One", last_name="Delegate", email="rd@acme.test",
+        )
+
+    def patch(self, body):
+        req = self.factory.patch(f"/api/invoices/{self.inv.pk}/", body, format="json")
+        force_authenticate(req, user=self.admin)
+        resp = _view({"patch": "partial_update"})(req, pk=self.inv.pk)
+        resp.render()
+        return resp
+
+    def test_the_modal_patch_stores_a_new_request_date(self):
+        resp = self.patch({
+            "request_date": "2026-02-11",
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.request_date, date(2026, 2, 11))
+        # The delegate's own copy of the booking date moves with it.
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.booked_on, date(2026, 2, 11))
+
+    def test_a_null_request_date_clears_it_and_booked_on_falls_back(self):
+        resp = self.patch({
+            "request_date": None,
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.request_date)
+        # booked_on is COALESCE(request_date, invoice_date) by another name.
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.booked_on, date(2026, 1, 9))
+
+    def test_the_invoice_date_is_editable_the_same_way(self):
+        resp = self.patch({
+            "invoice_date": "2026-04-02",
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.invoice_date, date(2026, 4, 2))

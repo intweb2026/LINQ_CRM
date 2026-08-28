@@ -127,23 +127,15 @@ class WebhookProcessor:
         # Resolve ticket tier from both TicketTier and Packages
         packages_val = d.get("Packages", "")
         if isinstance(packages_val, list):
-            packages_str = " ".join([str(p) for p in packages_val]).lower()
+            packages_str = " ".join([str(p) for p in packages_val])
         else:
-            packages_str = str(packages_val).lower()
-            
+            packages_str = str(packages_val)
+
         ticket_tier_raw = d.get("TicketTier", "").strip().lower()
-        
-        resolved_tier = ""
-        if "super early" in packages_str or "seb" in packages_str or "seb" in ticket_tier_raw or "super early" in ticket_tier_raw:
-            resolved_tier = "SEB"
-        elif "early" in packages_str or "eb" in packages_str or "eb" in ticket_tier_raw or "early" in ticket_tier_raw:
-            resolved_tier = "EB"
-        elif "regular" in packages_str or "standard" in packages_str or "regular" in ticket_tier_raw or "standard" in ticket_tier_raw:
-            resolved_tier = "Regular"
-        else:
-            resolved_tier = tier_map.get(ticket_tier_raw, "Regular")
-            
-        d["TicketTier"] = resolved_tier
+
+        d["TicketTier"] = self._resolve_ticket_tier(
+            (packages_str, ticket_tier_raw), tier_map, ticket_tier_raw, "Regular",
+        )
         d["PaidOrFree"] = pof_map.get(d.get("PaidOrFree", "").strip().lower(), "Paid")
 
         # ── 3. Sales exec assignment ───────────────────────────────────────────
@@ -421,6 +413,37 @@ class WebhookProcessor:
             note = f"Booking UNCHANGED: id={invoice.id} (no significant field changes)"
 
         return invoice, WebhookLog.DbInsertStatus.UPDATED, note
+    # Ticket-tier words, in the order they must be tested: "super early" before
+    # "early", and both before "regular". Held as data because the identical
+    # four-clause if/elif chain was written out three times, once for the
+    # invoice and once in each delegate branch.
+    TIER_WORDS = (
+        ("SEB",     ("super early", "seb")),
+        ("EB",      ("early", "eb")),
+        ("Regular", ("regular", "standard")),
+    )
+
+    @classmethod
+    def _resolve_ticket_tier(cls, texts, tier_map, raw, default):
+        """
+        A ticket tier read out of whatever free text a booking form sent.
+
+        `texts` are searched for the words above; `raw` is the already-lowered
+        TicketTier value, looked up in `tier_map` only when no word matched, and
+        `default` is the answer when even that misses.
+
+        Substring matching, deliberately unchanged from the three chains this
+        replaces: "eb" matches anywhere, so a package named "September Special"
+        still resolves to EB. That is wrong and it is not new, and correcting it
+        here would change how live deliveries are classified under cover of a
+        refactor. Left as it was, on purpose.
+        """
+        blob = " ".join(t for t in texts if t).lower()
+        for tier, words in cls.TIER_WORDS:
+            if any(word in blob for word in words):
+                return tier
+        return tier_map.get(raw, default)
+
 
     def _process_delegates(self, invoice, event_code, d, delegates_payload, tier_map, pof_map):
         inserted = skipped = failed = 0

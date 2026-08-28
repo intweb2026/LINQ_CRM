@@ -406,11 +406,21 @@ class DeltaEndpointTests(DelegateWatermarkTestCase):
             {"id": self.bob.id, "first_name": "Bob", "last_name": "Bly",
              "email": "bob@example.com"},
         ]})
-        # Both were in the payload, so both were written and both are returned.
+        # ONLY ADA. Both were in the payload, because the modal PATCHes the
+        # whole delegate list on every save, but only Ada's row CHANGED —
+        # Lovelace to Byron — and Bob's was re-sent exactly as stored.
+        #
+        # The invoice serializer used to write every row the payload carried and
+        # stamp it, so Bob came back on a delta feed reporting a change nobody
+        # made. It now compares before writing (_delegate_changes), which is
+        # what this test's own name asks for and what keeps the Bookings table's
+        # Modified Time sort honest; a one-person edit no longer hauls every
+        # delegate on the invoice to the top.
+        #
         # Re-arm on the maximum updated_at seen, which is what the Apps Script
         # does, then confirm the feed goes quiet.
         rows = self.delta(self.watermark)
-        self.assertEqual(len(rows), 2)
+        self.assertEqual([r["id"] for r in rows], [self.ada.id])
         high = max(r["updated_at"] for r in rows)
         resp = self.client.get(
             "/api/data/delegates/",

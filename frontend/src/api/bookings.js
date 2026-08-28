@@ -101,6 +101,27 @@ const OVERRIDE_FIELDS = [
  */
 const CLEARABLE_ON_INVOICE = ['payment_date'];
 
+/**
+ * The two INVOICE-ONLY date columns shown as a cell on every delegate row.
+ *
+ * Request Date and Invoice Date live on the invoice (BookEvent.request_date and
+ * BookEvent.invoice_date) and have NO per-delegate override behind them; the
+ * delegate serializer reads both straight off the invoice and marks them
+ * read_only (book_delegate/serializers.py). They are edited from the delegate
+ * grid all the same, because the booking modals are the only place a booking is
+ * opened.
+ *
+ * THE BUG THIS FIXES
+ * The pair was in neither OVERRIDE_FIELDS nor delegateToBackend, so nothing ever
+ * carried it out of the grid. "Save changes" posted an invoice payload with no
+ * request_date in it, the PATCH answered 200, and the old date was back on the
+ * next refetch. Request Date is the Bookings default sort and one half of the
+ * reporting window, COALESCE(request_date, invoice_date) in
+ * accounts/period_filter.py, so it is a value people genuinely need to correct,
+ * and NOBODY COULD CHANGE IT.
+ */
+const INVOICE_ONLY_FIELDS = ['request_date', 'invoice_date'];
+
 /** The value every delegate shares for `key`, or undefined if they differ. */
 function agreedValue(delegates, key) {
   if (!delegates.length) return undefined;
@@ -161,6 +182,22 @@ function splitPersonLevel(delegates) {
       .filter(Boolean);
     invoiceFields.accounts_contact_email = contacts[0] || '';
   }
+  // The invoice-only dates. DelegateTable applies an edit to one of these cells
+  // across every row, see its invoiceWide columns, so the delegates agreeing is
+  // the normal case; the first non-empty value is the fallback for a caller that
+  // assembled its rows some other way. All blank writes null, which is the only
+  // way the date can be CLEARED; both columns are null=True.
+  //
+  // Guarded on the key being PRESENT for the same reason accounts_contact_email
+  // is, rows that never carried it must not null the invoice's stored date.
+  INVOICE_ONLY_FIELDS.forEach((key) => {
+    if (!delegates.some((d) => d[key] !== undefined)) return;
+    const agreed = agreedValue(delegates, key);
+    const value = agreed !== undefined
+      ? agreed
+      : delegates.map((d) => d[key]).find((v) => String(v ?? '').trim());
+    invoiceFields[key] = String(value ?? '').trim() || null;
+  });
   return { invoiceFields, inherited };
 }
 

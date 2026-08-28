@@ -51,8 +51,15 @@ export default function NewBookingModal({ onClose, onCreated }) {
     const problem = delegateProblem(delegates);
     if (problem) { toast(problem, 'er'); return; }
     try {
+      // Request Date and Invoice Date are NOT pinned here any more. `meta` wins
+      // over the delegates' shared values (api/bookings.js), so sending today's
+      // date meant the two date cells in the grid were editable, were filled in
+      // by the user, and were then overwritten with today on the way out. A new
+      // booking could not be raised with a request date of anything but today.
+      // Every new row is still seeded with today by blankDelegate, so the
+      // default is unchanged; it is now merely a default.
       await bookingsApi.createInvoice({
-        invoice_number: invoiceNumber.trim(), event_code: ev.event_code, event_name: ev.name, request_date: today, invoice_date: today,
+        invoice_number: invoiceNumber.trim(), event_code: ev.event_code, event_name: ev.name,
       }, delegates.map(({ key, ...d }) => d));
     } catch (err) {
       // The server's own words. It names the field, and for a delegate it names
