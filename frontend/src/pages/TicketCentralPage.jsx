@@ -11,6 +11,8 @@ import { useFetch } from '../hooks/useFetch';
 import { useBulkUpdate } from '../hooks/useBulkUpdate';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { apiErrorMessage } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 import TicketFormModal from './tickets/TicketFormModal';
@@ -120,6 +122,7 @@ export default function TicketCentralPage() {
     refreshStats();
   }, [tableRefetch, refreshStats]);
   const bulk = useBulkUpdate('tickets', refresh);
+  const confirm = useConfirm();
   // null = closed; a row = edit that ticket; NEW = the add form. Same component
   // either way, so the two layouts cannot drift apart.
   const [formTicket, setFormTicket] = useState(null);
@@ -169,7 +172,10 @@ export default function TicketCentralPage() {
         serverCriteria={serverCriteria}
         serverParams={{ period }}
         onServerReady={keepRefetch}
-        noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={1000}
+        // Selection is what the Delete button reads, so a viewer who may delete
+        // but not update must still be able to select — otherwise the button is
+        // rendered on a table that hands it nothing.
+        noun="tickets" select={can('update', 'ticket_central') || can('delete', 'ticket_central')} infinite pageSize={1000}
         defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}
@@ -197,6 +203,28 @@ export default function TicketCentralPage() {
             </button>
             <button className="btn btn-sm btn-s" onClick={async () => { const n = await ticketsApi.bulkSubmit(ids); clear(); refresh(); toast(n ? plur(n, 'ticket') + ' submitted to Data Mining' : 'Only draft tickets can be submitted', n ? 'ok' : 'wn'); }}><Icon name="send" size={13} />Submit to DMD</button>
             <button className="btn btn-sm btn-s" onClick={() => toast('Exporting ' + plur(ids.length, 'ticket') + '…', 'nf')}><Icon name="download" size={13} />Export</button>
+            {/* Select one row and this is a per-ticket delete; the endpoints have
+                existed on TicketViewSet all along (destroy + bulk_delete) with
+                nothing in the UI reaching either, so a wrongly-pushed ticket
+                could only be edited, never removed. Wrapped in try/catch for the
+                reason spelled out on the Bookings delete: the response
+                interceptor only acts on 401, so a 403 would otherwise close the
+                dialog and do nothing visible. */}
+            {can('delete', 'ticket_central') ? (
+              <button className="btn btn-sm btn-d" onClick={async () => {
+                const ok = await confirm({ title: 'Delete tickets?', sub: plur(ids.length, 'ticket') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. The ticket numbers are not reissued.</p> });
+                if (!ok) return;
+                try {
+                  // The toast reports what the SERVER deleted, not how many were
+                  // asked for — those differ whenever a row is out of scope.
+                  const res = await ticketsApi.bulkRemove(ids);
+                  clear(); refresh();
+                  toast(plur(res.deleted, 'ticket') + ' deleted', 'ok');
+                } catch (err) {
+                  toast(apiErrorMessage(err, 'Could not delete those tickets.'), 'er');
+                }
+              }}><Icon name="trash" size={13} />Delete</button>
+            ) : null}
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
           </div>
         )}
