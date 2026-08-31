@@ -134,6 +134,27 @@ export default function ImportWizard({ kind, onClose, onImported }) {
 
   const mappedCount = useMemo(() => Object.values(mapping).filter((v) => v !== SKIP).length, [mapping]);
 
+  // The columns that will be DROPPED, by name.
+  //
+  // WHY BY NAME AND NOT AS A COUNT
+  // This step said "21 columns mapped" and nothing more, so a column that
+  // resolved to nothing was indistinguishable from a column the file never
+  // contained — which is exactly how the Master Data sheet's "Delegate Company"
+  // and "Delegate Email" were skipped in silence. Delegate Email is the delegate
+  // identity key, so losing it silently also gave every second row on an invoice
+  // a placeholder address. A skipped column can no longer look like a clean
+  // import: it is listed here, before anything is written.
+  const unmapped = useMemo(
+    () => (parsed?.headers || []).filter((h) => (mapping[h] || SKIP) === SKIP),
+    [parsed, mapping],
+  );
+
+  // Server-side dry run — per-column accepted/blank/rejected over the whole
+  // file. See preview() in api/import.js.
+  const [dryRun, setDryRun] = useState(null);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [dryRunFailed, setDryRunFailed] = useState(false);
+
   function buildRows() {
     return (parsed?.rows || []).map((row) => {
       const out = {};
@@ -143,6 +164,24 @@ export default function ImportWizard({ kind, onClose, onImported }) {
       return out;
     });
   }
+
+  // Runs the dry run whenever the review step is opened, and again if the
+  // mapping is corrected and the step re-entered. Deliberately NOT blocking:
+  // a preview that fails leaves the Start import button usable, because an
+  // unreachable preview endpoint must not make the wizard unusable — it just
+  // says so rather than implying the file is clean.
+  useEffect(() => {
+    if (step !== 2 || !parsed || !importApi.supportsPreview(kind)) return;
+    let live = true;
+    setDryRunning(true);
+    setDryRunFailed(false);
+    importApi.preview(kind, buildRows())
+      .then((res) => { if (live) setDryRun(res); })
+      .catch(() => { if (live) { setDryRun(null); setDryRunFailed(true); } })
+      .finally(() => { if (live) setDryRunning(false); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, parsed, kind, mapping]);
 
   async function startImport() {
     setStep(3);
@@ -253,16 +292,111 @@ export default function ImportWizard({ kind, onClose, onImported }) {
       {step === 2 && parsed && (
         <>
           <div className="vr ok"><Icon name="check" size={15} /><span><b>{file?.name}</b> ready to import — {parsed.rows.length} row{parsed.rows.length === 1 ? '' : 's'}, {mappedCount} column{mappedCount === 1 ? '' : 's'} mapped</span></div>
-          <div className="hint" style={{ marginTop: 11 }}>Validation runs on the server once the import starts. Dates are normalised to ISO before write; existing records matched on reference are updated, not duplicated.</div>
+
+          {unmapped.length > 0 && (
+            <div className="vr wn" style={{ marginTop: 11, alignItems: 'flex-start' }}>
+              <Icon name="warn" size={15} />
+              <span>
+                <b>{unmapped.length} column{unmapped.length === 1 ? '' : 's'} will not be imported.</b>{' '}
+                Nothing in {unmapped.length === 1 ? 'it' : 'them'} is written, and the import will
+                otherwise look like it succeeded. Go back to map {unmapped.length === 1 ? 'it' : 'them'} or
+                continue knowingly.
+                <div style={{ marginTop: 6, fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+                  {unmapped.join(' · ')}
+                </div>
+              </span>
+            </div>
+          )}
+
+          {dryRunning && (
+            <div className="hint" style={{ marginTop: 11 }}>Checking every value against the {kind} schema…</div>
+          )}
+
+          {dryRunFailed && (
+            <div className="hint" style={{ marginTop: 11 }}>
+              The pre-import check could not run, so the per-column counts below are unavailable.
+              The server still validates every row on write and reports what it rejected.
+            </div>
+          )}
+
+          {dryRun && (
+            <>
+              {dryRun.rowsWithErrors > 0 ? (
+                <div className="vr er" style={{ marginTop: 11, alignItems: 'flex-start' }}>
+                  <Icon name="warn" size={15} />
+                  <span>
+                    <b>{dryRun.rowsWithErrors.toLocaleString()} of {dryRun.rows.toLocaleString()} rows
+                    hold a value that cannot be read.</b>{' '}
+                    Those rows will be reported and NOT written. Every other row imports normally.
+                  </span>
+                </div>
+              ) : (
+                <div className="vr ok" style={{ marginTop: 11 }}>
+                  <Icon name="check" size={15} />
+                  <span>Every value in every mapped column is readable.</span>
+                </div>
+              )}
+
+              {/* Accepted / blank / rejected per column, which is the number that
+                  would have stopped the 26 August import: "Payable / Free —
+                  11,210 of 15,180 values not recognised". */}
+              <div style={{ marginTop: 13, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', color: 'var(--text-3)' }}>
+                      <th style={{ padding: '4px 8px 4px 0' }}>Column</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Accepted</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Blank</th>
+                      <th style={{ padding: '4px 8px', textAlign: 'right' }}>Not recognised</th>
+                      <th style={{ padding: '4px 0 4px 8px' }}>Values it could not read</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dryRun.columns.map((c) => (
+                      <tr key={c.field} style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ padding: '5px 8px 5px 0' }}>{c.label}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'right' }}>{c.accepted.toLocaleString()}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--text-3)' }}>{c.blank.toLocaleString()}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'right', color: c.rejected ? 'var(--red-tx)' : 'inherit' }}>
+                          {c.rejected ? c.rejected.toLocaleString() : '—'}
+                        </td>
+                        <td style={{ padding: '5px 0 5px 8px', color: 'var(--text-3)' }}>
+                          {c.examples.length
+                            ? c.examples.map((e) => `${e.value} ×${e.rows.toLocaleString()}`).join(', ')
+                            : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          <div className="hint" style={{ marginTop: 11 }}>Dates are normalised to ISO before write; existing records matched on reference are updated, not duplicated. Person-level columns are written on each delegate, and the invoice takes the value whenever every delegate on it agrees.</div>
         </>
       )}
       {step === 3 && (
         <div style={{ textAlign: 'center', padding: '16px 0 6px' }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{importing ? 'Importing…' : 'Done'}</h3>
           {result ? (
-            <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
-              {result.imported} imported{result.skipped ? `, ${result.skipped} skipped` : ''}{result.errors.length ? `, ${result.errors.length} error${result.errors.length === 1 ? '' : 's'}` : ''}.
-            </p>
+            <>
+              <p style={{ fontSize: 12, color: 'var(--text-4)' }}>
+                {result.imported} imported{result.skipped ? `, ${result.skipped} skipped` : ''}{result.errors.length ? `, ${result.errors.length} error${result.errors.length === 1 ? '' : 's'}` : ''}.
+              </p>
+              {/* The batch identifier, shown because an import is only reversible
+                  if someone can name it afterwards. Every row this run wrote
+                  carries it on both book_events and book_delegates, so the whole
+                  import can be listed — or undone — from this string alone. It
+                  did not exist before, which is why cleaning up the 26 August
+                  import meant guessing across 11,288 invoices. */}
+              {result.batchId ? (
+                <p style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 6 }}>
+                  Import reference{' '}
+                  <span style={{ fontFamily: 'var(--mono)', userSelect: 'all' }}>{result.batchId}</span>
+                </p>
+              ) : null}
+            </>
           ) : progress ? (
             <>
               {/* The live count is the headline, because "is it still moving"

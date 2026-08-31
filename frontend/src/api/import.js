@@ -80,13 +80,19 @@ export const TARGET_FIELDS = {
     ['invoice_number', 'Invoice Number', ['Invoice No', 'Invoice #']],
     ['event_code', 'Event Code'], ['event_name', 'Event Name'], ['booking_code', 'Booking Code'],
     ['edition', 'Edition', ['Year']],
-    ['company_name', 'Company', ['Company Name', 'Organisation']],
+    // 'Delegate Company', 'Delegate Email', 'Date Paid' and 'Ref' are the
+    // spellings our own Master Data sheet carries, and none of them resolved:
+    // autoMap's substring fallback compares 'delegatecompany' against
+    // 'companyname' and fails both ways, so those columns mapped to nothing and
+    // were skipped in silence. See BOOKING_IMPORT_FIELDS for the full note.
+    ['company_name', 'Company', ['Company Name', 'Organisation', 'Delegate Company']],
     ['contact_name', 'Delegate Name', ['Name', 'Attendee', 'Full Name']],
     ['position', 'Job Title / Position', ['Designation', 'Job Title']],
     ['accounts_contact_email', 'Accounts Email', ['Accounts Contact Email']],
-    ['contact_email', 'Email', ['Email Address']],
+    ['contact_email', 'Email', ['Email Address', 'Delegate Email']],
     ['contact_phone', 'Direct Line', ['Phone', 'Phone Number', 'Mobile']],
-    ['request_date', 'Request Date'], ['invoice_date', 'Invoice Date'], ['payment_date', 'Payment Date'],
+    ['request_date', 'Request Date'], ['invoice_date', 'Invoice Date'],
+    ['payment_date', 'Payment Date', ['Date Paid']],
     ['payment_status', 'Payment Status', ['Status']],
     // 'Paid / Free' is the old label, kept as an alias so a spreadsheet still
     // carrying that header auto-maps. See BOOKING_IMPORT_FIELDS.
@@ -95,9 +101,9 @@ export const TARGET_FIELDS = {
     ['ticket_tier', 'Ticket Tier', ['Tier']],
     ['currency', 'Currency'], ['discount_code', 'Discount Code'], ['discount', 'Discount'],
     ['delegate_count', 'Delegate Count', ['No of Delegates']],
-    ['attendance', 'Attendance', ['Attended', 'Confirmed']],
+    ['attendance', 'Attendance', ['Attended', 'Confirmed', 'Attendance - IN?', 'Attendance IN']],
     ['add_ons', 'Add-Ons', ['Addons']],
-    ['reference', 'Reference', ['Payment Reference']],
+    ['reference', 'Reference', ['Payment Reference', 'Ref']],
     ['notes', 'Notes', ['Comments', 'Remarks']],
     ['sales_executive', 'Sales Executive (username/email)', ['Sales Exec', 'Sales Rep', 'Sales Team']],
     ['created_at', 'Added Time', ['Created At', 'Created Time']],
@@ -197,9 +203,83 @@ function chunk(arr, size) {
  * failure describe the batches that were really written rather than resetting
  * to nothing.
  */
+/** A UUID for this import run. crypto.randomUUID is unavailable over plain http. */
+function newBatchId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/** Resources whose bulk_import accepts dry_run and reports per-column counts. */
+const SUPPORTS_PREVIEW = new Set(['bookings']);
+
+export function supportsPreview(kind) {
+  return SUPPORTS_PREVIEW.has(kind);
+}
+
+/**
+ * What an import WOULD do, per column, without writing anything.
+ *
+ * WHY THIS EXISTS
+ * The review step said "15,180 rows, 21 columns mapped" and nothing else, so a
+ * file whose Payable/Free column was 11,210 unrecognised values out of 15,180
+ * read as a clean import right up to the point where it silently discarded them.
+ * The counts below are the number a person needs BEFORE the write, while the
+ * import can still be abandoned.
+ *
+ * Chunked like the write path, because the counts have to cover the whole file
+ * to mean anything, and merged here: `accepted`, `blank` and `rejected` add up
+ * across chunks, and the example values are re-ranked over the merged totals.
+ */
+export async function preview(kind, rows) {
+  const url = ENDPOINT[kind] || ENDPOINT.bookings;
+  const merged = new Map();
+  let rowsWithErrors = 0;
+  const errors = [];
+
+  for (const batch of chunk(rows, BATCH_SIZE)) {
+    const { data } = await http.post(url, { rows: batch, dry_run: true });
+    rowsWithErrors += data.rows_with_errors || 0;
+    errors.push(...(data.errors || []));
+    (data.columns || []).forEach((col) => {
+      const prev = merged.get(col.field);
+      if (!prev) {
+        merged.set(col.field, { ...col, examples: [...(col.examples || [])] });
+        return;
+      }
+      prev.accepted += col.accepted;
+      prev.blank += col.blank;
+      prev.rejected += col.rejected;
+      (col.examples || []).forEach((ex) => {
+        const hit = prev.examples.find((e) => e.value === ex.value);
+        if (hit) hit.rows += ex.rows;
+        else prev.examples.push({ ...ex });
+      });
+    });
+  }
+
+  const columns = [...merged.values()];
+  columns.forEach((c) => {
+    c.examples.sort((a, b) => b.rows - a.rows);
+    c.examples = c.examples.slice(0, 5);
+  });
+  return {
+    rows: rows.length,
+    columns: columns.sort((a, b) => b.rejected - a.rejected),
+    rowsWithErrors,
+    errors: errors.slice(0, 50),
+  };
+}
+
 export async function run(kind, rows, onProgress) {
   const url = ENDPOINT[kind] || ENDPOINT.bookings;
   const batches = chunk(rows, BATCH_SIZE);
+  // ONE id for the whole run, so a 20,000-row file's forty chunks are all
+  // findable as the same import afterwards. The server generates its own if this
+  // is absent, which would give each chunk a different one.
+  const batchId = newBatchId();
   let imported = 0, skipped = 0, sent = 0;
   const errors = [];
 
@@ -212,7 +292,7 @@ export async function run(kind, rows, onProgress) {
   for (let i = 0; i < batches.length; i++) {
     const body = kind === 'tickets'
       ? { rows: batches[i], duplicate_mode: 'allow_all', batch_number: i + 1, total_batches: batches.length }
-      : { rows: batches[i], duplicate_strategy: 'skip', batch_number: i + 1 };
+      : { rows: batches[i], duplicate_strategy: 'skip', batch_number: i + 1, import_batch_id: batchId };
     const { data } = await http.post(url, body);
     imported += data.inserted ?? data.updated ?? 0;
     skipped += data.skipped_duplicates ?? (data.skipped_rows || []).length ?? 0;
@@ -220,5 +300,5 @@ export async function run(kind, rows, onProgress) {
     sent += batches[i].length;
     report(i + 1);
   }
-  return { imported, skipped, errors };
+  return { imported, skipped, errors, batchId };
 }
