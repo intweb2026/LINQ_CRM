@@ -76,6 +76,29 @@ def review_body(event_code):
     }
 
 
+def net_hint(exc):
+    """
+    A transport failure said in one line, with the cause named.
+
+    requests reports these as a wall of nested exception text, and the two that
+    actually happen here are both host mistakes rather than anything about the
+    form: a domain missing part of itself (no .com, no www) presents a
+    certificate that cannot match, and a domain that does not exist fails to
+    resolve. Printing 400 characters of pool traceback buried that.
+    """
+    text = str(exc)
+    if isinstance(exc, requests.exceptions.SSLError) or "CERTIFICATE_VERIFY_FAILED" in text:
+        return ("TLS hostname mismatch: no certificate covers this host. The "
+                "domain is probably incomplete, e.g. missing .com or www")
+    if any(m in text for m in ("NameResolutionError",
+                               "Name or service not known",
+                               "getaddrinfo failed")):
+        return "the host does not resolve: check the domain spelling"
+    if isinstance(exc, requests.exceptions.ConnectTimeout):
+        return "connection timed out: wrong host, or the site is unreachable from here"
+    return text[:200]
+
+
 class Checks:
     def __init__(self):
         self.failed = 0
@@ -130,7 +153,7 @@ def main(argv):
         c.expect("<div id=\"root\"" in page.text or "root" in page.text,
                  "the React shell came back")
     except requests.RequestException as exc:
-        c.bad("the form route is served", str(exc))
+        c.bad("the form route is served", net_hint(exc))
 
     # 2, 3 — the link itself.
     print("\nLink")
@@ -138,6 +161,13 @@ def main(argv):
     try:
         r = requests.get(config_url, params={KEY_PARAM: key}, timeout=TIMEOUT)
         detail = "" if r.status_code == 200 else f"HTTP {r.status_code}: {r.text[:160]}"
+        if r.history:
+            final = urlparse(r.url).netloc
+            c.bad("the host is the canonical one",
+                  f"redirected to {final}; put that host in the links, since a "
+                  f"302 turns the submit POST into a GET")
+        else:
+            c.ok("the host is the canonical one")
         if c.expect(r.status_code == 200, "the link opens", detail):
             data = r.json()
             events = data.get("events") or []
@@ -151,7 +181,7 @@ def main(argv):
             c.expect(data.get("rubric_total") == 45, "the rubric totals 45",
                      str(data.get("rubric_total")))
     except requests.RequestException as exc:
-        c.bad("the link opens", str(exc))
+        c.bad("the link opens", net_hint(exc))
 
     # 4, 5 — it fails closed. Both must be 401 and neither may be a redirect to
     # /login, which is what the shared axios client used to do to a reviewer.
@@ -165,7 +195,7 @@ def main(argv):
         c.expect(wrong.status_code == 401, "a wrong key is refused",
                  f"HTTP {wrong.status_code}")
     except requests.RequestException as exc:
-        c.bad("the refusal probes ran", str(exc))
+        c.bad("the refusal probes ran", net_hint(exc))
 
     # 6 — the validator, proved without writing anything.
     try:
@@ -174,7 +204,7 @@ def main(argv):
         c.expect(r.status_code == 400, "an event outside the form is refused",
                  f"HTTP {r.status_code}")
     except requests.RequestException as exc:
-        c.bad("an event outside the form is refused", str(exc))
+        c.bad("an event outside the form is refused", net_hint(exc))
 
     # 7, 8 — the write path, opt-in.
     if do_submit and events:
@@ -203,7 +233,7 @@ def main(argv):
                       "are disabled in that environment; check Notification "
                       "logs for the row either way.")
         except requests.RequestException as exc:
-            c.bad("the review is created", str(exc))
+            c.bad("the review is created", net_hint(exc))
     elif do_submit:
         c.bad("the review is created", "no events came back, nothing to file against")
     else:

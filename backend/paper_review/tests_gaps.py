@@ -313,7 +313,7 @@ class ScoreAndGradeTests(_Base):
         r = self.create_review(grade="X")
         self.assertEqual(r.status_code, 201, r.content)
         review = PaperReview.objects.get(id=r.data["id"])
-        self.assertEqual(review.grade, "B")             # derived from 60%, not "X"
+        self.assertEqual(review.grade, "B")             # derived from 27, not "X"
         self.assertEqual(r.data["grade"], "B")
 
     def test_grade_is_derived_from_score_on_every_save(self):
@@ -335,12 +335,13 @@ class ScoreAndGradeTests(_Base):
             grade="D",                                  # simulating an import
         )
         self.assertEqual(review.proposal_score, 27)
-        self.assertEqual(review.grade, "B")             # 27/45 = 60% → B
+        self.assertEqual(review.grade, "B")             # 27 is inside B, 26-30
 
     def test_rescoring_moves_the_grade_with_the_score(self):
         """
         The inverse of the old contract: grade no longer survives a rescoring,
-        it tracks it. 27 → 36 crosses 60% → 80%, so B becomes A.
+        it tracks it. 27 → 36 crosses the B, B+ and A floors at once, so B
+        becomes A.
         """
         rid = self.create_review().data["id"]
         r = self.client.patch(f"{self.LIST}{rid}/",
@@ -352,19 +353,27 @@ class ScoreAndGradeTests(_Base):
         self.assertEqual(r.status_code, 200, r.content)
         review = PaperReview.objects.get(id=rid)
         self.assertEqual(review.proposal_score, 36)     # 10+5+9+5+5+2
-        self.assertEqual(review.grade, "A")             # 36/45 = 80% → A
+        self.assertEqual(review.grade, "A")             # 36 is the A floor
 
     def test_grade_band_boundaries(self):
         """Each band boundary, and the point just below it, produces its letter."""
+        # Every floor, and the score one below it, from the absolute bands in
+        # models.GRADE_BANDS: A 36-45, B+ 31-35, B 26-30, C 21-25, D 11-20,
+        # E 0-10. Both ends of each band are named, because a band expressed as a
+        # floor is the one place an off-by-one hides.
         cases = [
-            (45, "A"),   # 100%
-            (36, "A"),   # 80% — the boundary itself
-            (35, "B"),   # 77.8%
-            (27, "B"),   # 60%
-            (26, "C"),   # 57.8%
-            (18, "C"),   # 40%
-            (17, "D"),   # 37.8%
-            (0,  "D"),   # 0%
+            (45, "A"),
+            (36, "A"),    # the A floor
+            (35, "B+"),   # top of B+
+            (31, "B+"),   # the B+ floor
+            (30, "B"),
+            (26, "B"),
+            (25, "C"),
+            (21, "C"),
+            (20, "D"),
+            (11, "D"),
+            (10, "E"),
+            (0,  "E"),
         ]
         for score, expected in cases:
             with self.subTest(score=score, expected=expected):
@@ -377,7 +386,8 @@ class ScoreAndGradeTests(_Base):
     def test_an_unscored_review_stores_a_blank_grade(self):
         """
         computed_grade() returns None, but the column is NOT NULL — save()
-        coerces to "". An unscored review must not raise, and must not read as D.
+        coerces to "". An unscored review must not raise, and must not read as E,
+        which is now the letter a real score of 0 earns.
         """
         review = PaperReview.objects.create(
             event_code=self.event.event_code,

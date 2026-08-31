@@ -38,13 +38,22 @@ PAPER_REVIEW_CRITERIA.forEach((c) => { BLANK[c.key] = ''; });
 // key the row never carried. 0 is a legal score and must not be caught here.
 export const isBlank = (v) => v === '' || v === null || v === undefined;
 
-// Bands mirror GRADE_BANDS in paper_review/models.py; the grade shown here is a
-// preview of what the server will derive, never a value that is sent.
-export function gradeFor(pct) {
-  if (pct >= 80) return 'A';
-  if (pct >= 60) return 'B';
-  if (pct >= 40) return 'C';
-  return 'D';
+/**
+ * The letter for a RAW SCORE out of 45, mirroring GRADE_BANDS in
+ * paper_review/models.py. A preview of what the server will derive, never a
+ * value that is sent — grade is read-only on the serializer.
+ *
+ * Takes the score, not a percentage. The bands are score ranges (A 36-45,
+ * B+ 31-35, B 26-30, C 21-25, D 11-20, E 0-10), and converting to a percentage
+ * first rounds boundary scores into the wrong band.
+ */
+export function gradeFor(score) {
+  if (score >= 36) return 'A';
+  if (score >= 31) return 'B+';
+  if (score >= 26) return 'B';
+  if (score >= 21) return 'C';
+  if (score >= 11) return 'D';
+  return 'E';
 }
 
 export const scoreOf = (form) =>
@@ -100,8 +109,7 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
   const EVENTS = events || [];
 
   const score = useMemo(() => scoreOf(form), [form]);
-  const pct = Math.round((score / PAPER_REVIEW_MAX_SCORE) * 100);
-  const grade = gradeFor(pct);
+  const grade = gradeFor(score);
 
   return (
     <>
