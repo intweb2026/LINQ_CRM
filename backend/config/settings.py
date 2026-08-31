@@ -312,6 +312,13 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    # ONE scope, for the public MRE paper review form, and nothing else. There is
+    # deliberately no "anon" or "user" rate here: adding either would throttle
+    # every authenticated view in the project as a side effect of rate-limiting
+    # one pair of unauthenticated endpoints. See paper_review/public_form.py.
+    "DEFAULT_THROTTLE_RATES": {
+        "paper_review_form": "60/hour",
+    },
 }
 
 if DEBUG:

@@ -85,6 +85,59 @@ BUSINESS_FIELDS = [
 ]
 
 
+def create_review_with_workflows(serializer, request):
+    """
+    Save one paper review and run both Zoho ADD workflows. Returns
+    (review, proposal, created, peers).
+
+    A5. ATOMIC — the review and its proposal are one write or neither.
+
+    If the proposal cannot be created the ValidationError propagates out of the
+    atomic block, the review is rolled back with it, and the 400 names the
+    reason. Per-object save() throughout; never bulk_create.
+
+    The Part B send is registered with transaction.on_commit INSIDE the block, so
+    a rollback discards the callback and no email goes out for a review that does
+    not exist (B6, and the other half of A5).
+
+    `request` supplies the author: request.user is stamped on created_by, is
+    handed to the proposal bridge, and names the ActionLog entry. The public MRE
+    form passes a request whose user is the reviewer the form link belongs to, so
+    an externally submitted review is attributed to that person and not to
+    nobody. See paper_review/public_form.py.
+    """
+    from accounts.models import ActionLog
+
+    with transaction.atomic():
+        review = serializer.save(created_by=request.user)
+
+        try:
+            proposal, created, peers = create_proposal_for_review(review, request)
+        except ProposalBridgeError as exc:
+            detail = {"detail": exc.message}
+            if exc.errors:
+                detail["proposal_submission"] = exc.errors
+            raise ValidationError(detail) from exc
+
+        # A10. ONE entry, naming both ids.
+        ActionLog.objects.create(
+            user=request.user,
+            action=f"Created paper review #{review.id} → proposal "
+                   f"submission #{proposal.id}",
+            details=f"Speaker: {review.speaker_name}, "
+                    f"Event: {review.event_code}, "
+                    f"Score: {review.proposal_score}/{RUBRIC_TOTAL}, "
+                    f"Grade: {review.grade or '—'}, "
+                    f"Proposal: {'created' if created else 'already existed'}",
+        )
+
+        transaction.on_commit(
+            lambda: send_paper_review_notification(review)
+        )
+
+    return review, proposal, created, peers
+
+
 class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                          viewsets.ModelViewSet):
     """
@@ -376,48 +429,16 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
 
     def perform_create(self, serializer):
         """
-        A5. ATOMIC — the review and its proposal are one write or neither.
+        A5 and B6, both of them, live in create_review_with_workflows below.
 
-        If the proposal cannot be created the ValidationError propagates out of
-        the atomic block, the review is rolled back with it, and the 400 names the
-        reason. Per-object save() throughout; never bulk_create.
-
-        The Part B send is registered with transaction.on_commit INSIDE the block,
-        so a rollback discards the callback and no email goes out for a review that
-        does not exist (B6, and the other half of A5).
+        This is a two-line method on purpose: the public MRE form
+        (paper_review/public_form.py) has to run the SAME two workflows, and a
+        second copy of them is how a form submission quietly becomes an import —
+        a review with no proposal and no email.
         """
-        from accounts.models import ActionLog
-
-        with transaction.atomic():
-            review = serializer.save(created_by=self.request.user)
-
-            try:
-                proposal, created, peers = create_proposal_for_review(
-                    review, self.request)
-            except ProposalBridgeError as exc:
-                detail = {"detail": exc.message}
-                if exc.errors:
-                    detail["proposal_submission"] = exc.errors
-                raise ValidationError(detail) from exc
-
-            # A10. ONE entry, naming both ids.
-            ActionLog.objects.create(
-                user=self.request.user,
-                action=f"Created paper review #{review.id} → proposal "
-                       f"submission #{proposal.id}",
-                details=f"Speaker: {review.speaker_name}, "
-                        f"Event: {review.event_code}, "
-                        f"Score: {review.proposal_score}/{RUBRIC_TOTAL}, "
-                        f"Grade: {review.grade or '—'}, "
-                        f"Proposal: {'created' if created else 'already existed'}",
-            )
-
-            transaction.on_commit(
-                lambda: send_paper_review_notification(review)
-            )
-
+        review, *result = create_review_with_workflows(serializer, self.request)
         # Read by create() to build the response envelope.
-        self._proposal_result = (proposal, created, peers)
+        self._proposal_result = tuple(result)
 
     def create(self, request, *args, **kwargs):
         """

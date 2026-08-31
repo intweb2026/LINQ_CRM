@@ -36,6 +36,10 @@ function keyToFrontend(k) {
     // ticket URL, and a route renamed in Django needs no change here.
     target: k.target || '',
     ingest_path: k.ingest_path || '/api/webhooks/ingest/',
+    // Paper review form links only: the reviewer whose public form this link
+    // opens. Null on every other key. See backend/paper_review/public_form.py.
+    mre: k.mre || null,
+    mre_name: k.mre_name || null,
   };
 }
 
@@ -61,7 +65,7 @@ export function getLog(id) {
 export function toggleKey(id) {
   return http.post(`webhooks/keys/${id}/toggle/`, {}).then((r) => r.data);
 }
-export async function generateKey(name, eventCode, target) {
+export async function generateKey(name, eventCode, target, mre) {
   // WebhookApiKeyCreateSerializer's fields don't include `id`, so the create
   // response can't tell us which row was just made — re-fetch the list
   // (default-ordered newest-first per the model's Meta.ordering) instead.
@@ -73,6 +77,10 @@ export async function generateKey(name, eventCode, target) {
     name,
     event: eventCode === 'ALL' ? '' : eventCode,
     target: target && target !== 'ALL' ? target : '',
+    // Sent only when there is one: the serializer refuses a reviewer on any
+    // destination other than the paper review form, and refuses that
+    // destination without one.
+    ...(mre ? { mre } : {}),
   });
   const { data } = await http.get('webhooks/keys/');
   const rows = data.results || data;

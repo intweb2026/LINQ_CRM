@@ -26,6 +26,13 @@ class WebhookApiKey(models.Model):
         BOOKINGS     = "bookings",     "Bookings"
         TICKETS      = "tickets",      "Tickets"
         PAPER_REVIEW = "paper_review", "Paper reviews"
+        # The MRE form link, NOT an ingest endpoint. A key on this target is one
+        # reviewer's public paper review form; it carries `mre`, and the form it
+        # opens shows only that reviewer's assigned events. Kept on this model
+        # rather than in a table of its own because everything a shared link
+        # needs — issue, revoke, regenerate, usage count, per key notes, one
+        # admin page — is already here.
+        PAPER_REVIEW_FORM = "paper_review_form", "Paper review form (MRE link)"
 
     # url name per target, so the ONE place a path is written stays webhooks/urls.py
     # and both the API and the keys page read it from there through reverse().
@@ -37,6 +44,7 @@ class WebhookApiKey(models.Model):
         Target.BOOKINGS:      "webhook-ingest",
         Target.TICKETS:       "webhook-ingest-tickets",
         Target.PAPER_REVIEW:  "webhook-ingest-paper-review",
+        Target.PAPER_REVIEW_FORM: "paper-review-form-submit",
     }
 
     name            = models.CharField(max_length=100)
@@ -46,6 +54,18 @@ class WebhookApiKey(models.Model):
     target          = models.CharField(
         max_length=20, choices=Target.choices, blank=True, default="",
         help_text="Optional: restrict to one ingest endpoint; empty = every endpoint",
+    )
+    # The reviewer a PAPER_REVIEW_FORM key belongs to. Null on every other
+    # target, and required on that one — see WebhookApiKeyCreateSerializer.
+    #
+    # CASCADE, deliberately. The link IS that person's form: it decides which
+    # events the form offers and stamps created_by on what they submit, so a link
+    # whose reviewer no longer exists has nothing left to mean and must stop
+    # working rather than linger as an anonymous way in.
+    mre = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.CASCADE, related_name="paper_review_form_keys",
+        help_text="Paper review form links only: the reviewer this form belongs to",
     )
     is_active       = models.BooleanField(default=True, db_index=True)
     allowed_domains = models.JSONField(default=list, blank=True,
