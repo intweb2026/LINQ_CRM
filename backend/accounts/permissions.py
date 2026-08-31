@@ -3,6 +3,7 @@ accounts/permissions.py
 ────────────────────────
 DRF permission classes and RBAC queryset mixin.
 """
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
 # The one account permitted to destroy a whole module's data.
@@ -41,21 +42,93 @@ class IsHPAccount(BasePermission):
         )
 
 
+def is_super_admin(user) -> bool:
+    """
+    The rule IsAdminRole enforces, as a plain function.
+
+    Three kinds of caller qualify, and they always have: the HP account, anyone
+    holding role=admin, and anyone whose team is flagged is_all_access. Lifted
+    out of the permission class because the team-manager gates below ask exactly
+    the same question, and a second hand-written copy of a three-clause admin
+    test is a second chance for one clause to go missing.
+    """
+    if not (user and getattr(user, "is_authenticated", False)):
+        return False
+    if getattr(user, "username", None) == dapi_USERNAME:
+        return True
+    if user.is_admin:
+        return True
+    return bool(user.has_all_access)
+
+
+def managed_team_id(user):
+    """The team this caller manages, or None. Super admins manage no ONE team."""
+    if not (user and getattr(user, "is_authenticated", False)):
+        return None
+    if is_super_admin(user):
+        return None
+    return getattr(user, "managed_team_id", None)
+
+
+def assert_can_manage_user(actor, target):
+    """
+    Raise unless `actor` may WRITE to the account `target`.
+
+    Three answers, in this order:
+
+      * a super admin may write to anybody — unchanged behaviour;
+      * a manager may write only to accounts sitting in the team they were
+        given, and never to a super admin who happens to sit there. Without that
+        second clause a manager could reset an administrator's password out of
+        their own team page and sign in as them, which is the whole restriction
+        undone in two clicks;
+      * anybody else is left exactly as they were, governed by the users-module
+        grid alone. A grid-granted account with no managed team is not narrowed
+        by this feature.
+    """
+    if is_super_admin(actor):
+        return
+    team_id = managed_team_id(actor)
+    if team_id is None:
+        return
+    if is_super_admin(target):
+        raise PermissionDenied(
+            "Administrator accounts are managed by a super admin."
+        )
+    if target.team_id != team_id:
+        raise PermissionDenied(
+            "You can only manage users in the team you manage."
+        )
+
+
+def assert_can_place_in_team(actor, team_id):
+    """
+    Raise unless `actor` may put an account INTO the team `team_id`.
+
+    The mirror of assert_can_manage_user, and it is a separate question. That one
+    asks whether the person being edited is already the manager's to touch; this
+    asks where they are allowed to end up. Reaching a user inside your own team
+    and then moving them into Sales is creating a Sales account by another route,
+    so both ends of a move are checked.
+
+    `None` means unassigned, which is likewise out of reach for a manager.
+    """
+    if is_super_admin(actor):
+        return
+    managed = managed_team_id(actor)
+    if managed is None:
+        return
+    if team_id is None or int(team_id) != managed:
+        raise PermissionDenied(
+            "You can only place users in the team you manage."
+        )
+
+
 class IsAdminRole(BasePermission):
     message = "Admin role required."
 
     def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        # HP bypasses everything
-        if request.user.username == dapi_USERNAME:
-            return True
-        # Standard admin role check
-        if request.user.is_admin:
-            return True
-        # A team flagged is_all_access also qualifies. This read a per-user
-        # CustomRole until access moved onto the team.
-        return bool(request.user.has_all_access)
+        return is_super_admin(request.user)
     
 
 class IsSalesOrAdmin(BasePermission):

@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     BookingDataViewSet,
     DelegateDataViewSet,
+    DeletionDataViewSet,
     DataApiKeyManagementViewSet,
     EventDataViewSet,
     TicketDataViewSet,
@@ -14,6 +15,9 @@ router.register(r"bookings",  BookingDataViewSet,  basename="dataapi-bookings")
 router.register(r"delegates", DelegateDataViewSet, basename="dataapi-delegates")
 router.register(r"events",    EventDataViewSet,    basename="dataapi-events")
 router.register(r"tickets",   TicketDataViewSet,   basename="dataapi-tickets")
+# Not a fifth scope: "deletions" is absent from DATA_API_SCOPES on purpose and
+# the view checks the key against the ?resource= it was asked about instead.
+router.register(r"deletions", DeletionDataViewSet, basename="dataapi-deletions")
 
 # Key management is NOT an export resource, and it is deliberately OFF the
 # router. The router is the export surface: every prefix registered above is a

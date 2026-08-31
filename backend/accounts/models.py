@@ -61,6 +61,18 @@ class User(AbstractUser):
         related_name="members",
         db_index=True
     )
+    managed_team = models.ForeignKey(
+        "teams.Team",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="managers",
+        db_index=True,
+        help_text=(
+            "The team this person MANAGES. Set only by a super admin. It opens the "
+            "Users module for them and pins every write they make to this one team."
+        ),
+    )
     assigned_events = models.ManyToManyField(
         "events.Event",
         blank=True,
@@ -181,6 +193,20 @@ class User(AbstractUser):
     @property
     def is_sales(self):
         return self.role == self.Role.SALES
+
+    @property
+    def is_team_manager(self):
+        """
+        Holds Manager rights over one team.
+
+        DELIBERATELY NOT `is_team_lead`, and not `Team.team_lead`. Those two are
+        about DATA — who a member reports to, whose bookings a lead may read (see
+        data_scope_user_ids) — and every existing scope rule reads them. Manager
+        rights are about ADMINISTERING PEOPLE, and answering both questions with
+        one flag would have handed every existing team lead in the database the
+        ability to create and delete accounts the moment this shipped.
+        """
+        return self.managed_team_id is not None
 
     def assigned_event_codes(self):
         """
@@ -332,6 +358,33 @@ class User(AbstractUser):
                     resolved[row.module] = {
                         a: bool(getattr(row, f"can_{a}")) for a in PERM_ACTIONS
                     }
+
+        # MANAGER RIGHTS OPEN THE USERS MODULE, whatever the team's grid says.
+        #
+        # Assigning somebody a team to manage has to be enough on its own. Making
+        # it a two-step — hand them the team here, then remember to tick four
+        # boxes on their team's grid over there — grants the right to nobody the
+        # first time it is used, and ticking those boxes on the TEAM would hand
+        # the same four to every other member of it.
+        #
+        # `teams` view rides along because the Users screen renders team names
+        # and its form offers a team; a manager who could not read /api/teams/
+        # would get a Users page with an empty Team column. View only: every
+        # write action on TeamViewSet asks for teams.update, so the manager still
+        # cannot rename, archive, or move members between teams.
+        #
+        # Applied BEFORE the deltas below, so a super admin can still take one of
+        # these back from one person — a manager who may not delete accounts is
+        # `can_delete: false` on their users row, and that keeps working.
+        #
+        # `roles` is NOT granted, and that is the line between a manager and a
+        # super admin: deciding what a team MAY DO stays with whoever holds the
+        # permission grid. See UserViewSet.set_permissions.
+        if self.managed_team_id:
+            resolved["users"].update(
+                view=True, create=True, update=True, delete=True,
+            )
+            resolved["teams"]["view"] = True
 
         # None means "inherit", so only a real True/False is written through.
         # Testing truthiness here would turn every inherit into a revoke.

@@ -6,7 +6,9 @@ from django.urls import path, include, re_path
 from django.views.generic import TemplateView
 from rest_framework.routers import DefaultRouter
 
-from accounts.views import UserViewSet, GoogleTokenLoginView, CustomAuthToken
+from accounts.views import (
+    UserViewSet, GoogleTokenLoginView, CustomAuthToken, LogoutView,
+)
 from companies.views import CompanyViewSet
 from events.views import EventViewSet
 from book_event.views import BookEventViewSet
@@ -70,6 +72,10 @@ urlpatterns = [
     # Hidden break-glass fallback, reachable only via the /170405 front-end
     # gate. Unlike the Google path it does not check login_access.
     path("api/auth/fallback/", CustomAuthToken.as_view(),      name="fallback-login"),
+    # Revokes the caller's token. Called by the Topbar sign-out AND by the
+    # six-hour inactivity timer, so a forgotten session does not leave a
+    # never-expiring credential behind. See accounts.views.LogoutView.
+    path("api/auth/logout/",   LogoutView.as_view(),           name="logout"),
     path("api-auth/",            include("rest_framework.urls")),
     # Serve React frontend for all non-API routes
     re_path(r"^(?!api/|admin/|api-auth/|static/).*$",

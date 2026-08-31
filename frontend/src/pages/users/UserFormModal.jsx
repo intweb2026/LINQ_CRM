@@ -40,10 +40,32 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   const isNew = !u;
   const toast = useToast();
   const confirm = useConfirm();
-  const { can, user: me } = useSession();
+  const { can, isAdmin, managedTeam, user: me } = useSession();
   const { data: teams } = useFetch(teamsApi.list, [], { initialData: [] });
   const TEAMS = teams || [];
   const [busy, setBusy] = useState(false);
+  /**
+   * A team manager may only ever produce accounts in the team they manage, so
+   * the Team field stops being a choice and becomes a statement.
+   *
+   * Pinned here rather than merely validated on submit: a dropdown offering
+   * seven teams of which six answer 403 is a form that lies about what it can
+   * do. The server refuses them anyway — UserWriteSerializer.validate — so this
+   * is the UI agreeing with the API rather than the only thing enforcing it.
+   */
+  const pinnedTeam = managedTeam
+    ? TEAMS.find((t) => t.id === managedTeam.id) || null
+    : null;
+  // Only a super admin hands out manager rights, and the server says so too.
+  // Shown on the form rather than on the Teams board because it is a property
+  // of the PERSON: one manager, one team, changed by editing them.
+  const canAssignManager = isAdmin;
+  // Deciding what somebody MAY DO answers to `roles`, the same right that gates
+  // /api/users/{id}/permissions/. A manager holds `users` and not `roles`, so
+  // the grid below is theirs to read and not to change; leaving it clickable
+  // meant ticking cells, saving, and being told 403 after the account was
+  // already created.
+  const canEditGrid = can('update', 'roles');
 
   const [form, setForm] = useState(() => {
     return {
@@ -53,7 +75,8 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       email: u?.email || '',
       password: '',
       role: u?.role || 'sales',
-      team_id: u?.team_id ? String(u.team_id) : '',
+      team_id: u?.team_id ? String(u.team_id) : (managedTeam ? String(managedTeam.id) : ''),
+      managed_team_id: u?.managed_team_id ? String(u.managed_team_id) : '',
       mapped_lead_id: u?.mapped_lead_id ? String(u.mapped_lead_id) : '',
       status: u?.status || 'active',
       is_lead: !!u?.is_lead,
@@ -72,6 +95,25 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   const managerGroups = managerOptionGroups(chosenTeam, u, users);
   const managerChoices = managerGroups.flatMap((g) => g.items);
   const impliedRole = chosenTeam ? roleFromTeamName(chosenTeam.name) : null;
+  /**
+   * A manager gets a READ-OUT here, not a picker.
+   *
+   * They work in one team, and that team's name already implies exactly one
+   * role — the keyword chain in lib/roleFromTeam.js, mirroring
+   * role_from_team_name on the server. Offering all seven let a manager of Sales
+   * file somebody as Operations; the server now drops the field for them
+   * outright (UserWriteSerializer.validate), so a picker would have been a
+   * control whose every setting produced the same stored value.
+   *
+   * A NEW account shows what the team is about to make it. An EXISTING one shows
+   * what it actually IS, which can differ — a super admin may have set it by
+   * hand, and the server leaves that alone on an edit that does not move teams.
+   * Showing the implied role there would be the form reporting a value nobody
+   * stored.
+   */
+  const lockedRole = managedTeam
+    ? (isNew ? (impliedRole || form.role) : form.role)
+    : null;
   const roleOverridden = !!impliedRole && form.role !== impliedRole;
 
   /**
@@ -132,12 +174,16 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
    * the cleared box would come back on the next open.
    */
   const hasExceptions = differs(grid, teamGrid);
-  const needsSave = isNew
+  // `canEditGrid` short-circuits the second request for a caller who could not
+  // have changed the grid. Without it a manager saving an ordinary edit would
+  // still PUT the permissions endpoint if anything about the resolved matrix had
+  // shifted underneath them, and collect a 403 on a save that otherwise worked.
+  const needsSave = canEditGrid && (isNew
     ? hasExceptions
-    : differs(grid, teamsApi.toMatrix(u.effective_permissions));
+    : differs(grid, teamsApi.toMatrix(u.effective_permissions)));
 
   function toggleCell(module, action) {
-    if (allAccess) return;
+    if (allAccess || !canEditGrid) return;
     setGrid((g) => ({ ...g, [module]: { ...g[module], [action]: !g[module][action] } }));
   }
   const resetGrid = () => setGrid(teamsApi.toMatrix(teamGrid));
@@ -158,7 +204,6 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       last_name: form.last_name.trim(),
       username: form.username.trim(),
       email: form.email.trim(),
-      role: form.role,
       status: form.status,
       team_id: form.team_id ? +form.team_id : null,
       // null, not omitted: clearing a reporting manager has to reach the server.
@@ -167,6 +212,18 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       login_access: form.login_access,
       password: form.password,
     };
+    // Omitted for a manager, whose role comes from the team they manage and is
+    // dropped server-side either way. Sending it would only make the request
+    // disagree with the read-only field the form just showed them.
+    if (!managedTeam) {
+      payload.role = form.role;
+    }
+    // Omitted entirely for anyone who cannot grant it. Sending the key at all
+    // is a validation error server-side, which is the right answer for a forged
+    // request and the wrong one for an ordinary save by a manager.
+    if (canAssignManager) {
+      payload.managed_team_id = form.managed_team_id ? +form.managed_team_id : null;
+    }
     setBusy(true);
     let saved;
     try {
@@ -262,23 +319,44 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
         <div className="fg">
           <div className="fd">
             <label className="fd-l">Team</label>
-            <select className="in" value={form.team_id} onChange={setTeam}>
-              <option value="">— Unassigned —</option>
-              {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            <select className="in" value={form.team_id} onChange={setTeam} disabled={!!managedTeam}>
+              {managedTeam
+                ? <option value={managedTeam.id}>{pinnedTeam?.name || managedTeam.name}</option>
+                : <>
+                  <option value="">— Unassigned —</option>
+                  {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </>}
             </select>
+            {managedTeam ? (
+              <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+                You manage {pinnedTeam?.name || managedTeam.name}, so accounts you create or edit stay in it.
+              </span>
+            ) : null}
           </div>
           <div className="fd">
             <label className="fd-l">Role</label>
-            <select className="in" value={form.role} onChange={set('role')}>
-              {TEAM_ROLES.map((r) => <option key={r} value={r}>{ROLE_FULL[r]}</option>)}
-            </select>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-              {roleOverridden
-                ? `Set by hand. ${chosenTeam.name} would otherwise make this ${ROLE_FULL[impliedRole]}; your choice is kept.`
-                : impliedRole
-                  ? `Filled in from ${chosenTeam.name}. Change it if this person does something else.`
-                  : 'Job function, shown on the Users list and used to filter it. Grants nothing by itself.'}
-            </span>
+            {lockedRole ? (
+              <>
+                <input className="in" value={ROLE_FULL[lockedRole] || lockedRole} disabled readOnly />
+                <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+                  Set by {chosenTeam?.name || 'the team you manage'}. Moving someone to a
+                  different job is an administrator&rsquo;s call.
+                </span>
+              </>
+            ) : (
+              <>
+                <select className="in" value={form.role} onChange={set('role')}>
+                  {TEAM_ROLES.map((r) => <option key={r} value={r}>{ROLE_FULL[r]}</option>)}
+                </select>
+                <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+                  {roleOverridden
+                    ? `Set by hand. ${chosenTeam.name} would otherwise make this ${ROLE_FULL[impliedRole]}; your choice is kept.`
+                    : impliedRole
+                      ? `Filled in from ${chosenTeam.name}. Change it if this person does something else.`
+                      : 'Job function, shown on the Users list and used to filter it. Grants nothing by itself.'}
+                </span>
+              </>
+            )}
           </div>
           <div className="fd">
             <label className="fd-l">Status</label>
@@ -320,6 +398,23 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
                 : 'Left unrecorded, the profile shows the leads of this person\u2019s team, or the administrators if they lead it themselves.'}
             </span>
           </div>
+          {canAssignManager ? (
+            <div className="fd">
+              <label className="fd-l">Manager of</label>
+              {/* Any team, not only the one they are IN. A head of department can
+                  sit in Admin and run Sales, and forcing the two to match would
+                  make that unrepresentable. */}
+              <select className="in" value={form.managed_team_id} onChange={set('managed_team_id')}>
+                <option value="">— Not a manager —</option>
+                {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
+                Opens the Users screen for them and limits every account they create,
+                edit or delete to this one team. It grants nothing else — permissions
+                themselves stay with an administrator. Clear it to take the rights away.
+              </span>
+            </div>
+          ) : null}
           <div className="fd">
             <label className="fd-l" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
               <input type="checkbox" className="ck" checked={form.login_access} onChange={setChk('login_access')} />
@@ -335,14 +430,16 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t">
           <Icon name="shield" size={13} />What they can open
-          {hasExceptions && !allAccess ? (
+          {hasExceptions && !allAccess && canEditGrid ? (
             <button className="btn btn-g btn-sm" style={{ marginLeft: 'auto' }} onClick={resetGrid} disabled={busy}>
               <Icon name="refresh" size={13} />Back to the team
             </button>
           ) : null}
         </div>
         <p style={{ fontSize: 12, color: 'var(--text-4)', lineHeight: 1.5, marginBottom: 10 }}>
-          {chosenTeam
+          {!canEditGrid
+            ? <>What this account can reach, inherited from {chosenTeam ? <b>{chosenTeam.name}</b> : 'no team'}. Changing it needs the Permissions right.</>
+            : chosenTeam
             ? <>Inherited from <b>{chosenTeam.name}</b>. Tick to add something on top, untick to take something away; anything you leave alone keeps following the team, including when {chosenTeam.name} changes later.</>
             : 'No team, so nothing is inherited. Anything ticked here is granted to this person alone.'}
         </p>
@@ -352,7 +449,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
           </p>
         ) : (
           <>
-            <PermissionGrid value={grid} inherited={teamGrid} onToggle={toggleCell} disabled={busy} />
+            <PermissionGrid value={grid} inherited={teamGrid} onToggle={toggleCell} disabled={busy || !canEditGrid} />
             <PermissionLegend />
             <p style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.45 }}>
               <b>All records</b> is how one person is given a whole module — tick it on Paper

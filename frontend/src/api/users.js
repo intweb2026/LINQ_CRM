@@ -54,6 +54,11 @@ function toFrontend(u) {
     // the team's leads when it is unset.
     mapped_lead_id: u.mapped_lead_id || null,
     mapped_lead_name: u.mapped_lead_name || '',
+    // The team this person MANAGES, which is not the team they are in. Null for
+    // everyone but a team manager; see backend accounts/models.py
+    // User.is_team_manager for why this is a field of its own and not is_lead.
+    managed_team_id: u.managed_team_id || null,
+    managed_team_name: u.managed_team_name || '',
     events_count: u.assigned_events_count || 0,
     assigned_events: u.assigned_events || [],
     last_login: u.last_login,
@@ -95,6 +100,9 @@ function toBackend(patch) {
   if (patch.status !== undefined) body.status = patch.status;
   if (patch.login_access !== undefined) body.login_access = patch.login_access;
   if (patch.team_id !== undefined) body.team_id = patch.team_id;
+  // `null` REVOKES manager rights, so this is tested for `undefined` like
+  // team_id — a truthiness test would make revoking impossible to express.
+  if (patch.managed_team_id !== undefined) body.managed_team_id = patch.managed_team_id;
   if (patch.is_lead !== undefined) body.is_team_lead = patch.is_lead;
   if (patch.custom_role_id !== undefined) body.custom_role_id = patch.custom_role_id;
   if (patch.password) body.password = patch.password;

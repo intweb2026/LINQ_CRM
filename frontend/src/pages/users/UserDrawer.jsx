@@ -63,6 +63,9 @@ export default function UserDrawer({ user: u, users, onClose, onChanged, onEdit,
         <div className="ro-c"><div className="ro-l">Role</div><div className="ro-v"><RoleBadge value={u.role} /></div></div>
         <div className="ro-c"><div className="ro-l">Team</div><div className="ro-v">{team ? (team.is_all_access ? team.name + ' · full access' : team.name) : <span className="dim">None — no module access</span>}</div></div>
         <div className="ro-c"><div className="ro-l">Team lead</div><div className="ro-v">{u.is_lead ? 'Yes' : 'No'}</div></div>
+        {/* Separate row from Team lead on purpose: one is who they report to,
+            the other is whose accounts they administer. */}
+        <div className="ro-c"><div className="ro-l">Manages</div><div className="ro-v">{u.managed_team_name || <span className="dim">No team</span>}</div></div>
         <div className="ro-c f"><div className="ro-l">Reporting manager</div><div className="ro-v"><ReportsTo value={reportsTo} /></div></div>
         <div className="ro-c"><div className="ro-l">Status</div><div className="ro-v"><StatusPill value={u.status} /></div></div>
         <div className="ro-c f"><div className="ro-l">Email</div><div className="ro-v" style={{ fontWeight: 500 }}>{u.email}</div></div>

@@ -3,6 +3,7 @@ import * as authApi from '../api/auth';
 import { myPermissions } from '../api/users';
 import { markTokenFreshness } from '../api/client';
 import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
+import { clearActivity } from '../lib/idle';
 
 const SessionContext = createContext(null);
 
@@ -169,6 +170,7 @@ export function SessionProvider({ children }) {
     storageRemove('auth_user');
     storageRemove('auth_perms');
     storageRemove('auth_token_set_at');
+    clearActivity();
     setUser(null);
     setPerms(null);
     setPermsLoaded(false);

@@ -18,11 +18,25 @@ import * as usersApi from '../api/users';
 import * as teamsApi from '../api/teams';
 
 export default function UsersPage() {
-  const { canView, can } = useSession();
+  const { canView, can, managedTeam } = useSession();
   const toast = useToast();
   const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
   const { data: teams, refetchQuiet: reloadTeams } = useFetch(teamsApi.list, [], { initialData: [] });
-  const USERS = users || [];
+  /**
+   * A team manager administers one team, so that is the list they get.
+   *
+   * NOT a security boundary and not pretending to be one — /api/users/ is the
+   * app-wide directory behind every owner and assignee dropdown, readable by any
+   * authenticated session and always has been, so narrowing it server-side would
+   * make a manager see less of it than the people they manage while hiding
+   * nothing that was not already open. What carries privilege is WRITING, and
+   * that is refused by the server for every account outside this team — see
+   * assert_can_manage_user in backend/accounts/permissions.py. This is the
+   * screen agreeing with the API about whose accounts are the manager's job.
+   */
+  const USERS = (users || []).filter(
+    (u) => !managedTeam || u.team_id === managedTeam.id,
+  );
   const TEAMS = teams || [];
   const teamName = (id) => (TEAMS.find((t) => t.id === id) || {}).name || 'Unassigned';
   /**
@@ -68,7 +82,16 @@ export default function UsersPage() {
           { key: 'name', label: 'User', cls: 'st usr-name', cell: (v, r) => <Who name={v} sub={r.username} mono avatar={false} /> },
           { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} />, opts: () => TEAM_ROLES },
           { key: 'team_id', label: 'Team', cell: (v) => teamName(v), opts: () => TEAMS.map((t) => t.name) },
-          { key: 'is_lead', label: 'Lead', cell: (v) => (v ? <span className="bg bg-amber"><i />Lead</span> : <span className="dim">—</span>) },
+          // Two different jobs in one column, and they are not the same job:
+          // Lead is who a member reports to, Manager is who administers the
+          // accounts. Someone can hold either, both, or neither.
+          { key: 'is_lead', label: 'Lead', cell: (v, r) => (
+            <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+              {v ? <span className="bg bg-amber"><i />Lead</span> : null}
+              {r.managed_team_id ? <span className="bg bg-violet"><i />Manager</span> : null}
+              {!v && !r.managed_team_id ? <span className="dim">—</span> : null}
+            </span>
+          ) },
           // Sorted and filtered on the raw mapped_lead_name, which is '' for
           // everyone until somebody records one; the cell falls back to the
           // team's leads so the column is readable in the meantime.
@@ -88,6 +111,7 @@ export default function UsersPage() {
               <div><div className="l">Team</div><div className="v">{teamName(r.team_id)}</div></div>
               <div><div className="l">Events</div><div className="v">{r.events_count}</div></div>
               <div><div className="l">Lead</div><div className="v">{r.is_lead ? 'Yes' : 'No'}</div></div>
+              {r.managed_team_id ? <div><div className="l">Manages</div><div className="v">{r.managed_team_name}</div></div> : null}
               <div><div className="l">Reports to</div><div className="v"><ReportsTo value={reportingManagerOf(r, TEAMS, USERS)} avatar={false} /></div></div>
             </div>
           </div>

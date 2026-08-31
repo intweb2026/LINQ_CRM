@@ -13,7 +13,7 @@ from rest_framework import serializers
 
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
-from dataapi.models import DATA_API_SCOPES, DataApiKey
+from dataapi.models import DATA_API_SCOPES, DataApiKey, DeletedRecord
 from events.models import Event
 from ticket_central.models import Ticket
 
@@ -262,6 +262,17 @@ class DataApiTicketSerializer(serializers.ModelSerializer):
 # ── Key management (CRM admin UI, not the export surface) ───────────────────
 # These two are read/written by session-authenticated admins through
 # DataApiKeyManagementViewSet. They are NOT reachable with a dapi_ key.
+
+class DataApiDeletionSerializer(serializers.ModelSerializer):
+    """
+    A tombstone row. Three columns and no more: the consumer is deleting a row
+    it already holds, so all it needs is which sheet and which Record ID.
+    """
+
+    class Meta:
+        model = DeletedRecord
+        fields = ["resource", "record_id", "deleted_at"]
+
 
 class DataApiKeyListSerializer(serializers.ModelSerializer):
     created_by = serializers.StringRelatedField()

@@ -124,3 +124,69 @@ class DataApiKey(models.Model):
         self.last_used_at = timezone.now()
         self.usage_count += 1
         self.save(update_fields=["last_used_at", "usage_count"])
+
+
+# ── Deletion tombstones ───────────────────────────────────────────────────────
+#
+# Every model this API exports is HARD deleted; there is no is_deleted column
+# and no archive table anywhere in this schema (see
+# book_delegate/tests_hard_delete.py). That is fine for a full pull and wrong
+# for a delta pull: ?updated_since= can only ever return rows that still exist,
+# so a consumer polling it never learns that a record went, keeps the copy it
+# already wrote, and its row count drifts permanently above the CRM's own. One
+# tombstone per delete is the missing half of that feed.
+#
+# Keyed by the same `id` the export serialisers emit as Record ID, because that
+# is the column the consumer upserts on and therefore the only one it can
+# delete by.
+
+
+class DeletedRecord(models.Model):
+    resource = models.CharField(max_length=20)
+    record_id = models.BigIntegerField()
+    deleted_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "data_api_deleted_records"
+        # pk order, matching every export viewset: DataApiCursorPagination is
+        # keyset pagination over pk and needs a unique monotonic sort.
+        ordering = ["pk"]
+        indexes = [
+            models.Index(fields=["resource", "deleted_at"],
+                         name="dapi_deleted_res_at_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.resource}#{self.record_id} deleted {self.deleted_at}"
+
+
+# Model label -> the resource_name its rows are exported under. The values are
+# DATA_API_SCOPES entries, and the deletions endpoint checks the key's scope
+# against them, so a key restricted to ["delegates"] reads delegate tombstones
+# and no others.
+DELETION_SOURCES = {
+    "book_event.BookEvent": "bookings",
+    "book_delegate.BookDelegate": "delegates",
+    "events.Event": "events",
+    "ticket_central.Ticket": "tickets",
+}
+
+
+def record_deletion(sender, instance, **kwargs):
+    """
+    post_delete receiver, wired in dataapi/apps.py.
+
+    post_delete rather than an explicit call in each delete view, because the
+    delete paths are many and two of them are not views at all: the Bookings
+    modal deletes an invoice and Django cascades to its delegates, and
+    delegates/bulk_delete/ deletes a queryset. A signal catches every one,
+    cascades included, and cannot be forgotten by the next path somebody adds.
+
+    ponytail: one INSERT per deleted row, and a receiver on these models also
+    costs Django its fast-delete path. Both are fine at this table's real
+    delete volume (tens of rows at a time); batch in pre_delete if a mass
+    purge ever makes it hurt.
+    """
+    resource = DELETION_SOURCES.get(sender._meta.label)
+    if resource and instance.pk is not None:
+        DeletedRecord.objects.create(resource=resource, record_id=instance.pk)

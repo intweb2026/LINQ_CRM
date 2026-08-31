@@ -13,10 +13,25 @@ export function googleLogin(credential) {
   return http.post('auth/google/', { credential }).then((r) => r.data);
 }
 
-// Backend has no server-side logout endpoint (DRF token auth) — the token is
-// simply discarded client-side.
+/**
+ * Revoke the DRF token server-side, then let the caller clear it locally.
+ *
+ * Discarding the token client-side alone used to be the whole of logout, which
+ * left a credential that NEVER EXPIRES valid on the server for as long as the
+ * row lived. Both sign-out paths — the Topbar button and the inactivity timer in
+ * components/IdleLogout.jsx — come through here, so neither can drift from the
+ * other.
+ *
+ * Swallowing the error is deliberate: the client is dropping the token either
+ * way, and a backend hiccup must not strand someone in a shell they have asked
+ * to leave. The explicit timeout exists because `http` has no default one, and
+ * `_retried` opts out of the client's network-error retry loop (see
+ * client.js) — both so a dead backend cannot hold the sign-out open for
+ * twenty seconds.
+ */
 export function logout() {
-  return Promise.resolve();
+  return http.post('auth/logout/', null, { timeout: 5000, _retried: true })
+    .catch(() => {});
 }
 
 /**

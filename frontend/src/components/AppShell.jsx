@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
+import IdleLogout from './IdleLogout';
 import { NAV, homeFor } from '../lib/nav';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
@@ -102,6 +103,9 @@ export default function AppShell() {
           every navigation reads as the app being slower than it is. */}
       <main id="main"><Suspense fallback={null}><Outlet /></Suspense></main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {/* Six-hour inactivity sign-out. Mounted HERE rather than in App.jsx so
+          it only ever runs for an authenticated session. */}
+      <IdleLogout />
     </div>
   );
 }

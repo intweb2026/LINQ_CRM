@@ -3,7 +3,7 @@ accounts/views.py
 ──────────────────
 User management — admin only.
 """
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, logout as django_logout
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -171,6 +171,46 @@ class CustomAuthToken(ObtainAuthToken):
             'username': user.username,
             'role':     user.role,
         })
+
+
+class LogoutView(APIView):
+    """
+    POST /api/auth/logout/ — revoke the caller's token. 204 on success.
+
+    Logging out used to be purely client-side: the browser forgot the token and
+    the row stayed valid forever, because DRF tokens carry no expiry. Anything
+    that had read that string out of localStorage — a shared machine, a stale
+    backup, a browser extension — kept full API access after the user believed
+    they had signed out. Both sign-out paths now come through here: the Topbar
+    button, and the six-hour inactivity timer in
+    frontend/src/components/IdleLogout.jsx.
+
+    ONE TOKEN PER USER. rest_framework.authtoken's model is a OneToOne, and
+    login does Token.objects.get_or_create(user=user), so this signs the user
+    out of every browser they are signed into rather than just this one. That is
+    inherent to the token model, not a choice made here; per-device revocation
+    would mean a token table with a device column (or knox), which is a
+    migration, not a view. The next login simply mints a fresh key.
+
+    Idempotent from the caller's point of view: filter().delete() on an already
+    revoked token deletes nothing and still answers 204. A caller with no valid
+    credential never reaches the body — IsAuthenticated answers 401 first, which
+    is the same outcome the client wants.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        # ...and any Django session belonging to the same browser.
+        # SessionAuthentication sits in DEFAULT_AUTHENTICATION_CLASSES next to
+        # TokenAuthentication, so a sessionid cookie authenticates the whole API
+        # on its own — and any staff member who has signed into /admin/ is
+        # carrying one. Revoking only the token would leave that cookie a live
+        # credential after the CRM had said goodbye, which is precisely the hole
+        # an inactivity logout exists to close. A token-only caller has no
+        # session to flush and this costs them nothing.
+        django_logout(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UserViewSet(viewsets.ModelViewSet):
