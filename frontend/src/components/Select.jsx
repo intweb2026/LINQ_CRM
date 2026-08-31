@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Popover from './Popover';
+import { useMenuNav } from '../lib/menuNav';
 import { Icon } from '../lib/icons';
 
 // Custom-styled dropdown replacing native <select> in forms — the OS-native
@@ -58,27 +59,49 @@ function SelectMenu({ options, value, onChange, close, text, subOf, search, sear
     return options.filter((o) => String(o).toLowerCase().includes(q));
   }, [options, query, search]);
 
+  const pick = (o) => { onChange(o); close(); };
+  const nav = useMenuNav(shown.length, (i) => pick(shown[i]));
+
+  // With a search box its autoFocus puts focus inside the menu and keydown
+  // bubbles up from there. Without one, focus stays on the trigger, which is
+  // outside this subtree, so the wrapper would never see the arrows — focus it.
+  const wrapRef = useRef(null);
+  useEffect(() => { if (!search) wrapRef.current?.focus(); }, [search]);
+
   return (
-    <>
+    // The handler sits above both the search box and the rows so it catches the
+    // arrows wherever focus is. tabIndex makes the div focusable for the
+    // no-search case, where nothing inside would otherwise hold focus.
+    <div ref={wrapRef} onKeyDown={nav.onKeyDown} tabIndex={-1} className="sel-menu">
       {search ? (
         <div className="sel-search">
           <input
             className="in in-xs in-s" type="search" autoFocus
             value={query} placeholder={searchPlaceholder}
             onChange={(e) => setQuery(e.target.value)}
-            // Enter inside a modal form would otherwise submit; and Enter must
-            // not commit the typed text, which is a filter and not a value.
+            // Enter inside a modal form would otherwise submit it, and the
+            // typed text is a filter, never a value, so it must not commit
+            // either. preventDefault only — the event still bubbles to the
+            // wrapper, which commits the highlighted row if the user arrowed
+            // to one.
             onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
           />
         </div>
       ) : null}
-      <div className="pop-mx">
+      <div className="pop-mx" ref={nav.boxRef}>
         {shown.length === 0 ? (
           <div className="sel-none">{emptyText}</div>
-        ) : shown.map((o) => {
+        ) : shown.map((o, i) => {
           const sub = subOf ? subOf(o) : null;
           return (
-            <button type="button" className={'pop-i' + (sub ? ' pop-i-2' : '')} key={o} onClick={() => { onChange(o); close(); }}>
+            <button
+              type="button" key={o} data-nav={i}
+              className={'pop-i' + (sub ? ' pop-i-2' : '') + (i === nav.idx ? ' cur' : '')}
+              // Mouse and keyboard share one highlight, so moving the pointer
+              // never leaves a second row looking selected.
+              onMouseEnter={() => nav.setIdx(i)}
+              onClick={() => pick(o)}
+            >
               {o === value ? <Icon name="check" size={14} /> : <span style={{ width: 14, flexShrink: 0 }} />}
               <span className="sel-o">
                 {/* A blank option is a real choice on some pickers (Payment Status,
@@ -91,6 +114,6 @@ function SelectMenu({ options, value, onChange, close, text, subOf, search, sear
           );
         })}
       </div>
-    </>
+    </div>
   );
 }

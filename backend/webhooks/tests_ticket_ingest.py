@@ -186,3 +186,39 @@ class TicketWebhookFieldNameTests(TestCase):
         resp = self._auth(body)
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(Ticket.objects.count(), 0)
+
+
+class WebhookPurposeCasingTests(TestCase):
+    """
+    Zoho pushes lower-case purpose codes. Stored lower-case they would key a
+    second TicketSequence beside the upper-case one and restart it at 10001,
+    which is how FLE ended up numbering new tickets 6 and 7.
+    """
+
+    def setUp(self):
+        self.key = WebhookApiKey.objects.create(
+            name="Zoho Tickets", api_key=WebhookApiKey.generate_key(),
+        )
+
+    def _auth(self, body):
+        return self.client.post(URL, body, content_type="application/json",
+                                HTTP_X_CRM_API_KEY=self.key.api_key)
+
+    def test_lowercase_purpose_is_stored_uppercase(self):
+        resp = self._auth(payload(purpose="ccu", external_id="WH-CASE-1"))
+        self.assertIn(resp.status_code, (200, 201))
+
+        ticket = Ticket.objects.get(external_id="WH-CASE-1")
+        self.assertEqual(ticket.purpose, "CCU")
+        self.assertTrue(ticket.ticket_number.startswith("BX-CCU "))
+
+    def test_lowercase_webhook_shares_the_uppercase_counter(self):
+        from ticket_central.models import TicketSequence
+        Ticket.objects.create(purpose="CCU", ticket_number="BX-CCU 10041")
+        TicketSequence.objects.create(purpose_key="CCU", last_number=10041)
+
+        self._auth(payload(purpose="ccu", external_id="WH-CASE-2"))
+
+        ticket = Ticket.objects.get(external_id="WH-CASE-2")
+        self.assertEqual(ticket.ticket_number, "BX-CCU 10042")
+        self.assertEqual(TicketSequence.objects.count(), 1)

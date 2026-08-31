@@ -29,6 +29,26 @@ class HighWaterNumberingTests(TestCase):
         self.assertEqual(first, "LX-PSZ 7045")
         self.assertEqual(assign_next_ticket_number("PSZ", "LX"), "LX-PSZ 7046")
 
+    def test_data_outranks_the_10000_default(self):
+        """
+        FLE tops out at 7221 and has no counter row. The default 10000 must not
+        out-rank that and strand the live series at 10001.
+        """
+        Ticket.objects.create(purpose="FLE", ticket_number="YL-FLE 7221")
+        self.assertFalse(TicketSequence.objects.filter(purpose_key="FLE").exists())
+
+        self.assertEqual(assign_next_ticket_number("FLE", "WH"), "WH-FLE 7222")
+
+    def test_an_existing_counter_still_outranks_thinner_data(self):
+        """
+        A pre-existing row is real history; it remembers numbers whose tickets
+        were deleted, so it must not be dragged back down to the data's max.
+        """
+        Ticket.objects.create(purpose="PSZ", ticket_number="CX-PSZ 7044")
+        TicketSequence.objects.create(purpose_key="PSZ", last_number=7050)
+
+        self.assertEqual(assign_next_ticket_number("PSZ", "LX"), "LX-PSZ 7051")
+
     def test_fresh_purpose_starts_at_10001(self):
         self.assertEqual(assign_next_ticket_number("BRANDNEW", "BX"),
                          "BX-BRANDNEW 10001")
@@ -86,3 +106,35 @@ class BackfillUsesSharedGeneratorTests(TestCase):
         blank.refresh_from_db()
         self.assertEqual(blank.ticket_number, "")
         self.assertFalse(TicketSequence.objects.exists())
+
+
+class PurposeIsStoredUpperCaseTests(TestCase):
+    """`purpose` is stored upper-case, not just rendered that way."""
+
+    def test_model_save_uppercases(self):
+        t = Ticket.objects.create(purpose="ccu", type_of_ticket="BX")
+        t.refresh_from_db()
+        self.assertEqual(t.purpose, "CCU")
+
+    def test_editing_an_existing_ticket_uppercases(self):
+        t = Ticket.objects.create(purpose="CCU", type_of_ticket="BX")
+        t.purpose = "pharma general"
+        t.save()
+        t.refresh_from_db()
+        self.assertEqual(t.purpose, "PHARMA GENERAL")
+
+    def test_internal_whitespace_is_collapsed(self):
+        t = Ticket.objects.create(purpose="  pharma   general  ")
+        t.refresh_from_db()
+        self.assertEqual(t.purpose, "PHARMA GENERAL")
+
+    def test_blank_purpose_survives(self):
+        t = Ticket.objects.create(purpose="", type_of_ticket="BX")
+        t.refresh_from_db()
+        self.assertEqual(t.purpose, "")
+
+    def test_import_row_coercion_uppercases(self):
+        """The import's update branch writes via queryset.update(), not save()."""
+        from .utils import _coerce_row
+        coerced = _coerce_row({"purpose": "ccu", "type_of_ticket": "BX"})
+        self.assertEqual(coerced["purpose"], "CCU")

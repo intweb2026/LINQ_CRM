@@ -178,25 +178,33 @@ def extract_type_code(type_of_ticket):
     return s
 
 
-def extract_purpose_code(purpose):
+def normalize_purpose(purpose):
     """
-    Canonical key for a purpose, used both as the TicketSequence key and as the
-    middle of the ticket number.
+    Storage form of `purpose`. Upper-cased and whitespace-collapsed, full length.
 
-    Upper-cased and whitespace-collapsed because `purpose` is a free-text input
-    and the counter is keyed on it verbatim, so "CCU", "ccu" and "CCU  " opened
-    three separate sequences, each restarting at 10001. Truncated to 50 to match
-    TicketSequence.purpose_key: `purpose` is a 255-char column, so a longer one
-    used to overflow the key and raise DataError at submit time.
+    Purpose is stored upper-case, not merely displayed that way. Webhook senders
+    push lower-case codes, and a free-text column keyed by a counter turned
+    "CCU", "ccu" and "CCU  " into three sequences that each restarted at 10001.
+    Ticket.save() and _coerce_row both run this, so no write path stores a
+    lower-case purpose.
 
     It cannot merge genuinely different text. Production holds "ODU b" next to
-    "ODU", and those stay two purposes — guessing that a stray token is a typo
+    "ODU", and those stay two purposes; guessing that a stray token is a typo
     would silently file tickets under the wrong code. A fixed purpose list is
     the only real fix for that.
     """
     if not purpose:
         return ""
-    return " ".join(str(purpose).split()).upper()[:50]
+    return " ".join(str(purpose).split()).upper()
+
+
+def extract_purpose_code(purpose):
+    """
+    Sequence key and ticket-number middle, i.e. normalize_purpose truncated to
+    50 to match TicketSequence.purpose_key. `purpose` is a 255-char column, so a
+    longer one used to overflow the key and raise DataError at submit time.
+    """
+    return normalize_purpose(purpose)[:50]
 
 
 def build_ticket_number(type_code, purpose_code, number):
@@ -235,7 +243,7 @@ def assign_next_ticket_number(purpose_code, type_code):
     purpose_code = extract_purpose_code(purpose_code)
 
     with transaction.atomic():
-        seq, _ = TicketSequence.objects.select_for_update().get_or_create(
+        seq, created = TicketSequence.objects.select_for_update().get_or_create(
             purpose_key=purpose_code,
             defaults={"last_number": 10000},
         )
@@ -252,10 +260,17 @@ def assign_next_ticket_number(purpose_code, type_code):
             except (ValueError, IndexError):
                 pass
 
-        # The counter can lag the data (imports write ticket_number directly),
-        # so the high-water mark is the greater of the two.
-        floor = seq.last_number or 10000
-        next_num = (max(floor, *used) if used else floor) + 1
+        # The data wins over the default. A counter row that already existed is
+        # real history and counts toward the high-water mark, because it also
+        # remembers numbers whose tickets have since been deleted. A row created
+        # just now carries only the 10000 default, and that must NOT out-rank
+        # what the data holds: FLE tops out at 7221, so seeding from the default
+        # would number the next one 10001 and abandon the live series. 10000 is
+        # the starting point for a purpose with no history at all, nothing more.
+        marks = set(used)
+        if not created:
+            marks.add(seq.last_number)
+        next_num = (max(marks) if marks else 10000) + 1
 
         if next_num > seq.last_number:
             seq.last_number = next_num
@@ -392,6 +407,13 @@ def _coerce_row(row, exclude=None, request_user=None):
                 out[key] = mapped
         else:
             out[key] = str(val).strip()
+
+    # The import's update branch writes this dict through queryset.update()
+    # (views.py:585), which never calls Ticket.save(), so the model-level
+    # normalisation does not run for it. Normalise here so both import branches
+    # store the same upper-case form.
+    if out.get("purpose"):
+        out["purpose"] = normalize_purpose(out["purpose"])
 
     # D15: preserve Added Time / created_at if provided
     created_at_val = row.get("created_at") or row.get("Added Time")

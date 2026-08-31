@@ -97,8 +97,15 @@ export function useServerRows({ resource, page, pageSize, ordering, filterSpec, 
    *
    * So the delay is charged only when the typed criteria actually changed. On
    * mount they have not, so the first page now goes out immediately too.
+   *
+   * The SPEC is no longer part of that. It used to be, because the filter panel
+   * edited the live conditions and so rewrote the spec on every keystroke. It
+   * stages them now and commits the whole set on Search, and every other route
+   * into the spec — a column funnel, removing a chip, clearing all — was always
+   * a single deliberate click. Charging those 350ms bought nothing and was felt
+   * on every one of them. The search box is the only thing left that types.
    */
-  const typedKey = `${effectiveSpec || ''}|${search || ''}`;
+  const typedKey = `${search || ''}`;
   const prevTypedRef = useRef(typedKey);
 
   useEffect(() => {

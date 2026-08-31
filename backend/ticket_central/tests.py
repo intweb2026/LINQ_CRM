@@ -608,7 +608,8 @@ class CRUDTests(APITestCase):
         resp = self.client.get(f"/api/tickets/{t.id}/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["id"], t.id)
-        self.assertEqual(resp.data["purpose"], "Retrieve Me")
+        # purpose is stored upper-case, so the API echoes the stored form.
+        self.assertEqual(resp.data["purpose"], "RETRIEVE ME")
 
     def test_mr_can_update_mr_fields_in_draft(self):
         auth(self.client, self.mr)
@@ -617,7 +618,7 @@ class CRUDTests(APITestCase):
                                  {"purpose": "Updated", "type_of_ticket": "BX"}, format="json")
         self.assertEqual(resp.status_code, 200)
         t.refresh_from_db()
-        self.assertEqual(t.purpose, "Updated")
+        self.assertEqual(t.purpose, "UPDATED")
 
     def test_mr_cannot_update_after_submitted(self):
         auth(self.client, self.mr)
@@ -866,7 +867,7 @@ class BulkImportTests(APITestCase):
         ], mode="upsert_by_external_id")
         self.assertEqual(resp.data["updated"], 1)
         t = Ticket.objects.get(external_id="ZHO-UPD-001")
-        self.assertEqual(t.purpose, "Updated Purpose")
+        self.assertEqual(t.purpose, "UPDATED PURPOSE")
 
     def test_in_batch_duplicate_create_skipped(self):
         """F3 create path: second occurrence of same external_id in one batch is skipped."""
@@ -891,7 +892,7 @@ class BulkImportTests(APITestCase):
         # Only one update should happen; second should be caught by seen_in_batch
         self.assertEqual(resp.data["updated"], 1)
         t = Ticket.objects.get(external_id="ZHO-DUPU-001")
-        self.assertEqual(t.purpose, "First Update")
+        self.assertEqual(t.purpose, "FIRST UPDATE")
 
     def test_cross_batch_skip_works(self):
         """F2: external_id inserted in batch 1 should be skipped in batch 2."""

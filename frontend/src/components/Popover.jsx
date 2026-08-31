@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 // is never clipped by a scrolling ancestor (e.g. a horizontally-scrollable table).
 // Position is recomputed on scroll/resize so the panel always stays visually
 // anchored to its trigger — it must track the button, not freeze in place.
-export default function Popover({ trigger, children, align = 'left', width, panelClassName }) {
+export default function Popover({ trigger, children, align = 'left', width, panelClassName, openRef }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const anchorRef = useRef(null);
@@ -18,9 +18,16 @@ export default function Popover({ trigger, children, align = 'left', width, pane
     const el = anchorRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
+    // The panel is position:fixed, so whatever falls past the bottom of the
+    // viewport is unreachable — no scrollbar on the page brings it back. This is
+    // the only place that CAN cap it: the cap depends on where the trigger sits,
+    // which is exactly what place() has just measured, and it is re-measured on
+    // scroll and resize like the rest of the position. A panel tall enough to
+    // reach the cap scrolls inside itself (see .pop-lg).
+    const maxH = Math.max(220, window.innerHeight - (r.bottom + 6) - 12);
     const next = align === 'right'
-      ? { top: r.bottom + 6, right: window.innerWidth - r.right }
-      : { top: r.bottom + 6, left: r.left };
+      ? { top: r.bottom + 6, right: window.innerWidth - r.right, maxH }
+      : { top: r.bottom + 6, left: r.left, maxH };
     // Same position in, same object out. `scroll` is listened for in CAPTURE
     // phase, so this runs for every scroll anywhere in the page — including the
     // panel's own list — and a fresh object each time re-rendered the entire
@@ -28,8 +35,18 @@ export default function Popover({ trigger, children, align = 'left', width, pane
     // panel shift underneath an open dropdown mid-click.
     setPos((prev) => (prev
       && prev.top === next.top && prev.left === next.left && prev.right === next.right
+      && prev.maxH === next.maxH
       ? prev : next));
   }
+
+  // Opens the panel from somewhere other than its own trigger — DataTable's
+  // filter chips open the filter panel, which stays anchored to the toolbar
+  // button rather than to the chip that was clicked.
+  useEffect(() => {
+    if (!openRef) return undefined;
+    openRef.current = () => setOpen(true);
+    return () => { openRef.current = null; };
+  }, [openRef]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -58,7 +75,7 @@ export default function Popover({ trigger, children, align = 'left', width, pane
     <div ref={anchorRef} style={{ position: 'relative', display: 'inline-block' }}>
       {trigger({ open, toggle: () => setOpen((o) => !o) })}
       {open && pos ? createPortal(
-        <div ref={panelRef} className={'pop' + (panelClassName ? ' ' + panelClassName : '')} style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, width, zIndex: 160 }}>
+        <div ref={panelRef} className={'pop' + (panelClassName ? ' ' + panelClassName : '')} style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, width, maxHeight: pos.maxH, zIndex: 160 }}>
           {children({ close: () => setOpen(false) })}
         </div>,
         document.body

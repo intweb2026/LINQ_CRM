@@ -1,4 +1,8 @@
 
+/* ═══ MAIN SCROLL AREA ═══  [layout_main]
+   The box every page renders inside. It is the scroll container for any page
+   that is not a full-height table; a list page's .dt-tw overrides that and
+   scrolls its own .tsc instead, see [table_shell]. */
 /* Pinned to the viewport by its own four insets rather than by a margin-top
    that has to add up correctly with #app/#root/body's own boxes above it —
    margin is a relationship between boxes, and anything in that chain gaining
@@ -32,14 +36,16 @@
    supposed to be capturing instead. */
 #main{position:fixed;top:var(--top-h);left:var(--rail-w);right:0;bottom:0;padding:20px 22px 56px;display:flex;flex-direction:column;overflow-y:auto;z-index:81;transition:left .22s var(--ease)}
 
-/* ═══ PAGE HEAD ═══
+/* ═══ PAGE HEAD ═══  [page_head_actions]
    An action row and nothing else — no title (the breadcrumb names the page)
    and no description. `.ph p` went with the descriptions themselves. */
 .ph{margin-bottom:14px}
 .ph-row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .ph-act{display:flex;align-items:center;gap:7px;flex-shrink:0}
 
-/* ═══ BUTTONS ═══ */
+/* ═══ BUTTONS ═══  [buttons]
+   .btn is the base; -p primary, -s secondary, -g ghost, -d danger,
+   -do danger-outline, -sm small, -ic icon-only, .on pressed. */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;font-weight:650;padding:0 14px;height:34px;border-radius:var(--r-md);border:1px solid transparent;cursor:pointer;transition:all .14s var(--ease);white-space:nowrap;letter-spacing:-.01em;text-decoration:none}
 .btn svg{width:15px;height:15px;flex-shrink:0;stroke-width:2.05}
 .btn-p{background:var(--t-500);color:#fff;box-shadow:0 1px 2px rgba(0,129,157,.2)}
@@ -66,7 +72,11 @@ html[data-theme=dark] .btn-p:hover{background:var(--t-400)}
 .btn:disabled{opacity:.42;cursor:not-allowed;transform:none!important;box-shadow:none!important}
 .btn.on{background:var(--t-50);border-color:var(--t-200);color:var(--t-700)}
 
-/* ═══ INPUTS ═══ */
+/* ═══ INPUTS ═══  [form_inputs]
+   One field is .fd wrapping a .fd-l label and an .in control. Also here:
+   .req the red asterisk, .ck checkbox, .sw toggle, .sel-trigger the button a
+   custom Select renders instead of a native <select>. How fields are ARRANGED
+   into a form is [form_sections_grid] in overlays.css. */
 .fd{display:flex;flex-direction:column;gap:5px}
 .fd-l{font-size:11px;font-weight:650;color:var(--text-3)}
 /* Not scoped to .fd-l — DelegateTable's column headers mark required fields
@@ -93,7 +103,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .sw.on{background:var(--t-500)}
 .sw.on::after{transform:translateX(16px)}
 
-/* ═══ AVATARS ═══ */
+/* ═══ AVATARS ═══  [avatars_identity]
+   .av the circle in five sizes, .av-stk an overlapping row of them, and .who
+   the avatar-plus-name-plus-subtitle unit used in tables and headers. */
 .av{display:inline-grid;place-items:center;border-radius:50%;font-weight:700;color:#fff;flex-shrink:0;text-transform:uppercase;line-height:1;user-select:none}
 .av-xs{width:21px;height:21px;font-size:8px}
 .av-sm{width:26px;height:26px;font-size:9.5px}
@@ -119,7 +131,10 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .who-s{font-size:10.5px;color:var(--text-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .who-s.mono{font-family:var(--mono);font-size:10px}
 
-/* ═══ KPI ═══ */
+/* ═══ KPI ═══  [kpi_cards]
+   The stat tiles at the top of Dashboard and Event Performance. .kpi.hi is
+   the one dark tile. The .pill- colours at the end of this section are the
+   delta badges these cards carry. */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:11px;margin-bottom:18px}
 .kpi{background:var(--surface);border-radius:var(--r-lg);padding:14px 15px 15px;border:1px solid var(--border);display:flex;flex-direction:column;transition:box-shadow .17s,transform .17s var(--ease);box-shadow:var(--sh-xs)}
 .kpi.clk{cursor:pointer}
@@ -148,7 +163,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pill-teal{background:var(--t-50);color:var(--t-700)}
 .pill-flat{background:var(--n-50);color:var(--text-4)}
 
-/* ═══ TABS ═══ */
+/* ═══ TABS ═══  [tabs] */
 .tabs{display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border);margin-bottom:15px}
 .tabs-list{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 .tabs-list::-webkit-scrollbar{display:none}
@@ -160,7 +175,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .tabs-act{display:flex;align-items:center;gap:10px;padding-bottom:8px;flex-shrink:0}
 .tabs-upd{font-size:11.5px;color:var(--text-4);white-space:nowrap}
 
-/* ═══ BADGES ═══ */
+/* ═══ BADGES ═══  [badges_pills]
+   .bg the status badge in nine colours, .tg the smaller square tag, plus the
+   three text utilities .mono, .lnk and .dim. */
 .bg{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:650;padding:2.5px 8px;border-radius:var(--r-full);white-space:nowrap;line-height:1.35}
 .bg i{width:5.5px;height:5.5px;border-radius:50%;flex-shrink:0;background:currentColor}
 .bg-green{background:var(--green-bg);color:var(--green-tx)}
@@ -177,7 +194,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .lnk{color:var(--t-600);cursor:pointer}.lnk:hover{text-decoration:underline}
 .dim{color:var(--text-4)}
 
-/* ═══ TOOLBAR ═══ */
+/* ═══ TOOLBAR ═══  [table_toolbar]
+   The row of controls above a list; the search box, .seg segmented switches
+   and .chip quick filters. */
 .tb{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:11px}
 .tb-s{flex:1;min-width:170px;max-width:300px}
 .tb-sp{flex:1}
@@ -199,16 +218,36 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .fc button{width:17px;height:17px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:var(--r-xs);opacity:.65}
 .fc button:hover{opacity:1;background:var(--t-100)}
 .fc button svg{width:11px;height:11px}
+/* ── active filter chips ──  [table_toolbar_filter_chips]
+   .fch is the row, .fc one chip per condition currently applied. Clicking one
+   reopens the panel it came from, see [filter_panel_search]. */
+/* The chip is a way back INTO the filter panel, not just a label with an x. */
+.fc-open{cursor:pointer}
+.fc-open:hover{background:var(--t-100);border-color:var(--t-500)}
+.fc-open:focus-visible{outline:2px solid var(--t-500);outline-offset:1px}
+/* Rows answering the query the user just replaced. Dimmed, never removed —
+   emptying the table is what made a filter change look like a page reload. */
+.dt-busy{opacity:.5;transition:opacity .12s}
 .fcl{font-size:11.5px;font-weight:650;color:var(--text-4);background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:var(--r-xs)}
 .fcl:hover{color:var(--red);background:var(--red-bg)}
 
-/* ═══ POPOVER ═══ */
+/* ═══ POPOVER ═══  [popover_menu]
+   .pop is the floating box EVERY dropdown, column menu and filter panel is
+   drawn in, so a change here is felt in all of them. .pop-i is one row,
+   .pop-i.cur the keyboard highlight. */
 .pop{position:absolute;z-index:78;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-lg);min-width:228px;padding:6px;animation:popIn .15s var(--ease)}
 @keyframes popIn{from{opacity:0;transform:translateY(-5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 .pop-t{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-4);padding:7px 9px 5px}
 .pop-r{display:flex;flex-direction:column;gap:4px;padding:4px 9px 8px}
 .pop-i{display:flex;align-items:center;gap:9px;padding:6px 9px;border-radius:var(--r-sm);cursor:pointer;font-size:12.5px;font-weight:500;color:var(--text-2);transition:background .12s;user-select:none;width:100%;border:none;background:none;text-align:left}
 .pop-i:hover{background:var(--n-50)}
+/* Keyboard highlight. Same fill as :hover so arrowing and pointing look
+   identical, and the components keep the two in sync by setting idx on
+   mouseenter — otherwise two rows would appear selected at once. */
+.pop-i.cur{background:var(--n-50)}
+/* These wrappers are focused programmatically so the menu can receive the
+   arrow keys; the ring would be the only visible sign and reads as a bug. */
+.sel-menu:focus,.sel-menu:focus-visible{outline:none}
 .pop-i input{accent-color:var(--t-500);width:14px;height:14px;cursor:pointer}
 .pop-i svg{width:15px;height:15px;color:var(--text-4);flex-shrink:0}
 .pop-i.del{color:var(--red)}.pop-i.del svg{color:var(--red)}
@@ -218,6 +257,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pop-f{border-top:1px solid var(--border);margin-top:4px;padding:7px 9px 4px;display:flex;justify-content:space-between;gap:6px}
 .pop-mx{max-height:330px;overflow-y:auto}
 
+/* ── searchable Select ──  [select_dropdown]
+   The extra parts a Select adds inside a .pop; its filter box, its empty
+   state, and the two-line option row. */
 /* Searchable Select: the filter box pins above the scrolling option list, so a
    long list scrolls under it instead of pushing it out of reach. */
 .sel-search{padding:2px 2px 7px;border-bottom:1px solid var(--border);margin-bottom:5px}
@@ -229,7 +271,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .sel-o-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sel-o-s{font-size:11px;font-weight:500;color:var(--text-4);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* ═══ ADVANCED FILTER ROWS ═══ */
+/* ═══ ADVANCED FILTER ROWS ═══  [filter_advanced_rows]
+   One built condition inside the filter panel; its field name, its delete
+   button, and .vti- the tag-and-checklist value editor. */
 .flt-row{display:flex;flex-direction:column;border:1px solid var(--t-200);border-radius:var(--r-sm);padding:8px 9px;margin:0 9px 8px;gap:5px;background:var(--t-50)}
 .flt-row-h{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:1px}
 .flt-row-f{font-size:12px;font-weight:700;color:var(--text)}
@@ -242,7 +286,8 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .vti-tag button{width:14px;height:14px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:50%}
 .vti-tag button:hover{background:var(--t-100)}
 
-/* ═══ DATE FILTER (Advanced Filters, date columns) ═══ */
+/* ═══ DATE FILTER ═══  [filter_date_condition]
+   The value half of a date condition; one calendar, or two for Between. */
 /* The value half of a date condition: one calendar input, or two for Between.
    `.dflt` stacks the control over the note that spells out what the operator
    does with the picked date. Everything inside reuses the filter panel's own
@@ -257,7 +302,8 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
    the control it explains. */
 .dflt-res{font-size:11px;font-weight:600;color:var(--text-4);padding-left:2px;letter-spacing:.01em}
 .pop-lg .dflt-res{font-size:12px}
-/* ═══ DATE PICKER ═══ */
+/* ═══ DATE PICKER ═══  [datepicker_calendar]
+   Our own calendar, used by every date field in the app. */
 /* Our own calendar, because the browser's is a native popup drawn outside the
    page: it could not be positioned against this panel, and re-rendering the
    panel while it was open made it reset and appear to pick a date by itself.
@@ -309,11 +355,18 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pop-lg .dpk-pop{width:272px}
 .pop-lg .dpk-d{height:33px;font-size:12.5px}
 
-/* ═══ SEARCH / FILTER PANEL (toolbar) ═══ */
+/* ═══ SEARCH / FILTER PANEL ═══  [filter_panel_search]
+   The Filters panel the toolbar opens; its header, its field search, the
+   .flt-pill control shared by the operator and value inputs, and .flt-op the
+   custom operator dropdown. */
 .pop-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
 .pop-hd h3{font-size:16px;font-weight:650;color:var(--text);margin:0}
 .pop-x{width:28px;height:28px;display:grid;place-items:center;border:none;background:none;color:var(--text-3);cursor:pointer;border-radius:var(--r-sm);flex-shrink:0}
 .pop-x:hover{background:var(--n-75);color:var(--text)}
+/* Finds the FIELD in a long checklist. Pinned above the scrolling list, like
+   .sel-search, so the list scrolls under it rather than pushing it out of reach. */
+.flt-search{padding:10px 16px 2px}
+.flt-search input{width:100%}
 .flt-list{max-height:400px;padding-top:4px}
 .flt-item{padding:1px 16px 12px}
 .flt-editor{display:flex;flex-direction:column;gap:9px;padding:8px 0 2px 30px}
@@ -334,11 +387,22 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pop-search-f{padding:14px 16px;border-top:1px solid var(--border);display:flex;justify-content:center}
 .btn-pill{border-radius:999px;padding:0 34px;height:42px;font-size:14px}
 
-/* ═══ LARGE / ACCESSIBLE FILTER PANEL ═══ */
+/* ═══ LARGE FILTER PANEL ═══  [filter_panel_large]
+   The same panel at full height. Every rule here is a .pop-lg override of
+   something in [filter_panel_search] above; nothing new is introduced. */
+/* A column, so the field list is the only part that scrolls and the header and
+   the Search button keep their places. Popover caps the panel to the room that
+   actually exists below its button; before the column, the footer fell off the
+   bottom of the screen, and position:fixed put it out of reach of every
+   scrollbar on the page — the Search button simply could not be clicked. */
+.pop-lg{display:flex;flex-direction:column;overflow:hidden}
+.pop-lg>form{display:flex;flex-direction:column;min-height:0}
+.pop-lg .pop-hd,.pop-lg .flt-search,.pop-lg .pop-search-f{flex-shrink:0}
 .pop-lg .pop-hd{padding:16px 22px}
 .pop-lg .pop-hd h3{font-size:17px}
 .pop-lg .pop-x{width:34px;height:34px}
-.pop-lg .flt-list{max-height:calc(100vh - 260px)}
+.pop-lg .flt-search{padding:12px 22px 2px}
+.pop-lg .flt-list{flex:1 1 auto;min-height:0;max-height:none}
 .pop-lg .flt-item{padding:2px 22px 16px}
 .pop-lg .pop-i{padding:9px 4px;font-size:13.5px;gap:11px}
 .pop-lg .pop-i input[type=checkbox]{width:18px;height:18px}
@@ -351,7 +415,9 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pop-lg .pop-search-f{padding:16px 22px}
 .pop-lg .btn-pill{height:44px;font-size:14.5px;padding:0 40px}
 
-/* ═══ TABLE ═══ */
+/* ═══ TABLE ═══  [table_shell]
+   .tw the bordered box, .tsc its scroller, .dt-tw the one .tw on a page that
+   is the page's actual list and therefore claims the leftover height. */
 .tw{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-sm);border:1px solid var(--border);overflow:hidden}
 .tsc{overflow:auto;-webkit-overflow-scrolling:touch}
 /* .dt-tw marks the ONE .tw that is a page's actual list — DataTable's rows
@@ -380,6 +446,8 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
    actually supposed to grow and shrink with the space available to it. */
 #main>:not(.dt-tw){flex-shrink:0}
 table.dt{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+/* ── column widths and alignment ──  [table_grid_widths]
+   .dt-grid is the fixed-layout list table, .dt-form the editable one. */
 /* .dt-grid: every column carries an explicit pixel width via a <colgroup> (see
    DataTable.jsx / DelegateTable.jsx), and table-layout:fixed makes those widths
    the ONLY input to layout — browser auto-sizing (the default for a bare
@@ -412,6 +480,10 @@ table.dt thead th{position:sticky;top:0;background:var(--surface-2);font-size:9.
    a .dt-form header lines up with its cell exactly like a sortable one does. */
 table.dt-form thead th{padding:9px 12px;overflow:hidden;text-overflow:ellipsis}
 table.dt thead th.act{color:var(--t-600);background:var(--t-50)}
+/* ── column headers ──  [table_column_header]
+   A header holds two controls; .th-sort the label that sorts, .th-flt-btn the
+   funnel that filters. .th-w is the pair, .th-sp the counterweight that keeps
+   the label centred, .th-nosort a header with neither control. */
 .th-flt{all:unset;display:inline-flex;align-items:center;gap:4px;cursor:pointer;box-sizing:border-box;padding:9px 12px}
 .th-flt:hover{color:var(--text-2);background:var(--n-50)}
 .th-flt svg{opacity:.3;flex-shrink:0;transition:opacity .12s}
@@ -454,6 +526,9 @@ table.dt thead th.act .th-flt svg{opacity:1;color:var(--t-600)}
 .th-flt-btn svg{opacity:.3;transition:opacity .12s}
 .th-flt-btn:hover svg{opacity:.75}
 .th-flt-btn.on svg{opacity:1;color:var(--t-600)}
+/* ── rows and cells ──  [table_cells]
+   Row states, .num, the identity cell, and the pinned leading cells used by
+   the delegate grids in the Bookings dialogs. */
 /* A chip for a condition the backend cannot express, so it narrows only the
    fetched page. Visually distinct so it cannot be read as a server-side filter. */
 .fc-local{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-tx)}
@@ -504,6 +579,8 @@ table.dt td.pin1,table.dt td.pin2{background:var(--surface);z-index:2}
 table.dt th.pin1,table.dt th.pin2{z-index:4}
 /* An opaque cell cannot inherit the row's hover tint, so it is repainted. */
 table.dt tbody tr:hover td.pin1,table.dt tbody tr:hover td.pin2{background:var(--t-50)}
+/* ── editable cell ──  [table_cell_editable]
+   A cell that opens an editor when clicked, marked by the caret on hover. */
 .ec{position:relative;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:-2px -6px;border-radius:var(--r-sm);cursor:pointer;transition:background .12s;max-width:100%}
 .ec:hover{background:var(--n-75);box-shadow:inset 0 0 0 1px var(--border-s)}
 .ec::after{content:'';width:0;height:0;border:3px solid transparent;border-top-color:var(--text-4);margin-top:2px;opacity:0;transition:opacity .12s;flex-shrink:0}
@@ -519,6 +596,9 @@ table.dt tbody tr:hover td.pin1,table.dt tbody tr:hover td.pin2{background:var(-
    The td still clips overlong plain values: see the max-width/overflow/
    text-overflow on `table.dt tbody td` above. */
 .ec-v{overflow:visible}
+/* ── footer and pagination ──  [table_footer_pagination]
+   .tf the footer strip, .pgr/.pgb/.pge the page buttons, .more and .spin the
+   infinite-scroll loader. */
 .tf{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-4);flex-wrap:wrap;gap:8px;background:var(--surface-2)}
 .tf b{color:var(--text);font-weight:700}
 .pgr{display:flex;gap:3px;align-items:center}
@@ -531,6 +611,8 @@ table.dt tbody tr:hover td.pin1,table.dt tbody tr:hover td.pin2{background:var(-
 .more{display:flex;align-items:center;justify-content:center;padding:13px;border-top:1px solid var(--n-50);font-size:11.5px;color:var(--text-4);gap:8px}
 .spin{width:14px;height:14px;border:2px solid var(--n-200);border-top-color:var(--t-500);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* ── bulk selection bar ──  [table_bulk_selection_bar]
+   The floating dark bar that appears once rows are ticked. */
 .bulk{position:fixed;bottom:18px;left:calc(50% + var(--rail-w)/2);transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:8px 9px 8px 15px;background:var(--n-800);color:var(--n-0);border-radius:var(--r-lg);box-shadow:var(--sh-xl);font-size:12px;font-weight:650;z-index:60;white-space:nowrap;animation:up .25s var(--ease)}
 html[data-theme=dark] .bulk{background:var(--n-100);color:var(--text);border:1px solid var(--border)}
 .bulk .n{background:var(--t-500);color:#fff;padding:2.5px 8px;border-radius:var(--r-full);font-size:11px;font-weight:700}
@@ -544,7 +626,9 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
 .bulk .x svg{width:13px;height:13px}
 @keyframes up{from{transform:translateX(-50%) translateY(13px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
 
-/* ═══ CARDS / EMPTY ═══ */
+/* ═══ CARDS / EMPTY ═══  [cards_empty_state]
+   .cg/.rc the card grid used by the Events and Teams card views, .card the
+   generic panel, .sl a section label, .mt the empty state. */
 .cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(285px,1fr));gap:11px}
 .rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px;cursor:pointer;transition:all .15s var(--ease);box-shadow:var(--sh-xs);display:flex;flex-direction:column;gap:11px}
 .rc:hover{box-shadow:var(--sh-md);border-color:var(--t-200);transform:translateY(-1px)}
@@ -564,7 +648,8 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
 .mt h3{font-size:14px;font-weight:700;color:var(--text-2);margin-bottom:5px}
 .mt p{font-size:12px;color:var(--text-4);max-width:330px;margin:0 auto 15px;line-height:1.5}
 
-/* ═══ MASS UPDATE (BulkUpdateModal) ═══ */
+/* ═══ MASS UPDATE ═══  [bulk_update_modal]
+   Everything inside BulkUpdateModal. The dialog around it is [modal]. */
 .bu-sel{font-size:12px;color:var(--text-3);margin-bottom:12px;line-height:1.5}
 .bu-search{margin-bottom:10px}
 /* Bookings declares 46 fields and Events 34. Capped and scrolled so the New
