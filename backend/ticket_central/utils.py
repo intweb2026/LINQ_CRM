@@ -4,6 +4,7 @@ ticket_central/utils.py
 Ticket number auto-generation + Smart Import row coercion.
 """
 import logging
+import re as _re
 from datetime import date, datetime, timedelta
 
 from django.contrib.auth import get_user_model
@@ -11,7 +12,9 @@ from django.utils import timezone
 from django.utils.timezone import make_aware
 
 from .models import Ticket
-from .constants import DMD_WORK_FIELDS, MR_ACTIVITY_FIELDS
+from .constants import (
+    DMD_FIELDS, DMD_WORK_FIELDS, MR_ACTIVITY_FIELDS, MR_FIELDS, SHARED_FIELDS,
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -389,3 +392,48 @@ def _coerce_row(row, exclude=None, request_user=None):
     if dropped:
         logger.warning("_coerce_row dropped unknown keys: %s", dropped)
     return filtered
+
+
+# ── Webhook field-name canonicalisation ──────────────────────────────────────
+# DRF silently ignores a key it does not recognise, so a ticket posted with
+# "Link_URL" (Zoho Creator transmits its own API names) or "Link URL" (the
+# column label, which is what a hand-built integration copies) is accepted with
+# a 201 and that field left empty — the delivery looks successful and the value
+# is simply gone. Folding case, spaces, hyphens and underscores away makes every
+# one of those spellings land on the field it obviously means.
+_FOLD_RE = _re.compile(r"[^a-z0-9]+")
+
+
+def _fold(name) -> str:
+    return _FOLD_RE.sub("", str(name).lower())
+
+
+_CANONICAL_FIELDS = {
+    _fold(f): f
+    # DMD fields are folded too, deliberately: a Data Mining field sent under a
+    # loose spelling must still be REFUSED by the serializer's ownership check
+    # rather than quietly dropped as an unknown key.
+    for f in (MR_FIELDS | DMD_FIELDS | SHARED_FIELDS | {"external_id"})
+}
+# Spellings that do not fold to a field name on their own. Nothing else on a
+# ticket is a link, so neither of these is ambiguous.
+_CANONICAL_FIELDS.update({"link": "link_url", "url": "link_url"})
+
+
+def canonicalise_ticket_fields(payload: dict) -> dict:
+    """
+    A webhook body with its keys renamed to the ticket field they name.
+
+    Unrecognised keys are passed through untouched so the caller can report
+    them; a blank duplicate never overwrites a value already resolved, since a
+    sender that emits both "link_url" and "Link URL" usually fills only one.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    out = {}
+    for key, value in payload.items():
+        canon = _CANONICAL_FIELDS.get(_fold(key), key)
+        if canon in out and value in ("", None):
+            continue
+        out[canon] = value
+    return out

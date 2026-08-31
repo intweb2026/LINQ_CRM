@@ -36,6 +36,7 @@ from .serializers import (
 )
 from ticket_central.models import Ticket
 from ticket_central.serializers import TicketCreateSerializer
+from ticket_central.utils import canonicalise_ticket_fields
 from .services import WebhookProcessor
 from paper_review.webhook import PaperReviewProcessor
 from .utils import (
@@ -474,7 +475,7 @@ class TicketIngestionView(APIView):
             return Response({"success": False, "error": parse_error},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        payload     = dict(unwrap_payload(data))
+        payload     = canonicalise_ticket_fields(unwrap_payload(data))
         external_id = str(payload.pop("external_id", "") or "").strip()
         event_code  = str(payload.get("event_code", "") or "")[:50]
         event_name  = str(payload.get("event_name", "") or "")[:255]
@@ -520,6 +521,12 @@ class TicketIngestionView(APIView):
 
         body = {"success": True, "ticket_id": ticket.id,
                 "ticket_number": ticket.ticket_number, "status": ticket.status}
+        # A key the serializer does not know is dropped in silence, which is how
+        # a misspelled field reads as a clean 201 with the value missing. Say
+        # what was ignored so the sender can see it without asking us.
+        ignored = sorted(set(payload) - set(ser.fields))
+        if ignored:
+            body["ignored_fields"] = ignored
         log = _log(data, WebhookLog.Status.SUCCESS, 201, body,
                    db_insert_status=WebhookLog.DbInsertStatus.INSERTED,
                    records_inserted=1,

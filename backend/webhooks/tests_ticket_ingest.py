@@ -134,3 +134,55 @@ class TicketWebhookTests(TestCase):
         self.assertEqual(resp.data["key_name"], "Zoho Tickets")
         self.assertEqual(WebhookLog.objects.count(), 0)
         self.assertEqual(Ticket.objects.count(), 0)
+
+
+class TicketWebhookFieldNameTests(TestCase):
+    """
+    A sender spells the field the way its own system names it. Zoho Creator
+    transmits "Link_URL", a hand-built integration copies the column label
+    "Link URL", and DRF ignores both — which is how tickets arrived with an
+    empty Link URL on a 201.
+    """
+    def setUp(self):
+        self.key = WebhookApiKey.objects.create(
+            name="Zoho Tickets", api_key=WebhookApiKey.generate_key(),
+        )
+
+    def _auth(self, body):
+        return self.client.post(URL, body, content_type="application/json",
+                                HTTP_X_CRM_API_KEY=self.key.api_key)
+
+    def test_link_url_lands_however_it_is_spelled(self):
+        for i, name in enumerate(["link_url", "Link_URL", "Link URL", "linkUrl", "Link"]):
+            body = payload(external_id=f"EXT-{i}")
+            body[name] = "https://example.com/e"
+            resp = self._auth(body)
+            self.assertEqual(resp.status_code, 201, f"{name}: {resp.data}")
+            self.assertEqual(
+                Ticket.objects.get(id=resp.data["ticket_id"]).link_url,
+                "https://example.com/e", f"{name} was dropped",
+            )
+            self.assertNotIn("ignored_fields", resp.data)
+
+    def test_blank_duplicate_does_not_wipe_the_filled_one(self):
+        body = payload()
+        body["Link URL"] = "https://example.com/e"
+        body["link_url"] = ""
+        resp = self._auth(body)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(Ticket.objects.get(id=resp.data["ticket_id"]).link_url,
+                         "https://example.com/e")
+
+    def test_unknown_field_is_reported_not_silently_dropped(self):
+        body = payload()
+        body["not_a_ticket_field"] = "x"
+        resp = self._auth(body)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data["ignored_fields"], ["not_a_ticket_field"])
+
+    def test_loosely_spelled_dmd_field_is_still_refused(self):
+        body = payload()
+        body["Assign Name"] = "Someone"
+        resp = self._auth(body)
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(Ticket.objects.count(), 0)
