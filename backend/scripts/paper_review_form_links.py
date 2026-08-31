@@ -43,6 +43,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from django.contrib.auth import get_user_model            # noqa: E402
+from django.db import connection                          # noqa: E402
 from django.urls import reverse                           # noqa: E402
 
 from webhooks.models import WebhookApiKey                  # noqa: E402
@@ -71,12 +72,24 @@ def main(argv):
     # routed, which would look like a working link and 404 for the reviewer.
     reverse("paper-review-form-submit")
 
+    # WHICH DATABASE, stated before anything else. The failure this catches is
+    # the one that looks like nothing at all: running the script in a shell whose
+    # environment points at a different database than the site is served from
+    # mints perfectly valid keys that the live site has never heard of, and every
+    # printed link then answers "this form link is not valid".
+    db = connection.settings_dict
+    print(f"\nDatabase: {db.get('NAME')} on {db.get('HOST') or 'localhost'}"
+          f":{db.get('PORT') or 'default'}")
+    print(f"Existing form keys in it: "
+          f"{WebhookApiKey.objects.filter(target=TARGET).count()}")
+
     User = get_user_model()
     reviewers = User.objects.filter(role="market_research").order_by("username")
     if not reviewers:
         print("No users hold the market_research role; nothing to issue.")
         return 1
 
+    print()
     print(f"{'Reviewer':<26} {'Events':>6}  Link")
     print("-" * 100)
 

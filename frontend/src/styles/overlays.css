@@ -150,6 +150,39 @@ table.gt th.num,table.gt td.num{text-align:right}
 .dr-tabs::-webkit-scrollbar{display:none}
 .dr-b{flex:1;overflow-y:auto;padding:17px 20px 22px}
 .dr-f{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:7px;flex-shrink:0;background:var(--surface-2);flex-wrap:wrap}
+/* Ticket Central's form is three `.fcol` stacks inside a `.fg.c3` — three columns
+   side by side, which is what a full-width modal had room for and a drawer has
+   not. Two things happen to it in here.
+
+   `display:contents` dissolves the stacks so their fields become direct grid
+   items. The sequence is untouched — stack one's fields, then stack two's, then
+   stack three's — but it packs evenly instead of leaving a hole under whichever
+   stack is shortest, and it is read across the rows rather than down them.
+
+   The label moves ABOVE the field. `.fd-h`'s 128px right-aligned gutter is most
+   of a drawer column, and the mobile breakpoint below already drops it for the
+   same reason: one column of narrow fields has no room for it. With the gutter
+   gone the section fits three real columns instead of one, which takes a 17-field
+   block from seventeen rows to six.
+
+   auto-fit rather than a fixed count, so the section keeps the three columns
+   `.fg.c3` always had while the drawer is wide, and falls to two and then one as
+   it narrows — no media query to keep in step with the `.dr` width. */
+.dr-b .fcol{display:contents}
+.dr-b .fg,.dr-b .fg.c3,.dr-b .fg.c4{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:9px 13px}
+/* Two corrections that come with turning `.fd-h` from a row into a column.
+   `.fd-h>:not(.fd-l){flex:1}` meant "take the rest of the ROW" and now reads as
+   "take the rest of the COLUMN", so a control sharing a grid row with a label
+   that wraps to two lines grew taller than its neighbours — 35px boxes in some
+   cells and 50px boxes in others. `flex:none` hands the control back to `.in`'s
+   own height, so every field is the same box wherever it sits.
+
+   `justify-content:flex-end` then pins each label+control pair to the bottom of
+   its cell, so the boxes line up across a row instead of stepping down wherever a
+   label needed a second line. A wrapped label grows upward into the slack. */
+.dr-b .fd-h{flex-direction:column;align-items:stretch;justify-content:flex-end;gap:3px;min-width:0}
+.dr-b .fd-h>.fd-l{flex:none;text-align:left;line-height:1.35}
+.dr-b .fd-h>:not(.fd-l){flex:none}
 .ro{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-md);overflow:hidden;margin-bottom:18px;border:1px solid var(--border)}
 .ro-c{background:var(--surface);padding:10px 12px;min-width:0}
 .ro-c.f{grid-column:1/-1}
@@ -248,6 +281,41 @@ table.gt th.num,table.gt td.num{text-align:right}
    and a missing field reads as missing data. */
 .in:disabled,.in[readonly]{background:var(--surface-2);color:var(--text-3);cursor:not-allowed;box-shadow:none}
 .in:disabled:hover,.in[readonly]:hover{border-color:var(--border-s)}
+/* The value of a locked field, standing in for the input that would have held it.
+   `pre-wrap` because MR Comments is prose and any line breaks in it are the
+   author's; `break-word` because it has to wrap rather than clip, which is the
+   whole reason this is a div and not a disabled <input>. `.brk` breaks mid-token
+   for the one value that has no spaces to break on, the link. */
+.in-ro{font-size:12.5px;font-weight:650;color:var(--text);line-height:1.45;min-height:19px;white-space:pre-wrap;word-break:break-word}
+.in-ro.brk{word-break:break-all}
+.fd-lnk .in-ro{flex:1;min-width:0}
+/* A form section nobody in this seat may write to, rendered as a read-out rather
+   than as a wall of dead input boxes.
+
+   The fields do not move: same order, same labels, same markup, same disabled
+   attributes. The inputs simply drop their chrome and read as plain values, which
+   is what they already were. It matters most for Data Mining — a miner opening an
+   MR Submitted ticket cannot write a single Ticket Hub field, and fourteen 35px
+   boxes of brief pushed Assign Name and Mined Count, the fields they are actually
+   here to fill, below the fold of the drawer. Compacted, the whole brief reads in
+   roughly the space six inputs used to take. It cuts the other way too: an MR user
+   looking at a completed ticket gets the same treatment over the DMD section.
+
+   Presentation only. The serializer guards in ticket_central/serializers.py and
+   the mrOpen / dmdOpen booleans that mirror them are untouched.
+
+   Set on its own tinted panel, the way the DMD queue prototype frames the MR
+   brief — so "context I read" is distinguishable at a glance from "fields I
+   fill", rather than the two differing only by the absence of a border. */
+.dr-b .fs-ro .fg{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 12px}
+/* A read-out carries no 35px boxes, so it packs tighter than the writable grid
+   above: narrower minimum column, no gap between a label and its value, and the
+   9px uppercase key `.ro` and the prototype's context box both use. */
+.dr-b .fs-ro .fg,.dr-b .fs-ro .fg.c3,.dr-b .fs-ro .fg.c4{grid-template-columns:repeat(auto-fit,minmax(186px,1fr));gap:7px 14px}
+.dr-b .fs-ro .fd-h{gap:0;justify-content:flex-start}
+.dr-b .fs-ro .fd-h>.fd-l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);line-height:1.5}
+.fs-ro .fd-lnk{gap:6px;align-items:flex-start}
+.fs-ro .fd-lnk-go{width:20px;height:20px;border-color:transparent;background:none;box-shadow:none}
 /* Link field + its open-in-new-tab button, sharing one row. */
 .fd-lnk{display:flex;gap:6px;align-items:center}
 .fd-lnk .in{flex:1;min-width:0}
