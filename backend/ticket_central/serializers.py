@@ -6,12 +6,7 @@ Phase-specific serializers enforce which fields are writable at each stage.
 from rest_framework import serializers
 from .models import Ticket
 from .constants import MR_FIELDS, DMD_FIELDS
-
-
-def _name(user):
-    if not user:
-        return None
-    return user.get_full_name() or user.username
+from .utils import display_name as _name
 
 
 class TicketListSerializer(serializers.ModelSerializer):
@@ -129,6 +124,12 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         if not getattr(user, "is_authenticated", False):
             user = None
         validated_data["created_by"] = user
+        # "Added User" is Zoho's name for who put the row in, and it is a column
+        # on the Ticket Central table. It was only ever filled by an import, so
+        # every ticket raised in this CRM showed it blank. A webhook delivery has
+        # no user, so that case keeps whatever the payload sent.
+        if user and not validated_data.get("added_user_text"):
+            validated_data["added_user_text"] = _name(user)
 
         # Submit directly as MR Submitted — no draft step.
         validated_data["status"] = Ticket.Status.MR_SUBMITTED

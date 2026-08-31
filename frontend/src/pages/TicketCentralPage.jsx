@@ -4,7 +4,7 @@ import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { TkBadge, PriBadge, Who } from '../components/Badge';
-import { fdate, fmy, nf, plur } from '../lib/helpers';
+import { fdate, ftime, fmy, nf, plur } from '../lib/helpers';
 import { TK_STATUS, TK_PRIORITY, TK_TYPES, TK_TICKET_TYPES, TK_RELATIONSHIPS } from '../lib/constants';
 import * as ticketsApi from '../api/tickets';
 import { useFetch } from '../hooks/useFetch';
@@ -24,6 +24,8 @@ const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim"
 const person = (v) => dim(v) || <Who name={v} avatar={false} />;
 const num = (v) => dim(v) || nf(v);
 const day = (v) => dim(v) || fdate(v);
+/** Added Time / Modified Time — a timestamp, so it shows the time too. */
+const stamp = (v) => dim(v) || <span className="dim">{fdate(v)} {ftime(v)}</span>;
 
 /**
  * Columns in the order Ticket Central presents them, which is the order of the
@@ -42,7 +44,10 @@ const day = (v) => dim(v) || fdate(v);
  * already loaded and DataTable says so rather than implying a full-table result.
  */
 const tkCols = () => [
-  { key: 'created_at', serverField: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => fdate(v) },
+  // Date AND time, the way Bookings renders the same two columns. Date alone made
+  // an edit invisible for the rest of the day it was made on, which reads as
+  // "Modified Time is not updating".
+  { key: 'created_at', serverField: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => stamp(v) },
   { key: 'link_url', serverField: 'link_url', label: 'Link URL', group: 'mr', cell: (v) => <ExtLink value={v} /> },
   { key: 'linkedin_keywords', serverField: 'linkedin_keywords', label: 'LinkedIn Keywords', group: 'mr' },
   { key: 'duplicate_tickets', serverField: 'duplicate_tickets', label: 'Duplicate Tickets', group: 'mr', cell: (v) => dim(v) || <span className="mono" style={{ color: 'var(--amber)' }}>{v}</span> },
@@ -68,7 +73,7 @@ const tkCols = () => [
   { key: 'source_tab', serverField: 'source_tab', label: 'Source_Tab', group: 'dm' },
   { key: 'source_row_number', serverField: 'source_row_number', label: 'Source_Row_Number', group: 'dm', num: true, cell: num },
   { key: 'idempotency_key', serverField: 'idempotency_key', label: 'Idempotency_Key', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
-  { key: 'updated_at', serverField: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => fdate(v) },
+  { key: 'updated_at', serverField: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => stamp(v) },
   { key: 'id', serverField: 'id', label: 'ID', group: 'rec', serverOrdering: 'id', num: true, cell: (v) => <span className="mono">{v}</span> },
   { key: 'assigned_mr', serverField: 'assigned_mr', label: 'Assigned MR', group: 'mr', cell: person },
   { key: 'added_user_text', serverField: 'added_user_text', label: 'Added User', group: 'rec' },

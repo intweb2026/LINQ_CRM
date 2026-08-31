@@ -133,6 +133,7 @@ export const TARGET_FIELDS = {
     ['source_spreadsheet_id', 'Source Spreadsheet ID'], ['source_tab', 'Source Tab'],
     ['source_row_number', 'Source Row Number'], ['idempotency_key', 'Idempotency Key'],
     ['created_at', 'Added Time', ['Created At', 'Created Time']],
+    ['updated_at', 'Modified Time', ['Modified At', 'Last Modified', 'Modified']],
   ],
 };
 
