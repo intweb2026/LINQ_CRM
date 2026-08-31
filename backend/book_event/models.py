@@ -117,7 +117,7 @@ class BookEvent(models.Model):
     # ── Payment ────────────────────────────────────────────────────────────────
     payment_status = models.CharField(
         max_length=30, choices=PaymentStatus.choices,
-        blank=True, default="", db_index=True,
+        default=PaymentStatus.PENDING, db_index=True,
     )
     payment_date     = models.DateField(null=True, blank=True)
     payment_due_date = models.DateField(null=True, blank=True)

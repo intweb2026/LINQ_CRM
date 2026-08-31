@@ -143,10 +143,11 @@ class WebhookProcessor:
         ps_map   = {v.lower(): v for v in BookEvent.PaymentStatus.values}
         tier_map = {v.lower(): v for v in BookEvent.TicketTier.values}
 
-        # Blank, not Pending. A website booking states no payment status, and the
-        # CRM now records "nobody has said" rather than asserting Pending on the
-        # payload's behalf.
-        payment_status = ps_map.get(d.get("PaymentStatus", "").strip().lower(), "")
+        # Pending, not blank. A payment status is never empty in this CRM; a
+        # website booking that states none is waiting to be paid. Payment TYPE is
+        # the field that stays blank until somebody actually pays.
+        payment_status = ps_map.get(
+            d.get("PaymentStatus", "").strip().lower(), BookEvent.PaymentStatus.PENDING)
 
         # Resolve ticket tier from both TicketTier and Packages
         packages_val = d.get("Packages", "")

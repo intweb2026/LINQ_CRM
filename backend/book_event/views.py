@@ -597,7 +597,8 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             # Map PaymentStatus string from payload to choices
             payment_status_map = {v.lower(): v for v in BookEvent.PaymentStatus.values}
             incoming_ps = d.get("PaymentStatus", "").strip().lower()
-            payment_status = payment_status_map.get(incoming_ps, "")
+            payment_status = payment_status_map.get(
+                incoming_ps, BookEvent.PaymentStatus.PENDING)
 
             # Through the shared coercion table, so this intake path and the
             # webhook service and the importer read the same payload the same

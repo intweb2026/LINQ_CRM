@@ -183,10 +183,10 @@ RULES: dict[str, Rule] = {
         label="Payment Status", kind="choice",
         model=("BookEvent", "PaymentStatus"),
         aliases=PAYMENT_STATUS_ALIASES,
-        # UNSET, not a value. The model's default is now blank, so a blank cell
-        # reaches the same place on create WITHOUT this rule claiming the file
-        # said so — and on upsert it leaves the stored value alone instead of
-        # resetting a paid booking.
+        # UNSET, not a value. The model defaults to Pending, so a blank cell
+        # lands there on create WITHOUT this rule claiming the file said so — and
+        # on upsert it leaves the stored value alone instead of resetting a paid
+        # booking to Pending.
         blank=UNSET,
     ),
     "paid_or_free": Rule(

@@ -13,9 +13,10 @@ export function Dot({ tone = 'neutral', children }) {
   );
 }
 
-// No status is now a real state — a booking records Pending only once somebody
-// says so. An empty badge is a coloured pill with no word in it, so blank reads
-// as the dash every other empty cell uses (PriBadge, DelegateTable.displayValue).
+// A payment status is never blank — new bookings start Pending. Rows that went
+// in blank while that was briefly the default still render, as the dash every
+// other empty cell uses (PriBadge, DelegateTable.displayValue), rather than as a
+// coloured pill with no word in it.
 export const StatusBadge = ({ value }) =>
   !value ? <span className="dim">—</span> : <Dot tone={STATUS_TONE[value] || 'neutral'}>{value}</Dot>;
 export const AttBadge = ({ value }) => <Dot tone={ATT_TONE[value] || 'neutral'}>{value}</Dot>;
