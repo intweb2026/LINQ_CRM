@@ -369,6 +369,18 @@ EMAIL_PORT      = int(os.environ.get("EMAIL_PORT", 587))
 EMAIL_USE_TLS   = os.environ.get("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+
+# Port 465 wants an implicit TLS socket rather than STARTTLS on 587. Mutually
+# exclusive with EMAIL_USE_TLS; Django raises if both are on.
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False") == "True"
+
+# Seconds. Django's SMTP backend passes None by default, which means the socket
+# can hang until the OS gives up, and this send is SYNCHRONOUS inside the request
+# that created the paper review; there is no task queue in this project. A relay
+# that stops answering would otherwise hold a worker open indefinitely. The
+# notification catches its own failures, so a timeout ends as a logged `failed`
+# row rather than a 500.
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "20"))
 DEFAULT_FROM_EMAIL  = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 IMPORT_ALERT_EMAIL  = os.environ.get("IMPORT_ALERT_EMAIL", "")
 
@@ -415,6 +427,45 @@ BOOKING_CODE_SPEX_EXACT      = ["Add-Ons"]
 PAPER_REVIEW_ALERT_EMAIL = os.environ.get(
     "PAPER_REVIEW_ALERT_EMAIL", "arthur.pina@iq-hub.com"
 )
+
+# The STANDING Cc on the Paper Review production-team notification — copied on
+# every send whoever the event's sales executive turns out to be. The other Cc is
+# the MRE who filled the form, which is per-review and comes from the review's
+# created_by, not from here (see paper_review/notifications.py).
+#
+# This replaced a role-walk over Event.assigned_users, which copied a different
+# set of people per event. Comma-separated env override, so changing who is
+# standing-copied is a deployment change and not a code edit.
+#
+# Read at send time via django.conf.settings, like the two constants either side.
+PAPER_REVIEW_CC_EMAILS = [
+    a.strip() for a in os.environ.get(
+        "PAPER_REVIEW_CC_EMAILS", "harry.jonas@iq-hub.com",
+    ).split(",") if a.strip()
+]
+
+# Where the "Open the review record" button in the paper review handoff email
+# points. The frontend has no per-record route (App.jsx routes "paper-review" as
+# a list page), so the link lands on the list; deep-linking is a frontend change,
+# not a setting.
+CRM_BASE_URL = os.environ.get("CRM_BASE_URL", "http://localhost:3000").rstrip("/")
+
+# TESTING ONLY. When set, EVERY email paper_review/notifications.py sends — the
+# handoff notification and both watchdog alerts — goes to this one address
+# instead of its real recipients, with the intended To: named in the subject.
+#
+# This is not the kill switch below and does not replace it. The switch answers
+# "should anything be sent at all"; this answers "while it is on, who is allowed
+# to receive it", which is the question a UAT box actually has. Recipient
+# RESOLUTION is untouched, so NotificationLog still records who the message was
+# addressed to and report_paper_review_recipients still tells the truth.
+#
+# EMPTY IN PRODUCTION. A non-empty value here silently swallows every paper
+# review email, which is exactly what you want on a test box and a severity-one
+# incident anywhere else.
+PAPER_REVIEW_REDIRECT_ALL_EMAIL = os.environ.get(
+    "PAPER_REVIEW_REDIRECT_ALL_EMAIL", ""
+).strip()
 
 # Kill switch for the Part B production-team notification. Defaults FALSE.
 #

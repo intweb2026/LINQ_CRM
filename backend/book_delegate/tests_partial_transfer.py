@@ -346,3 +346,46 @@ class BatchValidationTests(PartialBatchTestBase):
         self.assertTrue(r.data["created"]["reused_invoice"])
         dest = BookEvent.objects.get(invoice_number="PDST-1")
         self.assertEqual(dest.delegates.count(), 2)
+
+
+class SharedEmailTransferTests(PartialBatchTestBase):
+    """
+    Two people on ONE email address, following each other onto the same
+    destination invoice.
+
+    The reuse check compared the destination invoice's EMAILS against the
+    selection, which was sound only while BookDelegate's key was
+    (invoice, email) and a shared address therefore could not carry two people.
+    Now that it can, an email-only test refuses the second person and refuses
+    them by naming an address that belongs to the first one too.
+    """
+
+    def setUp(self):
+        super().setUp()
+        shared = "wheelock.ranch@gmail.com"
+        self.brendon, self.emily = (
+            BookDelegate.objects.create(
+                invoice=self.invoice, event_code=SRC_CODE, edition=2025,
+                first_name=first, last_name="Wheelock", email=shared,
+                booking_code="Delegate",
+                attendance=BookDelegate.Attendance.CONFIRMED,
+            )
+            for first in ("Brendon", "Emily")
+        )
+
+    def test_the_second_person_on_a_shared_address_may_follow(self):
+        self.assertEqual(self.batch(delegates=[self.brendon]).status_code, 201)
+        resp = self.batch(delegates=[self.emily])
+        self.assertEqual(resp.status_code, 201, resp.data)
+        dest = BookEvent.objects.get(invoice_number="PDST-1")
+        self.assertEqual(
+            sorted(dest.delegates.values_list("first_name", flat=True)),
+            ["Brendon", "Emily"],
+        )
+
+    def test_the_same_person_twice_is_still_refused(self):
+        self.assertEqual(self.batch(delegates=[self.brendon]).status_code, 201)
+        resp = self.batch(delegates=[self.brendon])
+        self.assertEqual(resp.status_code, 409, resp.data)
+        # Named as a person, since the address alone no longer identifies one.
+        self.assertIn("Brendon Wheelock", resp.data["detail"])

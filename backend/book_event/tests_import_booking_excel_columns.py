@@ -136,13 +136,38 @@ class ImportBookingExcelColumnGuardTests(TestCase):
         self.assertIn("does not allow", out)
 
     # -- 4, a value the model would not accept -------------------------------
-    def test_unusable_paid_or_free_value_is_reported(self):
+    def test_payable_is_now_accepted_rather_than_reported(self):
+        """
+        THIS TEST USED TO ASSERT THE OPPOSITE, and it was right to at the time:
+        "Payable" reached the model verbatim and a CharField with choices is not
+        validated on bulk_create, so it was stored and then rendered as a blank
+        cell nobody could explain. The command reported it.
+
+        Reporting it was never the right end state, though. "Payable" is the word
+        this CRM DISPLAYS for the stored value "Paid"
+        (frontend/src/lib/constants.js PAID_OR_FREE_LABEL), so a workbook that
+        reads correctly to a human was being refused value by value. It is now
+        translated by accounts/booking_coercion, the table every booking write
+        path shares, and the report below is reserved for values that really are
+        unusable.
+        """
         out = self.run_import(
             [self.good_row(**{"Paid/Free": "Payable"})], (), "--dry-run",
         )
-        self.assertIn("Paid/Free holds a value the model does not allow", out)
-        self.assertIn("'Payable'", out)
-        self.assertIn("['Free', 'Paid']", out)
+        self.assertNotIn("Paid/Free holds a value the model does not allow", out)
+        self.assertNotIn("Values not recognised", out)
+
+    def test_a_genuinely_unusable_paid_or_free_value_is_reported(self):
+        """
+        The guard the test above used to be, with a value no vocabulary claims.
+        A cell with content that cannot be read must be named, not defaulted.
+        """
+        out = self.run_import(
+            [self.good_row(**{"Paid/Free": "Sponsored"})], (), "--dry-run",
+        )
+        self.assertIn("Values not recognised", out)
+        self.assertIn("'Sponsored'", out)
+        self.assertIn("Free, Paid", out)
 
     def test_blank_paid_or_free_is_reported_too(self):
         # The exact state the bad load left behind, on 8,876 invoices.

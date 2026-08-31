@@ -217,10 +217,35 @@ export function SessionProvider({ children }) {
     [user, perms],
   );
 
+  /**
+   * The team this session MANAGES, or null.
+   *
+   * Comes off /api/users/my-permissions/ rather than off the user row, because
+   * that endpoint is the one thing every session already fetches and it is the
+   * server's own answer — the same helper that decides whether a write is
+   * allowed decides what goes in this field, so the UI cannot show an affordance
+   * the API will then refuse.
+   *
+   * Null for a super admin even when they hold the column: a super admin is not
+   * restricted to one team, and treating them as a manager here would narrow
+   * their Users page to it. Mirrors managed_team_id() in
+   * backend/accounts/permissions.py.
+   *
+   * A GATE, NOT A GRANT. Nothing here decides what a manager may do — the module
+   * matrix already carries that, granted server-side in
+   * User.effective_permissions(). This only says WHICH TEAM, so the pages can
+   * narrow their rows and pin their forms.
+   */
+  const managedTeam = useMemo(() => {
+    if (isAdmin || !perms?.managed_team_id) return null;
+    return { id: perms.managed_team_id, name: perms.managed_team_name || 'your team' };
+  }, [isAdmin, perms]);
+
   const value = useMemo(() => ({
     user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin,
+    managedTeam,
     roleLabel: user ? ROLE_FULL[user.role] || user.role : '',
-  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin]);
+  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin, managedTeam]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

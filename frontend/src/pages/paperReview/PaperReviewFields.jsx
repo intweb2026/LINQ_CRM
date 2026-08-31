@@ -103,7 +103,26 @@ export function buildPayload(form) {
   return payload;
 }
 
-export default function PaperReviewFields({ form, setForm, events, showInternal = true }) {
+/**
+ * `native` is what makes this form machine-fillable, and it is the whole reason
+ * the two pickers have a second rendering.
+ *
+ * The public MRE link, PublicPaperReviewFormPage, is filled by people and, now,
+ * by an assistant driving a browser on a reviewer's behalf. Both read the page
+ * through the accessibility tree, and the CRM rendering gave an assistant nothing
+ * to read. Every box was an anonymous input whose visible name sat in an unlinked
+ * sibling label, so the tree showed fifteen textboxes called nothing; and the two
+ * dropdowns were a trigger button plus a portalled, position fixed panel, see
+ * components/Select.jsx, which is not a control anything but a human pointer can
+ * operate.
+ *
+ * So every field now carries id === name === its payload key with its label
+ * pointing at it, on BOTH forms, because an unnamed input is a bug on the CRM
+ * form too; and `native` swaps the two pickers for real select elements on the
+ * public page only, where being operable beats being styled. The CRM modal keeps
+ * the themed dropdown it was built for.
+ */
+export default function PaperReviewFields({ form, setForm, events, showInternal = true, native = false }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setSel = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
   const EVENTS = events || [];
@@ -111,28 +130,44 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
   const score = useMemo(() => scoreOf(form), [form]);
   const grade = gradeFor(score);
 
+  const lab = (k, text, req) => (
+    <label className="fd-l" htmlFor={'pr-' + k}>{text}{req ? <span className="req">*</span> : null}</label>
+  );
+
+  // A plain function, not a component. Declared as a component, this would be a
+  // NEW component type on every render, so React would unmount and remount the
+  // select each time anything else in the form changed, dropping its focus.
+  const picker = (k, options) => (native ? (
+    <select className="in" id={'pr-' + k} name={k} value={form[k]} onChange={set(k)}>
+      <option value="">— Select —</option>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  ) : (
+    <Select value={form[k]} placeholder="— Select —" options={options} onChange={setSel(k)} />
+  ));
+
   return (
     <>
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Identification</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Paper submission date<span className="req">*</span></label><input className="in" type="date" value={form.paper_submission_date} onChange={set('paper_submission_date')} /></div>
-          <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label>
-            <Select value={form.event_code} placeholder="— Select —" options={EVENTS.map((e) => e.event_code)} onChange={setSel('event_code')} />
+          <div className="fd">{lab('paper_submission_date', 'Paper submission date', true)}<input className="in" id="pr-paper_submission_date" name="paper_submission_date" type="date" value={form.paper_submission_date} onChange={set('paper_submission_date')} /></div>
+          <div className="fd">{lab('event_code', 'Event code', true)}
+            {picker('event_code', EVENTS.map((e) => e.event_code))}
           </div>
         </div>
       </div>
       <div className="fs">
         <div className="fs-t"><Icon name="users" size={13} />Speaker &amp; company</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Speaker name<span className="req">*</span></label><input className="in" value={form.speaker_name} onChange={set('speaker_name')} /></div>
-          <div className="fd"><label className="fd-l">Company name<span className="req">*</span></label><input className="in" value={form.company_name} onChange={set('company_name')} /></div>
-          <div className="fd"><label className="fd-l">Email address of the speaker<span className="req">*</span></label><input className="in" type="email" value={form.email} onChange={set('email')} /></div>
-          <div className="fd"><label className="fd-l">LinkedIn followers count<span className="req">*</span></label><NumField min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
-          <div className="fd" style={{ gridColumn: '1/3' }}><label className="fd-l">LinkedIn profile of speaker<span className="req">*</span></label><input className="in" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
-          <div className="fd" style={{ gridColumn: '3/-1' }}><label className="fd-l">LinkedIn company profile</label><input className="in" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
+          <div className="fd">{lab('speaker_name', 'Speaker name', true)}<input className="in" id="pr-speaker_name" name="speaker_name" value={form.speaker_name} onChange={set('speaker_name')} /></div>
+          <div className="fd">{lab('company_name', 'Company name', true)}<input className="in" id="pr-company_name" name="company_name" value={form.company_name} onChange={set('company_name')} /></div>
+          <div className="fd">{lab('email', 'Email address of the speaker', true)}<input className="in" id="pr-email" name="email" type="email" value={form.email} onChange={set('email')} /></div>
+          <div className="fd">{lab('linkedin_followers', 'LinkedIn followers count', true)}<NumField id="pr-linkedin_followers" name="linkedin_followers" min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
+          <div className="fd" style={{ gridColumn: '1/3' }}>{lab('linkedin_speaker', 'LinkedIn profile of speaker', true)}<input className="in" id="pr-linkedin_speaker" name="linkedin_speaker" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
+          <div className="fd" style={{ gridColumn: '3/-1' }}>{lab('linkedin_company', 'LinkedIn company profile')}<input className="in" id="pr-linkedin_company" name="linkedin_company" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
           <div className="fd" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 18 }}>
-            <input type="checkbox" className="ck" id="pr-nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked }))} />
+            <input type="checkbox" className="ck" id="pr-nos" name="nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked }))} />
             <label className="fd-l" htmlFor="pr-nos" style={{ marginBottom: 0 }}>NOS?</label>
           </div>
         </div>
@@ -142,11 +177,11 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
         <div className="fg c4">
           {PAPER_REVIEW_CRITERIA.map((c) => (
             <div className="fd" key={c.key}>
-              <label className="fd-l">{c.label} ({c.max})<span className="req">*</span></label>
+              {lab(c.key, c.label + ' (' + c.max + ')', true)}
               {/* NumField, not a bare number input: min/max on an <input> are a
                   spinner hint, not a restriction, so every one of these boxes
                   accepted 99999 and the derived total read 364994 / 45. */}
-              <NumField min={0} max={c.max} value={form[c.key]} onChange={set(c.key)} />
+              <NumField id={'pr-' + c.key} name={c.key} min={0} max={c.max} value={form[c.key]} onChange={set(c.key)} />
             </div>
           ))}
           <div className="fd">
@@ -163,29 +198,33 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
       <div className="fs">
         <div className="fs-t"><Icon name="flag" size={13} />Agenda &amp; feedback</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Session or location on agenda<span className="req">*</span></label>
-            <Select value={form.session_location_on_agenda} placeholder="— Select —" options={PAPER_SESSION_OPTIONS} onChange={setSel('session_location_on_agenda')} />
+          <div className="fd">{lab('session_location_on_agenda', 'Session or location on agenda', true)}
+            {picker('session_location_on_agenda', PAPER_SESSION_OPTIONS)}
           </div>
-          <div className="fd" style={{ gridColumn: '2/-1' }}><label className="fd-l">Theme<span className="req">*</span></label><input className="in" value={form.theme} onChange={set('theme')} /></div>
+          <div className="fd" style={{ gridColumn: '2/-1' }}>{lab('theme', 'Theme', true)}<input className="in" id="pr-theme" name="theme" value={form.theme} onChange={set('theme')} /></div>
           {/* MR-only, and absent rather than disabled on the public MRE form:
               PublicPaperReviewSerializer does not accept the field, so an input
               for it would silently discard whatever was typed. */}
           {showInternal ? (
-            <div className="fd" style={{ gridColumn: '1/3' }}><label className="fd-l">Internal footnotes</label><input className="in" value={form.internal_footnotes} onChange={set('internal_footnotes')} /></div>
+            <div className="fd" style={{ gridColumn: '1/3' }}>{lab('internal_footnotes', 'Internal footnotes')}<input className="in" id="pr-internal_footnotes" name="internal_footnotes" value={form.internal_footnotes} onChange={set('internal_footnotes')} /></div>
           ) : null}
-          <div className="fd" style={{ gridColumn: showInternal ? '3/-1' : '1/3' }}><label className="fd-l">Feedback to speaker or request information</label><input className="in" value={form.feedback_to_speaker} onChange={set('feedback_to_speaker')} /></div>
+          <div className="fd" style={{ gridColumn: showInternal ? '3/-1' : '1/3' }}>{lab('feedback_to_speaker', 'Feedback to speaker or request information')}<input className="in" id="pr-feedback_to_speaker" name="feedback_to_speaker" value={form.feedback_to_speaker} onChange={set('feedback_to_speaker')} /></div>
         </div>
       </div>
       <div className="fs">
         <div className="fs-t"><Icon name="note" size={13} />Proposal received<span className="req">*</span></div>
         <div className="fg">
-          <div className="fd full"><textarea className="in" style={{ minHeight: 140 }} placeholder="Proposed session title, talking points…" value={form.proposal_received} onChange={set('proposal_received')} /></div>
+          {/* aria-label rather than a lab() line: these two fields are titled by
+              their section header above, so a visible label would read the name
+              twice. The attribute gives the same name to the accessibility tree
+              that the header gives to the eye. */}
+          <div className="fd full"><textarea className="in" id="pr-proposal_received" name="proposal_received" aria-label="Proposal received" style={{ minHeight: 140 }} placeholder="Proposed session title, talking points…" value={form.proposal_received} onChange={set('proposal_received')} /></div>
         </div>
       </div>
       <div className="fs">
         <div className="fs-t"><Icon name="edit" size={13} />Agenda addition<span className="req">*</span></div>
         <div className="fg">
-          <div className="fd full"><textarea className="in" style={{ minHeight: 140 }} placeholder="Agenda copy, industry tags…" value={form.agenda_addition} onChange={set('agenda_addition')} /></div>
+          <div className="fd full"><textarea className="in" id="pr-agenda_addition" name="agenda_addition" aria-label="Agenda addition" style={{ minHeight: 140 }} placeholder="Agenda copy, industry tags…" value={form.agenda_addition} onChange={set('agenda_addition')} /></div>
         </div>
       </div>
 

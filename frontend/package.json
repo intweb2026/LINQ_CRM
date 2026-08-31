@@ -6,7 +6,8 @@
     "start": "npm run build && node scripts/serve-build.mjs",
     "build": "cross-env INLINE_RUNTIME_CHUNK=false GENERATE_SOURCEMAP=false react-scripts build",
     "serve": "node scripts/serve-build.mjs",
-    "dev": "react-scripts start"
+    "dev": "react-scripts start",
+    "test": "react-scripts test --watchAll=false"
   },
   "dependencies": {
     "axios": "^1.7.9",

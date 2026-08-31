@@ -11,7 +11,6 @@ Atomicity    : all DB writes are wrapped in a single transaction.atomic().
 import os
 from decimal import Decimal, InvalidOperation
 
-import gspread
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -112,18 +111,44 @@ def _parse_int(value, default=None):
         return default
 
 
-def _build_defaults(row, active_headers, date_warnings=None):
+def _build_defaults(row, active_headers, date_warnings=None, value_warnings=None):
     """
     Convert a sheet row dict into a BookEvent defaults dict.
     Only includes columns present in active_headers; invoice_number is excluded
     (it is the lookup key, not a default).
+
+    CONSTRAINED COLUMNS GO THROUGH THE SHARED COERCION TABLE.
+    Payment Status, Payable/Free, Payment Type, Ticket Tier, Currency, Attendance,
+    Discount, Delegate Count and Edition were read here as `str(raw).strip()`, a
+    bare `Decimal()` or a `_parse_int(..., default=1)`. A CharField with choices
+    is not validated on save(), so a spelling the model does not declare was
+    stored verbatim and then rendered as a blank cell nobody could explain, and
+    the delegate-count default of 1 rewrote a stated zero exactly as the browser
+    importer's max(1, ...) did. accounts/booking_coercion is now the one authority
+    for all of them, shared with the browser import, the two commands and the
+    website intake.
+
+    A value it refuses is left OUT of the defaults, so the stored value survives
+    rather than being overwritten with a blank, and the cell is named in
+    `value_warnings` for the caller to report.
     """
+    from accounts.booking_coercion import RULES, UNSET, coerce
+
     defaults = {}
     for col_header, field_name in COLUMN_MAP.items():
         if col_header == "invoice_number" or col_header not in active_headers:
             continue
         raw = row.get(col_header, "")
-        if field_name in DATE_FIELDS:
+        if field_name in RULES:
+            value, error = coerce(field_name, raw)
+            if error:
+                if value_warnings is not None:
+                    value_warnings.append(f"{col_header}: {error}")
+                continue
+            if value is UNSET:
+                continue
+            defaults[field_name] = value
+        elif field_name in DATE_FIELDS:
             defaults[field_name] = _parse_date(raw, date_warnings)
         elif field_name in NULLABLE_DECIMAL_FIELDS:
             defaults[field_name] = _parse_decimal(raw, nullable=True)
@@ -169,6 +194,13 @@ class Command(BaseCommand):
             )
 
         # ── Authenticate with Google Sheets (read-only scope) ──────────────────
+        # Imported HERE rather than at module scope so the pure parsing helpers
+        # above — _build_defaults and the coercion it shares with every other
+        # booking write path — can be imported and tested without the Google
+        # client installed. A missing network dependency should not make a
+        # column-mapping rule untestable.
+        import gspread
+
         self.stdout.write("Authenticating with Google Sheets (read-only)...")
         try:
             client = gspread.service_account(filename=creds_path, scopes=SCOPES)
@@ -218,6 +250,11 @@ class Command(BaseCommand):
         # the rest of the booking is still worth syncing. They are reported at
         # the end so an unreadable date column cannot pass for an empty one.
         date_warnings = []
+        # Values the shared coercion table refused. Same rule as the dates: the
+        # column is left as it is stored rather than overwritten with a blank, the
+        # row still syncs, and the cell is named at the end so a sheet spelling
+        # this system does not know cannot pass for a clean sync.
+        value_warnings = []
 
         for row_num, row in enumerate(rows, start=2):  # row 1 is the header
             invoice_number = str(row.get("invoice_number", "")).strip()
@@ -228,7 +265,8 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
             try:
-                defaults = _build_defaults(row, active_headers, date_warnings)
+                defaults = _build_defaults(
+                    row, active_headers, date_warnings, value_warnings)
                 parsed_rows.append((row_num, invoice_number, defaults))
             except Exception as exc:
                 self.stderr.write(
@@ -252,6 +290,18 @@ class Command(BaseCommand):
             if len(distinct) > 20:
                 self.stdout.write(self.style.WARNING(
                     f"    ... and {len(distinct) - 20} more distinct value(s)."
+                ))
+
+        if value_warnings:
+            distinct_vals = sorted(set(value_warnings))
+            self.stdout.write(self.style.WARNING(
+                f"  {len(value_warnings)} value(s) not recognised, left unchanged:"
+            ))
+            for value in distinct_vals[:20]:
+                self.stdout.write(self.style.WARNING(f"    {value}"))
+            if len(distinct_vals) > 20:
+                self.stdout.write(self.style.WARNING(
+                    f"    ... and {len(distinct_vals) - 20} more distinct value(s)."
                 ))
 
         if not parsed_rows:

@@ -126,19 +126,36 @@ export default function PublicPaperReviewFormPage() {
             : `${data.events.length} events`}
         </p>
 
-        {/* showInternal={false}: internal_footnotes is MR-internal and the public
-            serializer does not accept it. See PaperReviewFields. */}
-        <PaperReviewFields form={form} setForm={setForm} events={data.events} showInternal={false} />
+        {/* A real <form> with a real submit button, unlike the CRM modal's bare
+            onClick handler, because this page is also filled by assistants
+            driving a browser for the reviewer. A form element is the thing they
+            look for, it gives the page one obvious commit point instead of a
+            button they have to recognise by its wording, and it makes Enter in
+            any field submit, which the reviewer gets for free.
 
-        {error ? (
-          <p style={{ fontSize: 12.5, color: 'var(--red)', margin: '14px 0 0' }}>{error}</p>
-        ) : null}
+            noValidate: firstMissing() already names the first empty required
+            field in the page's own wording. Leaving the browser to do it as well
+            means two different messages for one problem, and the native bubble
+            is the one that cannot be read back by anything filling this in.
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-          <button className="btn btn-p" disabled={saving} onClick={submit}>
-            <Icon name="check" size={15} />{saving ? 'Submitting…' : 'Submit review'}
-          </button>
-        </div>
+            showInternal={false}: internal_footnotes is MR-internal and the public
+            serializer does not accept it. native: real <select> elements for the
+            two pickers. Both are explained in PaperReviewFields. */}
+        <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <PaperReviewFields form={form} setForm={setForm} events={data.events} showInternal={false} native />
+
+          {/* role=alert so the message is announced when it appears, rather than
+              only being visible to whoever is already looking at this corner. */}
+          {error ? (
+            <p role="alert" style={{ fontSize: 12.5, color: 'var(--red)', margin: '14px 0 0' }}>{error}</p>
+          ) : null}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+            <button type="submit" className="btn btn-p" disabled={saving}>
+              <Icon name="check" size={15} />{saving ? 'Submitting…' : 'Submit review'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

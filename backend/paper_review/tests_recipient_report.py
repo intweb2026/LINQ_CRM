@@ -26,13 +26,19 @@ from io import StringIO
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from events.models import Event
 from paper_review.models import NotificationLog, PaperReview
 from proposal_submission.models import ProposalSubmission
 
 U = get_user_model()
+
+# Stands in for settings.PAPER_REVIEW_CC_EMAILS. Pinned on every class below so
+# the report's output never quotes a live address, and so the counts under test
+# do not move when the real list is edited.
+REPORT_CC = ["fixed.one@example.invalid", "fixed.two@example.invalid"]
+REPORT_CC_JOINED = ", ".join(REPORT_CC)
 
 
 def run(*args):
@@ -58,6 +64,7 @@ def make_event(code, sales_executive=None, cc_users=()):
     return event
 
 
+@override_settings(PAPER_REVIEW_CC_EMAILS=REPORT_CC)
 class RecipientReportTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -114,9 +121,21 @@ class RecipientReportTests(TestCase):
         self.assertIn("RESOLVED", out)
         self.assertIn("rr.exec@example.com", out)
 
-    def test_an_event_with_no_sales_exec_and_no_cc_reports_fallback(self):
-        out = run()
-        self.assertIn("FALLBACK", out)
+    def test_an_event_with_no_sales_exec_degrades_to_the_fixed_cc(self):
+        """
+        Asserted on the ROW, not on the whole output: the tail warning about
+        EVENT_NOT_FOUND rows contains the word FALLBACK too, so a bare assertIn
+        would pass whatever this event actually resolved to.
+        """
+        row = next(l for l in run().splitlines() if "RR - ORPHAN" in l)
+        self.assertIn("DEGRADED", row)
+        self.assertIn(REPORT_CC_JOINED, row)
+        self.assertIn("no_sales_executive", row)
+
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
+    def test_with_no_fixed_cc_the_same_event_reports_fallback(self):
+        row = next(l for l in run().splitlines() if "RR - ORPHAN" in l)
+        self.assertIn("FALLBACK", row)
 
     def test_a_code_with_no_matching_event_reports_event_not_found(self):
         out = run()
@@ -152,6 +171,7 @@ def readiness_count(out, label):
     raise AssertionError(f"no readiness line containing {label!r} in:\n{out}")
 
 
+@override_settings(PAPER_REVIEW_CC_EMAILS=REPORT_CC)
 class CatalogueWideScopeTests(TestCase):
     """
     D1 — the report must cover EVERY event in the catalogue, not only codes that
@@ -200,17 +220,18 @@ class CatalogueWideScopeTests(TestCase):
 
     def test_a_degraded_event_is_reported_degraded_not_fallback(self):
         """
-        sales_executive is null but a CC-role user has an address, so
-        resolve_recipients promotes the Cc list to To and the send still lands.
-        Reporting that as FALLBACK would overstate the problem; reporting it as
-        RESOLVED would hide a missing assignment.
+        sales_executive is null, so resolve_recipients promotes the fixed Cc to
+        To and the send still lands. Reporting that as FALLBACK would overstate
+        the problem; reporting it as RESOLVED would hide a missing assignment.
         """
         out = run("--only", "degraded")
         self.assertIn("D1 - DEGRADED", out)
         self.assertIn("DEGRADED", out)
-        # The CC-role user became the To, and the reason is named on the row.
-        self.assertIn("d1_cc@example.com", out)
+        # The fixed Cc became the To, and the reason is named on the row.
+        self.assertIn(REPORT_CC_JOINED, out)
         self.assertIn("no_sales_executive", out)
+        # The assigned speaker_sales user is no longer a recipient of any kind.
+        self.assertNotIn("d1_cc@example.com", out)
 
     def test_degraded_is_counted_separately_from_the_other_outcomes(self):
         out = run()
@@ -223,12 +244,11 @@ class CatalogueWideScopeTests(TestCase):
         out = run()
         self.assertEqual(readiness_count(out, "events in catalogue"), 3)
         self.assertEqual(readiness_count(out, "with a sales_executive"), 2)
-        self.assertEqual(readiness_count(out, "with at least one of the two"), 3)
-        self.assertEqual(readiness_count(out, "with NEITHER"), 0)
+        self.assertEqual(readiness_count(out, "without one"), 1)
 
-    def test_the_cc_role_assignee_count_is_reported(self):
-        out = run()
-        self.assertEqual(readiness_count(out, "with a speaker_sales"), 1)
+    def test_the_fixed_cc_is_named_in_the_readiness_block(self):
+        """It is now the only Cc, so a report omitting it hides half the send."""
+        self.assertIn(REPORT_CC_JOINED, run())
 
     def test_readiness_is_unaffected_by_the_scope_flag(self):
         """
@@ -255,7 +275,8 @@ class CatalogueWideScopeTests(TestCase):
         by_code = {r["event_code"]: r for r in rows}
         self.assertIn("D1 - CATALOGUE-ONLY", by_code)
         self.assertEqual(by_code["D1 - DEGRADED"]["outcome"], "degraded")
-        self.assertEqual(by_code["D1 - DEGRADED"]["to"], "d1_cc@example.com")
+        self.assertEqual(by_code["D1 - DEGRADED"]["to"], REPORT_CC_JOINED)
+        self.assertEqual(by_code["D1 - PIPELINE"]["cc"], REPORT_CC_JOINED)
 
     def test_still_sends_and_writes_nothing_at_catalogue_scope(self):
         """D1 widened the sweep; the read-only guarantee must widen with it."""
@@ -269,6 +290,7 @@ class CatalogueWideScopeTests(TestCase):
              ProposalSubmission.objects.count()), before)
 
 
+@override_settings(PAPER_REVIEW_CC_EMAILS=REPORT_CC)
 class ReadinessVerdictTests(TestCase):
     """
     D1 asks for the conclusion to be STATED — "if most events are null, say so
@@ -328,12 +350,15 @@ class ReadinessVerdictTests(TestCase):
         self.assertIn("1/2", out)
         self.assertNotIn("missing for the majority", out)
 
-    def test_an_event_with_neither_is_counted_as_such(self):
+    def test_an_event_without_a_sales_executive_is_counted_as_such(self):
         make_event("V - BARE")
         out = run()
-        self.assertEqual(readiness_count(out, "with NEITHER"), 1)
-        self.assertEqual(readiness_count(out, "fallback"), 1)
+        self.assertEqual(readiness_count(out, "without one"), 1)
+        # It degrades to the fixed Cc rather than reaching the watchdog.
+        self.assertEqual(readiness_count(out, "degraded"), 1)
+        self.assertEqual(readiness_count(out, "fallback"), 0)
 
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
     def test_the_fallback_warning_names_the_alert_address_setting(self):
         make_event("V - FALLBACK")
         out = run()
