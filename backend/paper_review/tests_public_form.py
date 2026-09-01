@@ -17,15 +17,17 @@ WHAT MUST NOT MOVE
     stored, and a reviewer outside MR is refused rather than silently dropped;
   * the review is attributed to the reviewer the link names, not to nobody.
 """
-from datetime import date
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
+from django.utils import timezone
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from events.models import Event
 from paper_review.models import NotificationLog, PaperReview
+from events.testutils import assign_reviewer, unassign_reviewer
 from proposal_submission.models import ProposalSubmission
 from webhooks.models import WebhookApiKey
 
@@ -36,10 +38,21 @@ SUBMIT = reverse("paper-review-form-submit")
 FORM = WebhookApiKey.Target.PAPER_REVIEW_FORM
 
 
-def make_event(code, name=None):
+def make_event(code, name=None, days=30, end_days=None):
+    """
+    An event `days` from today, UPCOMING by default.
+
+    Relative rather than a fixed date on purpose: the form drops events that have
+    already happened (live_event_codes), so a hardcoded date turns the whole
+    fixture into a past event the moment it goes by, and the suite starts failing
+    for a reason that has nothing to do with the code. Pass a negative `days` for
+    an event that is genuinely over.
+    """
     return Event.objects.create(
         event_code=code, official_event_name=name or f"Event {code}",
-        event_date=date(2026, 5, 1),
+        event_date=timezone.localdate() + timedelta(days=days),
+        end_date=(timezone.localdate() + timedelta(days=end_days)
+                  if end_days is not None else None),
     )
 
 
@@ -83,7 +96,7 @@ class FormLinkBase(APITestCase):
         cls.mre = U.objects.create_user(
             username="mre_ada", password="x", email="ada.mre@example.com",
             first_name="Ada", last_name="Reviewer", role="market_research")
-        cls.mre.assigned_events.set([cls.biu])
+        assign_reviewer(cls.mre, cls.biu)
 
         cls.key = WebhookApiKey.objects.create(
             name="Ada — paper review form", api_key=WebhookApiKey.generate_key(),
@@ -158,7 +171,7 @@ class ConfigTests(FormLinkBase):
         self.assertEqual(r.status_code, 401)
 
     def test_reviewer_with_no_assigned_events_is_refused_not_shown_everything(self):
-        self.mre.assigned_events.clear()
+        unassign_reviewer(self.biu)
         r = self.config()
         self.assertEqual(r.status_code, 409)
         self.assertIn("No events are assigned", r.data["detail"])
@@ -306,3 +319,124 @@ class KeyIssueTests(APITestCase):
                               {"mre": None}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("mre", r.data)
+
+
+class AssignedByTheEventModalTests(FormLinkBase):
+    """
+    Where an assignment comes from, and where it does not.
+
+    The reported failure: a reviewer named Market Research Sr. on four events had
+    a form offering one. Scope was read from User.assigned_events, an M2M written
+    only by the CSV importer against the user table as it stood at import time —
+    so three events imported before their account existed granted nothing, and
+    naming them in the event modal changed nothing either.
+    """
+
+    def codes(self):
+        return [e["event_code"] for e in self.config().data["events"]]
+
+    def test_naming_the_reviewer_on_an_event_puts_it_on_the_form(self):
+        assign_reviewer(self.mre, self.afs)
+        self.assertEqual(sorted(self.codes()), ["AFS - JS", "BIU"])
+
+    def test_the_junior_column_grants_it_too(self):
+        assign_reviewer(self.mre, self.afs, junior=True)
+        self.assertIn("AFS - JS", self.codes())
+
+    def test_the_m2m_alone_grants_nothing_any_more(self):
+        # The link this replaced. Writing it must not put the event on the form,
+        # or the old bug is still reachable by a different route.
+        self.mre.assigned_events.add(self.afs)
+        self.assertNotIn("AFS - JS", self.codes())
+
+    def test_an_account_created_after_the_event_still_gets_it(self):
+        # The exact production shape: the event names them, and nothing was
+        # re-run since. The M2M could not answer this; the column always can.
+        late = make_event("LATE - MR")
+        Event.objects.filter(pk=late.pk).update(market_research_senior="Ada Reviewer")
+        self.assertIn("LATE - MR", self.codes())
+
+    def test_a_misspelt_name_grants_nothing_rather_than_the_wrong_person(self):
+        ghost = make_event("GHOST - MR")
+        Event.objects.filter(pk=ghost.pk).update(market_research_senior="Adah Reviewr")
+        self.assertNotIn("GHOST - MR", self.codes())
+
+    def test_a_placeholder_is_not_a_name(self):
+        blank = make_event("DASH - MR")
+        Event.objects.filter(pk=blank.pk).update(market_research_senior="—")
+        self.assertNotIn("DASH - MR", self.codes())
+
+
+class CompletedEventsAreNotOfferedTests(FormLinkBase):
+    """
+    A form for filing NEW reviews has no use for an event that is over, and
+    offering one invites a review filed against last year by mistake.
+
+    COMPLETED IS THE DATE, NOT Event.status — the status column is hand
+    maintained and most rows never leave Draft or Upcoming.
+    """
+
+    def codes(self):
+        return [e["event_code"] for e in self.config().data["events"]]
+
+    def test_an_event_that_has_passed_is_dropped(self):
+        past = make_event("PAST - MR", days=-1)
+        assign_reviewer(self.mre, past)
+        self.assertNotIn("PAST - MR", self.codes())
+
+    def test_an_event_today_is_still_offered(self):
+        today = make_event("TODAY - MR", days=0)
+        assign_reviewer(self.mre, today)
+        self.assertIn("TODAY - MR", self.codes())
+
+    def test_a_multi_day_event_stays_until_its_end_date(self):
+        # Started yesterday, runs another two days. Reading only the start date
+        # would have dropped it on its own first morning.
+        running = make_event("RUN - MR", days=-1, end_days=2)
+        assign_reviewer(self.mre, running)
+        self.assertIn("RUN - MR", self.codes())
+
+    def test_status_completed_on_a_future_event_does_not_drop_it(self):
+        # The inverse, and the reason the date decides: a stale status column must
+        # not remove an event the reviewer still has to work on.
+        soon = make_event("SOON - MR")
+        Event.objects.filter(pk=soon.pk).update(status="Completed")
+        assign_reviewer(self.mre, soon)
+        self.assertIn("SOON - MR", self.codes())
+
+    def test_a_past_event_cannot_be_submitted_against_either(self):
+        past = make_event("PAST - MR", days=-1)
+        assign_reviewer(self.mre, past)
+        unassign_reviewer(self.biu)          # leave only the finished one
+        assign_reviewer(self.mre, past)
+
+        response = self.submit(body(event_code="PAST - MR"))
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(PaperReview.objects.count(), 0)
+
+    def test_all_events_finished_says_so_rather_than_no_events_assigned(self):
+        # Two different problems with two different fixes, so they must not share
+        # one message: "assign me an event" and "assign me an UPCOMING one".
+        Event.objects.filter(pk=self.biu.pk).update(
+            event_date=timezone.localdate() - timedelta(days=5))
+
+        response = self.config()
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("already", response.data["detail"])
+
+    def test_nothing_assigned_still_says_nothing_assigned(self):
+        unassign_reviewer(self.biu)
+
+        response = self.config()
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("No events are assigned", response.data["detail"])
+
+    def test_a_past_event_is_refused_even_when_a_live_one_keeps_the_form_open(self):
+        # The realistic shape: the form still renders, and the finished event is
+        # simply not one of the options it will accept.
+        past = make_event("OVER - MR", days=-3)
+        assign_reviewer(self.mre, past)
+
+        response = self.submit(body(event_code="OVER - MR"))
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertEqual(PaperReview.objects.count(), 0)

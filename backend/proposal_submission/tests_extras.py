@@ -18,6 +18,7 @@ from proposal_submission.models import ProposalSubmission
 from proposal_submission.serializers import business_today
 from proposal_submission.tests import _Base, make_event
 from teams.models import Team
+from events.testutils import assign_reviewer
 
 U = get_user_model()
 
@@ -202,7 +203,7 @@ class ImportBase(_Base):
         cls.mr_user = U.objects.create_user(
             username="imp_mr", password="x", email="impmr@x.com",
             role="market_research", team=cls.role)
-        cls.mr_user.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.mr_user, cls.event, cls.other_event, junior=True)
 
     def row(self, **over):
         base = {
@@ -325,7 +326,7 @@ class ImportPreviewTests(ImportBase):
         """
         closed = make_event("CLOSED - PM")
         self.assertFalse(closed.accepting_web_bookings)
-        self.user.assigned_events.add(closed)
+        assign_reviewer(self.user, closed)
         r = self.preview([self.row(**{"Event Code": "CLOSED - PM"})])
         entry = r.data["rows"][0]
         self.assertEqual(entry["classification"], "CREATE", entry)
@@ -333,7 +334,7 @@ class ImportPreviewTests(ImportBase):
 
     def test_code_is_stored_canonically_from_a_loose_input(self):
         gs = make_event("BIU/GS - PM")
-        self.user.assigned_events.add(gs)
+        assign_reviewer(self.user, gs)
         r = self.preview([self.row(**{"Event Code": "biu/gs - pm"})])
         self.assertEqual(r.data["rows"][0]["event_code"], "BIU/GS - PM")
 
@@ -647,7 +648,7 @@ class DuplicateAnnotationTests(_Base):
         scoped_user = U.objects.create_user(
             username="dup_scoped", password="x", email="ds@x.com",
             role="sales", team=self.role)
-        scoped_user.assigned_events.set([self.other_event])   # BIUK only
+        assign_reviewer(scoped_user, self.other_event, junior=True)   # BIUK only
         ProposalSubmission.objects.create(
             event_code="BIUK - PM", speaker_name="Solo", email="solo@example.com")
         self.client.force_authenticate(user=scoped_user)
@@ -697,7 +698,7 @@ class MRWritePathTests(_Base):
         cls.mr = U.objects.create_user(
             username="c_mr", password="x", email="cmr@x.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event])
+        assign_reviewer(cls.mr, cls.event, junior=True)
         cls.row = ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Has Notes", email="hn@x.com",
             internal_footnotes_mr="original notes",
@@ -776,7 +777,7 @@ class ExportTests(_Base):
         cls.mr = U.objects.create_user(
             username="e_mr", password="x", email="emr@x.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.mr, cls.event, cls.other_event, junior=True)
         ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Alpha", email="al@x.com",
             submission_date=date(2026, 1, 1), qc_grade="A",
@@ -841,7 +842,7 @@ class ExportTests(_Base):
         scoped = U.objects.create_user(
             username="e_scoped", password="x", email="es@x.com",
             role="sales", team=self.role)
-        scoped.assigned_events.set([self.other_event])       # BIUK only
+        assign_reviewer(scoped, self.other_event, junior=True)       # BIUK only
         self.client.force_authenticate(user=scoped)
         text = self.body(self.client.get(self.EXPORT))
         self.assertIn("Beta", text)
@@ -898,7 +899,7 @@ class FilterOptionsTests(_Base):
         scoped = U.objects.create_user(
             username="f_scoped", password="x", email="fs@x.com",
             role="sales", team=self.role)
-        scoped.assigned_events.set([self.other_event])       # BIUK only
+        assign_reviewer(scoped, self.other_event, junior=True)       # BIUK only
         self.client.force_authenticate(user=scoped)
         r = self.client.get(self.OPTIONS)
         self.assertEqual(r.data["participation_type"], ["Panelist"])
@@ -986,7 +987,7 @@ class MRQueryLeakTests(_Base):
         cls.mr = U.objects.create_user(
             username="g2_mr", password="x", email="g2@x.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event])
+        assign_reviewer(cls.mr, cls.event, junior=True)
         ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="Secret", email="s@x.com",
             internal_footnotes_mr="confidential")

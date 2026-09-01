@@ -18,6 +18,7 @@ from rest_framework.test import APITestCase
 
 from events.models import Event
 from paper_review.models import PaperReview
+from events.testutils import assign_reviewer
 from teams.models import Team, TeamPermission
 
 # Nothing in this suite may reach a real mailbox. locmem is asserted rather than
@@ -55,7 +56,7 @@ class _Base(APITestCase):
 
     @classmethod
     def assign_events(cls, *events):
-        cls.user.assigned_events.add(*events)
+        assign_reviewer(cls.user, *events)
 
     @classmethod
     def setUpTestData(cls):
@@ -64,8 +65,11 @@ class _Base(APITestCase):
 
         # The event the whole suite files reviews against. sales_executive is the
         # Part B To recipient; the Cc is FIXED_CC and does not come from the event
-        # at all. The two role users added to assigned_users below are kept so the
-        # suite can still prove they are NOT copied.
+        # at all. The two role users below are kept so the suite can still prove
+        # they are NOT copied. They are NOT linked to the event: the Cc stopped
+        # walking the event's team when it became "the submitter and Harry, every
+        # time" (see notifications.py), and an event names ONE Market Research Sr.
+        # and ONE Jr., which the author needs.
         cls.sales_exec = U.objects.create_user(
             username="pr_sales_exec", password="x", role="sales",
             email="sales.exec@example.com", first_name="Sam", last_name="Exec",
@@ -83,8 +87,6 @@ class _Base(APITestCase):
             username="pr_mr", password="x", role="market_research",
             email="market.research@example.com",
         )
-        cls.cc_speaker_sales.assigned_events.set([cls.event])
-        cls.cc_market_research.assigned_events.set([cls.event])
 
         # The author. Granted BOTH modules: A8 asserts the generated proposal is
         # immediately visible to them, which is a row-scope claim tested through
@@ -102,7 +104,7 @@ class _Base(APITestCase):
             username="pr_author", password="x", role="sales",
             email="author@example.com", team=cls.role,
         )
-        cls.user.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.user, cls.event, cls.other_event)
 
         cls.blind_role = Team.objects.create(name="No Reviews")
         TeamPermission.objects.create(

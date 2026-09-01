@@ -46,6 +46,7 @@ from django.contrib.auth import get_user_model            # noqa: E402
 from django.db import connection                          # noqa: E402
 from django.urls import reverse                           # noqa: E402
 
+from paper_review.access import permitted_event_codes     # noqa: E402
 from webhooks.models import WebhookApiKey                  # noqa: E402
 
 # The front-end route, which is App.jsx's and not Django's — the API path the
@@ -95,7 +96,11 @@ def main(argv):
 
     minted = existing = eventless = 0
     for user in reviewers:
-        codes = list(user.assigned_events.values_list("event_code", flat=True))
+        # The same source the form itself reads — the event's Market Research
+        # columns — so this report and the live form can never disagree. Reading
+        # user.assigned_events here reported a different list from the one the
+        # reviewer actually saw.
+        codes = permitted_event_codes(user)
         key = WebhookApiKey.objects.filter(mre=user, target=TARGET).first()
 
         # Counted before the dry-run branch returns, or the summary would report

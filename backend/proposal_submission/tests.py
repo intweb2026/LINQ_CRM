@@ -12,6 +12,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import ActionLog
 from events.models import Event
+from events.testutils import assign_reviewer
 from proposal_submission.models import ProposalSubmission
 from teams.models import Team, TeamPermission
 
@@ -30,7 +31,7 @@ class _Base(APITestCase):
     @classmethod
     def assign_events(cls, *events):
         """Widen cls.user's scope to cover events a subclass created."""
-        cls.user.assigned_events.add(*events)
+        assign_reviewer(cls.user, *events)
 
     @classmethod
     def setUpTestData(cls):
@@ -53,7 +54,7 @@ class _Base(APITestCase):
         # market_research — so the rest of the suite exercises the ordinary path.
         # Access derives solely from this assignment, so every event a test uses
         # has to be assigned here (or via assign_events in a subclass).
-        cls.user.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.user, cls.event, cls.other_event)
 
         # A role with no proposal_submission grant at all.
         cls.blind_role = Team.objects.create(name="No Proposals")

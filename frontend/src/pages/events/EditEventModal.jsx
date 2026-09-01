@@ -13,11 +13,14 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
 
-// Only the SCA and the sales team leader are editable here — see OWNER_EDIT_FIELDS
-// in lib/owners.js. The other five owner columns belong to the Teams module and are
-// shown, inherited, in the drawer's Teams tab and the Events table; giving them an
-// editor here only invites someone to re-type what the team already knows, and a
-// value typed on the event outranks the team's answer permanently.
+// The SCA, the sales team leader and the two Market Research columns are editable
+// here — see OWNER_EDIT_FIELDS in lib/owners.js. Market Research Sr./Jr. is what
+// decides whose paper review form offers this event, so this is also where a
+// reviewer assigned to the wrong event gets corrected. The other three belong to
+// the Teams module and are shown, inherited, in the drawer's Teams tab and the
+// Events table; giving them an editor here only invites someone to re-type what
+// the team already knows, and a value typed on the event outranks the team's
+// answer permanently.
 //
 // The selects read form values RAW rather than through ownerOf(): an inherited name
 // is the team's answer, and writing it into the event would freeze "whoever leads

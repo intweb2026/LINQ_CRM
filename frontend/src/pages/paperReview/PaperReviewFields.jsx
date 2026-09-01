@@ -19,11 +19,14 @@ import { PAPER_REVIEW_CRITERIA, PAPER_REVIEW_MAX_SCORE, PAPER_GRADE_TONE, PAPER_
  * post to serializers with the same REQUIRED_FIELDS, so the pre-flight checks
  * have to agree.
  *
- * speaker_email_ref / research_email_ref are deliberately absent. They are
+ * speaker_email_ref / research_email_ref are SHOWN BUT NOT EDITABLE. They are
  * OUTPUTS: the backend fills them with the addresses the production-team
  * notification actually resolved at send time (paper_review/notifications.py),
- * and they are read-only on the serializer. Offering them as inputs meant a typed
- * address was silently discarded on save.
+ * and they are read-only on the serializer. They were absent entirely until the
+ * form was checked against the Zoho layout, which carries both; they are back as
+ * read-only boxes, alongside proposal score and grade, and NOT as inputs.
+ * Offering them as inputs meant a typed address was silently discarded on save,
+ * and paper_review/tests_notification.py still asserts they never become one.
  */
 export const BLANK = {
   paper_submission_date: '', event_code: '',
@@ -146,6 +149,18 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
     <label className="fd-l" htmlFor={'pr-' + k}>{text}{req ? <span className="req">*</span> : null}</label>
   );
 
+  // Server-owned values, displayed the way proposal score and grade are. No id,
+  // no name, no onChange: nothing here is part of the payload.
+  const ro = (text, value, note) => (
+    <div className="fd">
+      <label className="fd-l">{text}</label>
+      <div className="in" style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-2)', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {value || <span className="dim">—</span>}
+      </div>
+      <span style={{ fontSize: 10, color: 'var(--text-4)' }}>{note}</span>
+    </div>
+  );
+
   // A plain function, not a component. Declared as a component, this would be a
   // NEW component type on every render, so React would unmount and remount the
   // select each time anything else in the form changed, dropping its focus.
@@ -167,6 +182,8 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd">{lab('event_code', 'Event code', true)}
             {picker('event_code', EVENTS.map((e) => e.event_code))}
           </div>
+          {ro('Speaker email ref', form.speaker_email_ref, 'Set when the notification sends')}
+          {ro('Research email ref', form.research_email_ref, 'Set when the notification sends')}
         </div>
       </div>
       <div className="fs">
@@ -175,9 +192,9 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd">{lab('speaker_name', 'Speaker name', true)}<input className="in" id="pr-speaker_name" name="speaker_name" value={form.speaker_name} onChange={set('speaker_name')} /></div>
           <div className="fd">{lab('company_name', 'Company name', true)}<input className="in" id="pr-company_name" name="company_name" value={form.company_name} onChange={set('company_name')} /></div>
           <div className="fd">{lab('email', 'Email address of the speaker', true)}<input className="in" id="pr-email" name="email" type="email" value={form.email} onChange={set('email')} /></div>
-          <div className="fd">{lab('linkedin_followers', 'LinkedIn followers count', true)}<NumField id="pr-linkedin_followers" name="linkedin_followers" min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
           <div className="fd" style={{ gridColumn: '1/3' }}>{lab('linkedin_speaker', 'LinkedIn profile of speaker', true)}<input className="in" id="pr-linkedin_speaker" name="linkedin_speaker" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
           <div className="fd" style={{ gridColumn: '3/-1' }}>{lab('linkedin_company', 'LinkedIn company profile')}<input className="in" id="pr-linkedin_company" name="linkedin_company" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
+          <div className="fd">{lab('linkedin_followers', 'LinkedIn followers count', true)}<NumField id="pr-linkedin_followers" name="linkedin_followers" min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
           <div className="fd" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 18 }}>
             <input type="checkbox" className="ck" id="pr-nos" name="nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked, ...scoreReset(e.target.checked) }))} />
             <label className="fd-l" htmlFor="pr-nos" style={{ marginBottom: 0 }}>NOS?</label>

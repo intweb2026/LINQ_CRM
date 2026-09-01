@@ -26,6 +26,7 @@ from proposal_submission.access import (
 )
 from proposal_submission.models import ProposalSubmission
 from teams.models import Team, TeamPermission
+from events.testutils import assign_reviewer
 
 U = get_user_model()
 LIST = "/api/proposal-submissions/"
@@ -85,7 +86,7 @@ class ScopeBase(APITestCase):
         cls.mr_biu = U.objects.create_user(
             username="scope_mr_biu", password="x", email="mr@x.com",
             role="market_research", team=cls.role)
-        cls.mr_biu.assigned_events.set([cls.biu])
+        assign_reviewer(cls.mr_biu, cls.biu)
         # Assigned to nothing at all.
         cls.unassigned = U.objects.create_user(
             username="scope_none", password="x", email="n@x.com",
@@ -142,7 +143,7 @@ class PredicateTests(TestCase):
     def test_permitted_codes_come_only_from_the_assignment_m2m(self):
         ev = make_event("SOLO - AA")
         self.assertEqual(permitted_event_codes(self.plain), [])
-        self.plain.assigned_events.set([ev])
+        assign_reviewer(self.plain, ev)
         self.assertEqual(permitted_event_codes(self.plain), ["SOLO - AA"])
 
     def test_scope_queryset_never_degenerates_to_everything(self):
@@ -156,7 +157,7 @@ class PredicateTests(TestCase):
         ev = make_event("USE - ME")
         self.assertTrue(may_use_event_code(self.admin, "ANYTHING"))
         self.assertFalse(may_use_event_code(self.plain, "USE - ME"))
-        self.plain.assigned_events.set([ev])
+        assign_reviewer(self.plain, ev)
         self.assertTrue(may_use_event_code(self.plain, "USE - ME"))
 
 
@@ -181,7 +182,7 @@ class ScopeQuerySetSQLTests(TestCase):
             role="sales", team=role)
         biu = make_event("BIU")
         make_event("BIUK - PM")
-        user.assigned_events.set([biu])
+        assign_reviewer(user, biu)
 
         qs = scope_queryset(ProposalSubmission.objects.all(), user)
         sql = str(qs.query).upper()

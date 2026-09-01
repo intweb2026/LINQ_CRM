@@ -11,6 +11,7 @@ from django.contrib.auth import get_user_model
 
 from paper_review.models import PaperReview
 from paper_review.serializers import PaperReviewSerializer
+from events.testutils import assign_reviewer
 from paper_review.tests import _Base, make_event
 
 U = get_user_model()
@@ -25,7 +26,7 @@ class MRFieldLeakTests(_Base):
         cls.mr = U.objects.create_user(
             username="gaps_mr", password="x", email="gapsmr@example.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event])
+        assign_reviewer(cls.mr, cls.event, junior=True)
         cls.row = PaperReview.objects.create(
             event_code=cls.event.event_code, speaker_name="Has Notes",
             email="hn@example.com", paper_submission_date=date(2026, 8, 1),

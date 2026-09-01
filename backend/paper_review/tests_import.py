@@ -20,6 +20,7 @@ from accounts.models import ActionLog
 from paper_review.importer import (
     FIELD_TO_LABEL, ZOHO_HEADERS, computed_score, map_headers,
 )
+from events.testutils import assign_reviewer
 from paper_review.models import NotificationLog, PaperReview
 from paper_review.tests import ALERT, LOCMEM, _Base, make_event
 from proposal_submission.models import ProposalSubmission
@@ -621,7 +622,7 @@ class MRImportGuardTests(ImportBase):
         cls.mr = U.objects.create_user(
             username="imp_mr", password="x", email="impmr@example.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event])
+        assign_reviewer(cls.mr, cls.event, junior=True)
 
     def test_whole_file_refusal_naming_the_column(self):
         r = self.preview([self.row(**{"Internal Footnotes": "MR only"})])

@@ -25,15 +25,26 @@ export const OWNER_FIELDS = [
 export const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
 
 /**
- * The owner columns the EVENT FORMS let you set. Everything else on an event is
- * owned by the Teams module, so the only owners worth overriding per event are
- * the SCA and the sales lead — the rest would be re-typing what the team already
- * knows, and a typo there silently outranks the team's answer forever.
+ * The owner columns the EVENT FORMS let you set.
+ *
+ * The SCA and the sales lead, because those are genuinely per-event, and the two
+ * Market Research columns, because those DECIDE ACCESS. backend
+ * paper_review/access.py reads market_research_senior / market_research_junior to
+ * work out which events a reviewer's paper review form offers, so a reviewer who
+ * cannot be named here is a reviewer whose form is empty, with no way to fix it
+ * short of a CSV re-import.
+ *
+ * The other three stay display-only: nothing reads them for access, so an editor
+ * would only invite re-typing what the Teams module already knows, and a value
+ * typed on the event outranks the team's answer permanently.
  *
  * Display is unaffected: the drawer's Teams tab and the Events table still show
- * all seven, inherited where the event says nothing.
+ * all seven, inherited where the event says nothing. An INHERITED name is never
+ * written back — the selects read form values raw for exactly that reason — and
+ * the backend grants access on the stored column alone, so the Teams module's MR
+ * lead does not silently acquire every event with a blank column.
  */
-export const OWNER_EDIT_KEYS = ['sales_team', 'sales_lead'];
+export const OWNER_EDIT_KEYS = ['sales_team', 'sales_lead', 'mr_senior', 'mr_junior'];
 
 export const OWNER_EDIT_FIELDS = OWNER_FIELDS.filter((f) => OWNER_EDIT_KEYS.includes(f.key));
 

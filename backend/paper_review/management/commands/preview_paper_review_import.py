@@ -66,7 +66,9 @@ class _Unrestricted:
     A real user is required for an honest answer: classify_rows() asks
     has_full_visibility() and permitted_event_codes(), and passing None would make
     BOTH answer "no access", turning every row into an out-of-scope ERROR and
-    reporting a clean file as 500 failures. This sentinel is the opposite default —
+    reporting a clean file as 500 failures. is_admin short-circuits
+    has_full_visibility, so permitted_event_codes is never reached and this
+    sentinel needs no event assignment of its own. This sentinel is the opposite default —
     full visibility, MR fields readable — so a bare invocation reports what the
     FILE contains rather than what one account may import. The output says which
     principal was used, every time, so the distinction is never silent.
@@ -76,7 +78,6 @@ class _Unrestricted:
     username = "(unrestricted)"
     role = "admin"
     has_all_access = True
-    assigned_events = None
 
     @property
     def pk(self):

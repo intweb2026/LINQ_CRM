@@ -21,6 +21,7 @@ from django.test import TestCase
 
 from accounts.models import ActionLog
 from paper_review.models import CRITERIA, RUBRIC_TOTAL, PaperReview
+from events.testutils import assign_reviewer
 from paper_review.tests import _Base, make_event
 
 U = get_user_model()
@@ -177,7 +178,7 @@ class BulkUpdateTests(_Base):
         cls.mr = U.objects.create_user(
             username="bulk_mr", password="x", email="bulkmr@example.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.mr, cls.event, cls.other_event, junior=True)
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -403,7 +404,7 @@ class ExportTests(_Base):
         cls.mr = U.objects.create_user(
             username="exp_mr", password="x", email="expmr@example.com",
             role="market_research", team=cls.role)
-        cls.mr.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.mr, cls.event, cls.other_event, junior=True)
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -516,7 +517,7 @@ class ExportTests(_Base):
         scoped = U.objects.create_user(
             username="exp_scoped", password="x", email="expscoped@example.com",
             role="sales", team=self.role)
-        scoped.assigned_events.set([self.other_event])       # BIUK only
+        assign_reviewer(scoped, self.other_event, junior=True)            # BIUK only
         self.client.force_authenticate(user=scoped)
         text = self.body(self.client.get(self.EXPORT))
         self.assertIn("Beta", text)
@@ -569,7 +570,7 @@ class FilterOptionsTests(_Base):
         scoped = U.objects.create_user(
             username="opt_scoped", password="x", email="optscoped@example.com",
             role="sales", team=self.role)
-        scoped.assigned_events.set([self.other_event])       # BIUK only
+        assign_reviewer(scoped, self.other_event, junior=True)            # BIUK only
         self.client.force_authenticate(user=scoped)
         r = self.client.get(self.OPTIONS)
         self.assertEqual(r.data["session_location_on_agenda"], ["Day 2, Keynote"])

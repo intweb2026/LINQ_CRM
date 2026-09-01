@@ -16,6 +16,7 @@ from django.db import IntegrityError, transaction
 from rest_framework import serializers as drf_serializers
 
 from accounts.models import ActionLog
+from paper_review.access import permitted_event_codes
 from paper_review.models import PaperReview
 from paper_review.proposal_bridge import (
     FIELD_MAP, LEFT_BLANK, create_proposal_for_review, narrower_targets,
@@ -379,9 +380,7 @@ class AuthorVisibilityTests(_Base):
         review = PaperReview.objects.get(id=r.data["id"])
         proposal = ProposalSubmission.objects.get()
         self.assertEqual(proposal.event_code, review.event_code)
-        self.assertIn(proposal.event_code,
-                      list(self.user.assigned_events.values_list(
-                          "event_code", flat=True)))
+        self.assertIn(proposal.event_code, permitted_event_codes(self.user))
 
 
 class DuplicateWarningTests(_Base):

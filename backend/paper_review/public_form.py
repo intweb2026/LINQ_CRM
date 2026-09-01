@@ -48,9 +48,16 @@ WHAT THIS ENDPOINT DELIBERATELY DOES NOT INHERIT
   right to file against any of it — publicly. The scope here is always the exact
   assigned-events set, so a link is never wider than the person it names, and a
   reviewer with no assigned events gets a refusal rather than everything.
+
+  Events that have already happened. The CRM keeps them — a reviewer's past work
+  has to stay readable — but a form for filing NEW reviews has no use for an event
+  that is over, and offering one invites a review filed against last year by
+  mistake. live_event_codes drops them, by DATE rather than by Event.status.
 """
 import logging
 
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -69,6 +76,29 @@ from .views import create_review_with_workflows
 logger = logging.getLogger(__name__)
 
 TARGET = WebhookApiKey.Target.PAPER_REVIEW_FORM
+
+
+def live_event_codes(codes):
+    """
+    `codes` minus every event that has already happened, and minus every code with
+    no Event row at all.
+
+    COMPLETED IS A DATE HERE, NOT Event.status. The status column is hand
+    maintained and most rows never leave Draft or Upcoming, so filtering on it
+    would leave last year's events sitting on the form while a genuinely finished
+    one stayed selectable. The dates cannot drift.
+
+    The END date decides, falling back to the start date where there is none, so
+    a multi-day event stays on the form until it is actually over rather than
+    disappearing on its own first morning.
+    """
+    return set(
+        Event.objects
+        .filter(event_code__in=codes)
+        .annotate(_ends=Coalesce("end_date", "event_date"))
+        .filter(_ends__gte=timezone.localdate())
+        .values_list("event_code", flat=True)
+    )
 
 
 class FormThrottle(AnonRateThrottle):
@@ -125,13 +155,37 @@ class PaperReviewFormBase(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        mre   = api_key.mre
-        codes = sorted(set(permitted_event_codes(mre)))
-        if not codes:
+        mre      = api_key.mre
+        assigned = sorted(set(permitted_event_codes(mre)))
+        codes    = sorted(live_event_codes(assigned))
+
+        # Both refusals are 409 and both name what the reviewer should do about
+        # it, because "the form is empty" is otherwise indistinguishable from a
+        # broken link, and the two have different fixes.
+        if not assigned:
             return None, None, None, Response(
                 {"detail": "No events are assigned to this reviewer yet. "
                            "Ask the CRM admin to assign the events you review."},
                 status=status.HTTP_409_CONFLICT,
+            )
+        if not codes:
+            return None, None, None, Response(
+                {"detail": "Every event assigned to this reviewer has already "
+                           "taken place. Ask the CRM admin to assign an "
+                           "upcoming event."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Dropped codes are logged rather than silently swallowed: a reviewer
+        # asking why their list is short has one place to look, and the two
+        # reasons a code disappears — finished, or no Event row at all — are
+        # different faults.
+        dropped = [code for code in assigned if code not in codes]
+        if dropped:
+            logger.info(
+                "Paper review form link %s: %d assigned event(s) not offered "
+                "(already finished, or absent from the catalogue): %s",
+                api_key.name, len(dropped), dropped,
             )
         return api_key, mre, codes, None
 
@@ -150,19 +204,13 @@ class PaperReviewFormConfigView(PaperReviewFormBase):
         if error:
             return error
 
+        # `codes` is already the live, in-catalogue set — resolve_link filtered it
+        # and logged whatever it dropped — so this is a straight read.
         events = list(
             Event.objects.filter(event_code__in=codes)
             .order_by("event_code")
             .values("event_code", "name", "event_date")
         )
-        # A code assigned to the reviewer whose Event row has since gone is not a
-        # selectable option, but silently dropping it hides why the list is short.
-        missing = sorted(set(codes) - {e["event_code"] for e in events})
-        if missing:
-            logger.warning(
-                "Paper review form link %s: assigned codes absent from the "
-                "catalogue: %s", api_key.name, missing,
-            )
 
         return Response({
             "reviewer":     mre.get_full_name() or mre.username,

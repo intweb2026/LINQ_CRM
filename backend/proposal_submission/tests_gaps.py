@@ -13,6 +13,7 @@ from datetime import date
 from accounts.models import ActionLog
 from proposal_submission.models import ProposalSubmission
 from proposal_submission.tests import _Base, make_event
+from events.testutils import assign_reviewer
 
 # source_paper_review and import_batch_id both sit with the audit columns rather
 # than the business ones: both are provenance, both are written by something
@@ -138,7 +139,7 @@ class MRFieldVisibilityTests(_Base):
         # role unlocks the MR columns, it does not widen which rows are visible.
         # Without an assignment this user would 404 on the row before ever
         # reaching the field-stripping logic.
-        cls.mr_user.assigned_events.set([cls.event, cls.other_event])
+        assign_reviewer(cls.mr_user, cls.event, cls.other_event, junior=True)
         cls.admin_user = U.objects.create_user(
             username="admin_user", password="x", email="ad@example.com",
             team=cls.role, role="admin",

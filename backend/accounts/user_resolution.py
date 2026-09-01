@@ -381,3 +381,74 @@ def resolve_owner(value, resolver=None):
     batch, so the user table is read once rather than once per row.
     """
     return (resolver or OwnerResolver()).resolve(value)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Who reviews an event
+# ─────────────────────────────────────────────────────────────────────────────
+# paper_review/access.py and proposal_submission/access.py both scope their rows
+# to "the events this person is assigned to", and both used to answer it from
+# User.assigned_events, the M2M. Nothing a human touches writes that M2M — the
+# CSV importer is its only writer, resolving each name against the user table AS
+# IT STOOD AT IMPORT TIME — so a reviewer whose account was created after their
+# events were imported was named on four events and could file against one, and
+# assigning them in the event modal changed nothing.
+#
+# ONE DEFINITION, TWO CALLERS, and that is the point. paper_review mints a
+# ProposalSubmission for every review it saves, through the same user; the moment
+# the two apps answer this differently, every paper review create fails its own
+# proposal's validation. They were already near-identical copies, which is how
+# they came to disagree.
+
+# The event columns that name a reviewer. Both are set from the Team ownership
+# block of the New Event modal (frontend/src/lib/owners.js OWNER_FIELDS), so
+# assigning somebody there is what gives them the event.
+#
+# Junior is included deliberately: the modal offers both, and reading only Senior
+# would mean picking somebody as Market Research Jr. granted them nothing.
+REVIEWER_COLUMNS = ("market_research_senior", "market_research_junior")
+
+
+def event_codes_naming(user, columns=REVIEWER_COLUMNS, preferred_role=None):
+    """
+    The codes of every event naming `user` in any of `columns`.
+
+    THE TYPO RISK, STATED PLAINLY. This grants on a NAME rather than on a foreign
+    key, which is the objection that kept these columns out of the scope modules
+    before. OwnerResolver above is what makes it safe enough: exact keys only —
+    email, username, full name, "Last, First", each case- and separator-
+    normalised — never a substring, and a name matching two accounts resolves to
+    NOBODY rather than to whichever row came back first. A misspelt name
+    therefore grants nothing; it cannot grant the wrong person, which is the
+    failure that would matter. Placeholders are handled by is_blank_name.
+
+    `preferred_role` breaks a tie the same way OwnerResolver does everywhere
+    else, and defaults to Market Research here rather than to Sales, because
+    these are the research columns.
+    """
+    from accounts.models import User
+    from events.models import Event
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return []
+
+    resolver = OwnerResolver(
+        preferred_role=preferred_role or User.Role.MARKET_RESEARCH,
+    )
+
+    # ponytail: reads the whole catalogue and the whole user table per call, ~250
+    # and ~160 rows here. normalise_name has no SQL equivalent, so a narrower
+    # query would mean reimplementing the resolver; cache per request if the
+    # catalogue ever grows enough for this to show up.
+    codes = []
+    for code, *names in (Event.objects
+                         .exclude(event_code="")
+                         .values_list("event_code", *columns)):
+        for name in names:
+            if is_blank_name(name):
+                continue
+            owner, _reason = resolver.resolve(name)
+            if owner is not None and owner.pk == user.pk:
+                codes.append(code)
+                break
+    return codes

@@ -25,6 +25,7 @@ from paper_review.notifications import (
     STEP_EVENT_NOT_FOUND, STEP_NO_EVENT_CODE, STEP_NO_SALES_EXECUTIVE,
     resolve_recipients, send_paper_review_notification, subject_for,
 )
+from events.testutils import assign_reviewer
 from paper_review.tests import ALERT, FIXED_CC, _Base, make_event
 from proposal_submission.models import ProposalSubmission
 
@@ -708,7 +709,7 @@ class InternalFootnotesRuleTests(_Base):
         cls.mr_cc = U.objects.create_user(
             username="pr_mr_cc", password="x", role="market_research",
             email="mr.cc@example.com")
-        cls.mr_cc.assigned_events.set([cls.mr_only_event])
+        assign_reviewer(cls.mr_cc, cls.mr_only_event)
         cls.assign_events(cls.mr_only_event)
 
     def test_excluded_when_one_recipient_is_not_mr(self):
@@ -800,26 +801,39 @@ class NotificationLogAlwaysWrittenTests(_Base):
         self.assertFalse(site_admin.has_change_permission(None))
         self.assertFalse(site_admin.has_delete_permission(None))
 
-    def test_the_ref_fields_are_absent_from_the_form_ui(self):
+    def test_the_ref_fields_are_read_only_in_the_form_ui(self):
         """
-        B5. They are outputs; offering them as inputs meant a typed address was
-        silently dropped by the read-only serializer. Asserted against the JSX for
-        the same reason accounts/tests_pipeline_modules.py checks the module list
-        there: a hand-edited frontend file is exactly what drifts back.
+        B5. They are outputs; offering them as INPUTS meant a typed address was
+        silently dropped by the read-only serializer.
+
+        They are now DISPLAYED, because the Zoho layout carries both and the CRM
+        form was missing them, so "absent" is no longer the invariant; "never a
+        control" is. Rendered, but with no onChange, no name and no id, exactly
+        like proposal score and grade.
+
+        Asserted against the JSX for the same reason
+        accounts/tests_pipeline_modules.py checks the module list there: a
+        hand-edited frontend file is exactly what drifts back. Checked in
+        PaperReviewFields.jsx, which is the ONE copy of the fields; the CRM modal
+        and the public MRE page both render it.
         """
         from pathlib import Path
 
         from django.conf import settings as dj_settings
 
         form = (Path(dj_settings.BASE_DIR).parent / "frontend" / "src" / "pages"
-                / "paperReview" / "PaperReviewFormModal.jsx")
+                / "paperReview" / "PaperReviewFields.jsx")
         if not form.exists():
             self.skipTest("frontend not present in this checkout")
         src = form.read_text(encoding="utf-8")
         for field in ("speaker_email_ref", "research_email_ref"):
             with self.subTest(field=field):
+                # Shown.
+                self.assertIn(f"form.{field}", src)
+                # Never a control.
                 self.assertNotIn(f"set('{field}')", src)
-                self.assertNotIn(f"form.{field}", src)
+                self.assertNotIn(f'name="{field}"', src)
+                self.assertNotIn(f'id="pr-{field}"', src)
 
     def test_the_log_survives_deleting_its_review(self):
         rid = self.create_review().data["id"]
