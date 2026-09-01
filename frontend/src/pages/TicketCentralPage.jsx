@@ -173,6 +173,22 @@ export default function TicketCentralPage() {
   const addEntryRow = useCallback(() => {
     if (entryRef.current) entryRef.current.addRows(1);
   }, []);
+  /**
+   * STABLE IDENTITY MATTERS HERE.
+   *
+   * DataTable re-renders once per animation frame while the rows are scrolled
+   * (hooks/useVirtualRows sets state on scroll) and calls this on each of those
+   * renders. An inline arrow would build a new element every frame, defeating
+   * the memo on TicketEntryRows and re-rendering every draft cell about sixty
+   * times a second while scrolling 42,912 rows. Which is exactly what it did.
+   *
+   * `refresh` is itself a useCallback, so the props reaching the band are
+   * referentially stable and its shallow compare bails out.
+   */
+  const renderEntryBand = useCallback(
+    (band) => <TicketEntryRows {...band} openRef={entryRef} onCreated={refresh} />,
+    [refresh],
+  );
   const [importOpen, setImportOpen] = useState(false);
 
   if (!canView('ticket_central')) return <NoAccessPage module="Ticket Central" />;
@@ -185,6 +201,9 @@ export default function TicketCentralPage() {
   ];
   const tab = TABS.some((t) => t.id === subTab) ? subTab : '';
   const isMR = user.role === 'market_research' || user.role === 'admin';
+  // Who may type a new ticket into the table. Read twice: by the New ticket row
+  // button and by the band itself, so it is named once.
+  const mayEnter = isMR && can('create', 'ticket_central');
   // `status` is a registered filter_spec field on TicketViewSet, so the tab is
   // evaluated by the database over all 35,690 rows rather than over one page.
   // The tab and any linked-in criteria are ANDed together, which is what lets a
@@ -203,7 +222,7 @@ export default function TicketCentralPage() {
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))}
         actions={<div className="ph-act">
           {user.role === 'admin' ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Smart import</button> : null}
-          {isMR && can('create', 'ticket_central') ? <button className="btn btn-p" onClick={addEntryRow}><Icon name="plus" size={15} />New ticket row</button> : null}
+          {mayEnter ? <button className="btn btn-p" onClick={addEntryRow}><Icon name="plus" size={15} />New ticket row</button> : null}
           {/* HP only — ClearAllButton renders nothing for anyone else, mirroring
               IsHPAccount on tickets/clear_all/. The endpoint already existed; there
               was simply no way to reach it from the UI. */}
@@ -270,9 +289,7 @@ export default function TicketCentralPage() {
         // inside its scroll box, pinned under the last row, sharing the columns
         // and the horizontal scroll. It renders nothing until there is a draft,
         // so the table looks untouched until somebody starts one.
-        entryBand={isMR && can('create', 'ticket_central') ? (band) => (
-          <TicketEntryRows {...band} openRef={entryRef} onCreated={refresh} />
-        ) : null}
+        entryBand={mayEnter ? renderEntryBand : null}
         onRow={(r) => setFormTicket(r)}
         bulkActions={(ids, { clear }) => (
           <div className="bulk">

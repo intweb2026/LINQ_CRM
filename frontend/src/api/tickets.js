@@ -102,6 +102,23 @@ export async function bulkRemove(ids) {
 export const purposes = () => http.get('tickets/purposes/').then((r) => r.data);
 
 /**
+ * Every writable field, with its TYPE, label, choices and bounds.
+ *
+ * Derived server-side from the model by accounts/bulk_update.build_bulk_update_fields,
+ * which is the point: the entry grid asks what a field IS rather than carrying a
+ * hand-written copy of the answer. A column added to Ticket is typed correctly
+ * in the grid the day it exists, and a choice list cannot drift out of step with
+ * the database.
+ *
+ * Shape: { link_url: {type:'text', label:'Link URL'},
+ *          priority:  {type:'choice', choices:[...]},
+ *          estimate:  {type:'integer', nullable:true, min:0, max:…}, … }
+ * Types are 'text' | 'choice' | 'integer' | 'date'.
+ */
+export const fieldSchema = () => http.get('tickets/bulk_update_schema/')
+  .then((r) => (r.data && r.data.fields) || {});
+
+/**
  * Has this link been raised before, for a whole batch of rows at once.
  *
  * `rows` is [{ link_url, purpose }] and the answer comes back in the SAME

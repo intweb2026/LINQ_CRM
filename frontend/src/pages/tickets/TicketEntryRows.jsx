@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../lib/icons';
-import { TK_PRIORITY, TK_RELATIONSHIPS, TK_TYPES } from '../../lib/constants';
+import { TK_PRIORITY, TK_TYPES } from '../../lib/constants';
 import * as ticketsApi from '../../api/tickets';
-import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useSession } from '../../context/SessionContext';
 import { useToast } from '../../context/ToastContext';
@@ -26,31 +25,73 @@ import { useToast } from '../../context/ToastContext';
  * They are cleared only when the server has confirmed the rows were created.
  */
 
-// ── Which columns a draft row can hold ──────────────────────────────────────
+// ── Which columns a draft row can hold, and what each one IS ────────────────
 //
-// The MR half of a ticket (ticket_central/constants.MR_FIELDS). Everything else
-// in the table — the DMD result, the LX-2 pass, the provenance, the system
-// stamps — is not MR's to fill and shows as a locked cell.
+// The TYPES are not written down here. They come from the server, off
+// /api/tickets/bulk_update_schema/, which derives them from the model — so a
+// column added to Ticket is typed correctly in this grid the day it exists, and
+// a choice list cannot drift out of step with the database. A hand-written copy
+// of this map was the reason dropdowns, numbers and URLs all rendered as plain
+// text boxes.
 //
-// `carry` marks what a new row inherits from the row above it: the event and its
-// classification repeat down a batch, while the link, its keywords and the
-// comment are what make each row a different ticket and must start empty.
-const FIELDS = {
-  link_url: { kind: 'text', req: true, ph: 'https://' },
-  linkedin_keywords: { kind: 'text' },
-  type_of_ticket: { kind: 'pick', opts: TK_TYPES, req: true, carry: true },
-  purpose: { kind: 'pick', free: true, mono: true, req: true, carry: true },
-  priority: { kind: 'pick', opts: Object.keys(TK_PRIORITY), carry: true },
-  estimate: { kind: 'num' },
-  organizer: { kind: 'text', carry: true },
-  competitor_event_name: { kind: 'text', carry: true },
-  event_month_year: { kind: 'month', carry: true },
-  event_location: { kind: 'text', carry: true },
-  relationship: { kind: 'pick', opts: TK_RELATIONSHIPS, carry: true },
-  mr_comments: { kind: 'text' },
-  assigned_mr: { kind: 'pick', free: true, carry: true },
+// What stays local is only what the schema cannot know:
+//
+//  · WHICH fields are MR's to fill. The schema lists every writable column,
+//    including the DMD result and the LX-2 pass, and this band is for raising a
+//    ticket, not completing one.
+//  · `carry`, what a new row inherits: the event and its classification repeat
+//    down a batch, while the link, its keywords and the comment are what make
+//    each row a different ticket.
+//  · `req`, which fields this grid insists on. link_url is required HERE and not
+//    by the API, because a ticket with no link is not actionable for Data Mining.
+//  · two deliberate overrides, both explained at OVERRIDES below.
+const MR_FIELDS = {
+  link_url: { req: true, ph: 'https://' },
+  linkedin_keywords: {},
+  type_of_ticket: { req: true, carry: true },
+  purpose: { req: true, carry: true, mono: true },
+  priority: { carry: true },
+  estimate: {},
+  organizer: { carry: true },
+  competitor_event_name: { carry: true },
+  event_month_year: { carry: true },
+  event_location: { carry: true },
+  relationship: { carry: true },
+  mr_comments: {},
+  assigned_mr: { carry: true },
 };
-const REQUIRED = Object.keys(FIELDS).filter((k) => FIELDS[k].req);
+
+/**
+ * OVERRIDES — the two places the grid deliberately disagrees with the schema.
+ *
+ * type_of_ticket: the schema offers the model enum's CODES ("WH", "BX"), because
+ *   that is what Ticket.TypeOfTicket declares. Every one of the 42,912 stored
+ *   rows holds the DISPLAY form instead ("White - WH") — the D4 decision made
+ *   this a plain CharField carrying Zoho's text. Writing a code here would put a
+ *   value in the column that nothing else in the table matches, so the offered
+ *   list is TK_TYPES and the schema's choices are ignored for this one field.
+ *
+ * purpose: the schema types it 'text', correctly, since it is free text keying
+ *   the ticket-number sequence. A free text box is still the wrong control for
+ *   it, because the useful values are the codes already in use — so it becomes a
+ *   combobox over /api/tickets/purposes/ that still accepts an unlisted code.
+ *
+ * event_month_year: typed 'date' by the schema, and stored as one. The column
+ *   only ever DISPLAYS month and year (helpers.fmy), so the editor asks for a
+ *   month and the submit expands it to the first of that month.
+ */
+function fieldKind(key, schemaEntry) {
+  if (key === 'type_of_ticket' || key === 'purpose' || key === 'assigned_mr') return 'pick';
+  if (key === 'event_month_year') return 'month';
+  switch (schemaEntry && schemaEntry.type) {
+    case 'choice': return 'pick';
+    case 'integer': return 'num';
+    case 'date': return 'date';
+    default: return 'text';
+  }
+}
+
+const REQUIRED = Object.keys(MR_FIELDS).filter((k) => MR_FIELDS[k].req);
 const NUM_KEYS = new Set(['estimate']);
 
 // Mirrors ticket_central/utils.extract_type_code: the segment after the last
@@ -79,8 +120,8 @@ const nextKey = () => `d${Date.now().toString(36)}${(uid += 1)}`;
 function newDraft(prev) {
   const draft = { key: nextKey(), v: {}, carry: {} };
   if (prev) {
-    Object.keys(FIELDS).forEach((k) => {
-      if (FIELDS[k].carry && (prev.v[k] || '').trim()) {
+    Object.keys(MR_FIELDS).forEach((k) => {
+      if (MR_FIELDS[k].carry && (prev.v[k] || '').trim()) {
         draft.v[k] = prev.v[k];
         draft.carry[k] = true;
       }
@@ -95,7 +136,7 @@ function newDraft(prev) {
  * Without this the band would always end in a half-filled row that counts
  * itself as a ticket, fails on the link it does not have, and blocks Submit.
  */
-const notStarted = (d) => Object.keys(FIELDS)
+const notStarted = (d) => Object.keys(MR_FIELDS)
   .every((k) => !(d.v[k] || '').trim() || d.carry[k]);
 
 /** Two source values a constant step apart continue as a series; else repeat. */
@@ -219,7 +260,10 @@ function CellEditor({ field, initial, options, seeded, onCommit, onCancel }) {
     <div className={'eg-ed' + (field.kind === 'num' ? ' n' : '') + (field.mono ? ' m' : '')}>
       <input
         ref={ref}
-        type={field.kind === 'month' ? 'month' : 'text'}
+        type={field.kind === 'month' ? 'month' : field.kind === 'date' ? 'date' : 'text'}
+        inputMode={field.kind === 'num' ? 'numeric' : field.ph === 'https://' ? 'url' : undefined}
+        autoCapitalize={field.ph === 'https://' ? 'none' : undefined}
+        spellCheck={field.kind === 'text' && field.ph !== 'https://'}
         defaultValue={initial}
         placeholder={field.ph || ''}
         onChange={(e) => { setQ(e.target.value); setIx(0); }}
@@ -251,7 +295,7 @@ function CellEditor({ field, initial, options, seeded, onCommit, onCancel }) {
 
 // ── The band ────────────────────────────────────────────────────────────────
 
-export default function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
+function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
   const { user } = useSession();
   const toast = useToast();
   const who = user && user.username;
@@ -265,20 +309,36 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
   const [saving, setSaving] = useState(false);
   const bandRef = useRef(null);
 
-  const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
+  const { data: schema } = useFetch(ticketsApi.fieldSchema, [], { initialData: {} });
   const { data: purposeRows } = useFetch(ticketsApi.purposes, [], { initialData: [] });
-
-  const mrEmails = useMemo(
-    () => (users || []).filter((u) => u.status === 'active' && u.email)
-      .map((u) => u.email).sort((a, b) => a.localeCompare(b)),
-    [users],
-  );
   const purposeOpts = useMemo(() => (purposeRows || []).map((p) => p.purpose), [purposeRows]);
+
+  /**
+   * The resolved field registry: what this grid insists on, merged with what the
+   * SERVER says each field is. Until the schema arrives every field falls back
+   * to a text box, which is the safe shape — a text box can hold any of these
+   * values, where a wrongly typed number or date control cannot.
+   */
+  const fields = useMemo(() => {
+    const out = {};
+    Object.keys(MR_FIELDS).forEach((k) => {
+      const se = (schema && schema[k]) || {};
+      out[k] = {
+        ...MR_FIELDS[k],
+        kind: fieldKind(k, se),
+        label: se.label || k,
+        choices: se.choices || null,
+        min: se.min,
+        max: se.max,
+      };
+    });
+    return out;
+  }, [schema]);
 
   // Editable columns, in the TABLE's own column order and honouring the Columns
   // menu — a column the user has hidden is not somewhere they can type.
   const editable = useMemo(
-    () => cols.filter((c) => FIELDS[c.key]).map((c) => c.key),
+    () => cols.filter((c) => MR_FIELDS[c.key]).map((c) => c.key),
     [cols],
   );
   const editIx = useMemo(
@@ -291,11 +351,12 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
     () => cols.reduce((m, c) => ({ ...m, [c.key]: c.label }), {}),
     [cols],
   );
+  // See OVERRIDES: purpose and type_of_ticket do NOT take the schema's list.
   const optionsFor = useCallback((key) => {
     if (key === 'purpose') return purposeOpts;
-    if (key === 'assigned_mr') return mrEmails;
-    return FIELDS[key].opts || [];
-  }, [purposeOpts, mrEmails]);
+    if (key === 'type_of_ticket') return TK_TYPES;
+    return (fields[key] && fields[key].choices) || [];
+  }, [purposeOpts, fields]);
 
   // A required column the user has hidden cannot be filled, and Submit would
   // then be permanently blocked with no visible cause. Say so instead.
@@ -477,18 +538,42 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
   const issueFor = useCallback((r, key) => {
     const d = drafts[r];
     if (!d || notStarted(d)) return null;
-    const field = FIELDS[key];
+    const field = fields[key];
     const val = (d.v[key] || '').trim();
     const srv = rowErrs[r] && rowErrs[r][key];
     if (srv) return { kind: 'bad', blocks: true, msg: Array.isArray(srv) ? srv.join(' ') : String(srv) };
     if (field.req && !val) return { kind: 'warn', blocks: true, msg: `${labelOf[key] || key} is needed before this ticket can be submitted` };
     if (key === 'estimate' && val && !/^\d+$/.test(val)) return { kind: 'bad', blocks: true, msg: 'Estimate takes a whole number' };
     if (key === 'estimate' && val && Number(val) === 0) return { kind: 'bad', blocks: true, msg: 'Estimate has to be above zero' };
+    if (field.kind === 'num' && val && field.max != null && Number(val) > field.max) {
+      return { kind: 'bad', blocks: true, msg: `${field.label} cannot exceed ${field.max.toLocaleString()}` };
+    }
     if (key === 'link_url' && val && !/^https?:\/\//i.test(val)) return { kind: 'bad', blocks: true, msg: 'A link starts with http or https' };
     if (key === 'link_url' && localDups[r]) return { kind: 'bad', blocks: true, msg: `Same link and purpose as row ${localDups[r]} of this batch` };
     if ((key === 'link_url' || key === 'purpose') && dups[r]) return dupIssue(dups[r], key === 'purpose');
     return null;
-  }, [drafts, rowErrs, localDups, dups, labelOf]);
+  }, [drafts, rowErrs, localDups, dups, labelOf, fields]);
+
+  /**
+   * Every cell's issue, computed once per change: { [row]: { [key]: issue } }.
+   *
+   * The render loop and the counters below both read this map instead of each
+   * calling issueFor per cell, which had them repeating the same work three
+   * times on every render.
+   */
+  const issues = useMemo(() => {
+    const out = {};
+    drafts.forEach((d, r) => {
+      if (notStarted(d)) return;
+      const row = {};
+      editable.forEach((key) => {
+        const i = issueFor(r, key);
+        if (i) row[key] = i;
+      });
+      out[r] = row;
+    });
+    return out;
+  }, [drafts, editable, issueFor]);
 
   const stats = useMemo(() => {
     let staged = 0; let blocked = 0; let warn = 0; let first = '';
@@ -496,9 +581,7 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
       if (notStarted(d)) return;
       staged += 1;
       let rowBlocked = false; let rowWarn = false; let msg = '';
-      editable.forEach((key) => {
-        const i = issueFor(r, key);
-        if (!i) return;
+      Object.values(issues[r] || {}).forEach((i) => {
         if (i.blocks) { rowBlocked = true; if (!msg) msg = i.msg; }
         else { rowWarn = true; if (!msg) msg = i.msg; }
       });
@@ -506,21 +589,17 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
       if (msg && !first) first = `Row ${r + 1}. ${msg}`;
     });
     return { staged, blocked, warn, first };
-  }, [drafts, editable, issueFor]);
+  }, [drafts, issues]);
 
   const rowState = useCallback((r) => {
     const d = drafts[r];
     if (!d || notStarted(d)) return '';
-    let worst = 'ok';
-    for (const key of editable) {
-      const i = issueFor(r, key);
-      if (!i) continue;
-      if (i.kind === 'bad') return 'bad';
-      if (i.blocks) worst = 'warn';
-      else if (worst === 'ok') worst = 'warn';
-    }
-    return worst;
-  }, [drafts, editable, issueFor]);
+    const row = issues[r];
+    if (!row) return 'ok';
+    const all = Object.values(row);
+    if (all.some((i) => i.kind === 'bad')) return 'bad';
+    return all.length ? 'warn' : 'ok';
+  }, [drafts, issues]);
 
   // ── Keyboard ────────────────────────────────────────────────────────
   const move = useCallback((dr, dc, keep) => {
@@ -583,7 +662,7 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
         // <input type="month"> gives YYYY-MM; event_month_year is a DateField,
         // so it becomes the first of that month. The column only ever displays
         // month and year, which is why the band asks for a month.
-        else if (FIELDS[key].kind === 'month') body[key] = raw.length === 7 ? `${raw}-01` : raw;
+        else if (fields[key].kind === 'month') body[key] = raw.length === 7 ? `${raw}-01` : raw;
         else body[key] = raw;
       });
       payload.push(body);
@@ -675,7 +754,7 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
               ) : null}
               {cols.map((col, colIdx) => {
                 const dotHere = !select && colIdx === 0;
-                const field = FIELDS[col.key];
+                const field = fields[col.key];
                 if (!field) {
                   // Not MR's to fill. The ticket number is the exception worth
                   // showing: the prefix the backend will build it from, so the
@@ -696,7 +775,7 @@ export default function TicketEntryRows({ cols, select, colWidth, pins, onCreate
                 const c = editIx[col.key];
                 const isCur = cur.r === r && cur.c === c;
                 const inRange = r >= r1 && r <= r2 && c >= c1 && c <= c2;
-                const issue = issueFor(r, col.key);
+                const issue = (issues[r] || {})[col.key];
                 const raw = d.v[col.key] || '';
                 const cls = ['eg-c'];
                 if (field.kind === 'num') cls.push('n');
@@ -886,3 +965,10 @@ function age(iso) {
   if (days < 60) return `${days} days ago`;
   return `${Math.round(days / 30)} months ago`;
 }
+
+/**
+ * Memoised deliberately, and the reason is measured, not stylistic: DataTable
+ * re-renders on every animation frame while its rows are scrolled, and it calls
+ * `entryBand` each time. Without this the band was rebuilt with the table.
+ */
+export default memo(TicketEntryRows);
