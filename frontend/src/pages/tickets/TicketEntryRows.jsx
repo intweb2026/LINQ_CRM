@@ -10,9 +10,9 @@ import { useToast } from '../../context/ToastContext';
  * New tickets, typed into rows pinned under the Ticket Central table.
  *
  * Every cell is a NATIVE control, always mounted: a real <select> with its own
- * arrow, a real month picker, a real number box, a datalist combobox for the
- * purpose. This is the ticket form's field set laid on its side, one row per
- * ticket — deliberately.
+ * arrow, a real month picker, a real number box, a plain text box where the
+ * field is plain text. This is the ticket form's field set laid on its side,
+ * one row per ticket — deliberately.
  *
  * The previous version was a hand-rolled spreadsheet: cells looked inert until a
  * custom editor was mounted into them on click, with its own focus handling,
@@ -41,13 +41,10 @@ import { useToast } from '../../context/ToastContext';
 //
 // Labels and the estimate bound come from the server schema
 // (/api/tickets/bulk_update_schema/, derived from the model), and so does the
-// assignee list. Three choice lists are deliberate local overrides:
+// assignee list. Two choice lists are deliberate local overrides:
 //   type_of_ticket  the schema offers enum CODES ("WH"); all 42,912 stored rows
 //                   hold the display form ("White - WH"), so TK_TYPES it is
 //   relationship    the enum is lowercase; every other screen shows "Direct"
-//   purpose         typed text, correctly, but the useful values are the codes
-//                   already in use, so it is a datalist over the live list that
-//                   still accepts a new one
 const FIELD_ORDER = [
   'purpose', 'link_url', 'linkedin_keywords', 'competitor_event_name',
   'organizer', 'event_month_year', 'event_location', 'relationship',
@@ -79,6 +76,22 @@ function normalizeLink(url) {
   }
   if (s.startsWith('www.')) s = s.slice(4);
   return s.replace(/\/+$/, '');
+}
+
+/**
+ * "www.google.com" is a link anyone can read; refusing it over a missing
+ * https:// helped nobody. Anything that looks like a host gets the scheme put
+ * on for it — on leaving the field, so you see what will be stored — and only
+ * something that cannot be a URL at all is flagged. The stored form keeps a
+ * scheme because all 42,912 existing rows carry one and the table's link
+ * renderer expects one.
+ */
+function withScheme(v) {
+  const s = (v || '').trim();
+  if (!s || /^https?:\/\//i.test(s)) return s;
+  if (/^\/\//.test(s)) return `https:${s}`;
+  if (/^[\w-]+(\.[\w-]+)+(:\d+)?([/?#]\S*)?$/i.test(s)) return `https://${s}`;
+  return s;                       // not something a scheme would fix
 }
 
 let uid = 0;
@@ -148,9 +161,6 @@ function TicketEntryRows({ onCreated, openRef }) {
   const rootRef = useRef(null);
 
   const { data: schema } = useFetch(ticketsApi.fieldSchema, [], { initialData: {} });
-  const { data: purposeRows } = useFetch(ticketsApi.purposes, [], { initialData: [] });
-  const purposeOpts = useMemo(() => (purposeRows || []).map((p) => p.purpose), [purposeRows]);
-
   const labelOf = useCallback(
     (k) => (schema && schema[k] && schema[k].label) || k,
     [schema],
@@ -208,7 +218,7 @@ function TicketEntryRows({ onCreated, openRef }) {
   const localDups = useMemo(() => {
     const seen = new Map(); const out = {};
     drafts.forEach((d, i) => {
-      const link = normalizeLink(d.v.link_url);
+      const link = normalizeLink(withScheme(d.v.link_url));
       if (!link || notStarted(d)) return;
       const k = `${link}||${(d.v.purpose || '').trim().toUpperCase()}`;
       if (seen.has(k)) out[i] = seen.get(k) + 1;
@@ -218,10 +228,10 @@ function TicketEntryRows({ onCreated, openRef }) {
   }, [drafts]);
 
   const signature = drafts
-    .map((d) => `${normalizeLink(d.v.link_url)}|${(d.v.purpose || '').trim().toUpperCase()}`)
+    .map((d) => `${normalizeLink(withScheme(d.v.link_url))}|${(d.v.purpose || '').trim().toUpperCase()}`)
     .join('~');
   useEffect(() => {
-    const pairs = drafts.map((d) => ({ link_url: d.v.link_url || '', purpose: d.v.purpose || '' }));
+    const pairs = drafts.map((d) => ({ link_url: withScheme(d.v.link_url) || '', purpose: d.v.purpose || '' }));
     if (!pairs.some((p) => p.link_url.trim())) { setDups({}); return undefined; }
     let alive = true;
     const t = setTimeout(() => {
@@ -250,7 +260,7 @@ function TicketEntryRows({ onCreated, openRef }) {
         if (k === 'estimate' && val && !/^\d+$/.test(val)) { row[k] = { kind: 'bad', blocks: true, msg: 'Estimate takes a whole number' }; return; }
         if (k === 'estimate' && val && Number(val) === 0) { row[k] = { kind: 'bad', blocks: true, msg: 'Estimate has to be above zero' }; return; }
         if (k === 'estimate' && val && estimateMax != null && Number(val) > estimateMax) { row[k] = { kind: 'bad', blocks: true, msg: `Estimate cannot exceed ${estimateMax.toLocaleString()}` }; return; }
-        if (k === 'link_url' && val && !/^https?:\/\//i.test(val)) { row[k] = { kind: 'bad', blocks: true, msg: 'A link starts with http or https' }; return; }
+        if (k === 'link_url' && val && !/^https?:\/\//i.test(withScheme(val))) { row[k] = { kind: 'bad', blocks: true, msg: 'That does not look like a link' }; return; }
         if (k === 'link_url' && localDups[r]) { row[k] = { kind: 'bad', blocks: true, msg: `Same link and purpose as row ${localDups[r]} of this batch` }; return; }
         if ((k === 'link_url' || k === 'purpose') && dups[r]) {
           const i = dupIssue(dups[r], k === 'purpose');
@@ -344,6 +354,7 @@ function TicketEntryRows({ onCreated, openRef }) {
         const raw = (d.v[k] || '').trim();
         if (!raw) return;
         if (k === 'estimate') body[k] = Number(raw);
+        else if (k === 'link_url') body[k] = withScheme(raw);
         // <input type="month"> gives YYYY-MM; the model stores a date, and the
         // column only ever shows month and year, so it becomes the first.
         else if (k === 'event_month_year') body[k] = raw.length === 7 ? `${raw}-01` : raw;
@@ -419,24 +430,22 @@ function TicketEntryRows({ onCreated, openRef }) {
       case 'relationship': return selectOf(TK_RELATIONSHIPS);
       case 'priority': return selectOf(Object.keys(TK_PRIORITY));
       case 'assigned_mr': return selectOf(assignees);
-      case 'purpose': return (
-        <>
-          <input {...common} list="eg-purposes" placeholder={F[k].ph} autoComplete="off" />
-          {r === 0 ? (
-            <datalist id="eg-purposes">
-              {purposeOpts.map((o) => <option key={o} value={o} />)}
-            </datalist>
-          ) : null}
-        </>
-      );
+      // Purpose is a plain text field. The model, the schema and the ticket
+      // form all say text, and the suggestion list this used to carry was an
+      // invention of this grid's, not anything anyone asked for.
+      case 'purpose': return <input {...common} type="text" placeholder={F[k].ph} autoComplete="off" />;
       case 'event_month_year': return <input {...common} type="month" />;
       case 'estimate': return (
         <input {...common} type="number" min="1" max={estimateMax || undefined}
           placeholder="0" inputMode="numeric" />
       );
       case 'link_url': return (
-        <input {...common} type="url" placeholder={F[k].ph}
-          inputMode="url" autoCapitalize="none" spellCheck={false} autoComplete="off" />
+        <input {...common} type="text" placeholder={F[k].ph}
+          inputMode="url" autoCapitalize="none" spellCheck={false} autoComplete="off"
+          onBlur={(e) => {
+            const fixed = withScheme(e.target.value);
+            if (fixed !== e.target.value) setCell(r, k, fixed);
+          }} />
       );
       default: return <input {...common} type="text" placeholder={F[k].ph || ''} />;
     }
