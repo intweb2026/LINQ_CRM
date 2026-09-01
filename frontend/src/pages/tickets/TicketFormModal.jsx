@@ -33,7 +33,10 @@ import { apiErrorMessage } from '../../api/client';
 // TicketDMDUpdateSerializer.validate), so which section a field belongs to is not
 // a cosmetic grouping here: it decides what may be sent.
 const MR_KEYS = [
-  'purpose', 'link_url', 'linkedin_keywords', 'duplicate_tickets',
+  // 'duplicate_tickets' was here. The column is gone (backend migration 0008):
+  // repeated links are detected live off link_key and shown while you type,
+  // rather than typed in by hand after the fact.
+  'purpose', 'link_url', 'linkedin_keywords',
   'competitor_event_name', 'organizer', 'event_month_year', 'event_location',
   'relationship', 'type_of_ticket', 'priority', 'estimate', 'mr_comments', 'assigned_mr',
 ];
@@ -285,9 +288,6 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
               </Field>
               <Field label="LinkedIn Keywords">
                 <input className="in" placeholder="hydrogen, electrolyser" value={form.linkedin_keywords} onChange={set('linkedin_keywords')} disabled={!mrOpen} />
-              </Field>
-              <Field label="Duplicate Tickets">
-                <input className="in" value={form.duplicate_tickets} onChange={set('duplicate_tickets')} disabled={!mrOpen} />
               </Field>
             </div>
             <div className="fcol">

@@ -163,13 +163,17 @@ class DelegateBulkDeleteScopingTests(TestCase):
 
 class TicketBulkDeleteScopingTests(TestCase):
     """
-    Ticket Central is DELIBERATELY cross-team visible: TicketViewSet.get_queryset()
-    documents that it does not scope, because MR and DMD both work the whole queue.
+    Ticket Central is scoped BY AUTHOR, not by event code.
 
-    So this asserts the intended behaviour rather than scoping that does not exist.
-    Its value is that bulk_delete now resolves through get_queryset(): if scoping is
-    ever added there, this test starts failing and forces a decision, instead of the
-    delete quietly staying global.
+    This class used to assert the opposite, that the module was deliberately
+    cross-team, and said in its own docstring that adding scoping to
+    TicketViewSet.get_queryset() should make it fail and force a decision. That
+    decision was made: a ticket is visible to the person who added it, with
+    admin and data_mining exempt, the latter because the DMD queue is other
+    people's tickets by definition.
+
+    bulk_delete resolves through get_queryset(), so it inherits the scope for
+    free — which is exactly the property worth pinning here.
     """
 
     @classmethod
@@ -182,17 +186,44 @@ class TicketBulkDeleteScopingTests(TestCase):
         )
         cls.user.team = cls.role
         cls.user.save()
+        cls.dmd = User.objects.create_user(
+            username="ws_tk_dmd", password="x", role="data_mining",
+            email="ws5@iq-hub.com",
+        )
+        cls.dmd.team = cls.role
+        cls.dmd.save()
 
     def setUp(self):
         self.factory = APIRequestFactory()
-        self.t1 = Ticket.objects.create(event_code=IN_SCOPE, purpose="A")
-        self.t2 = Ticket.objects.create(event_code=OUT_OF_SCOPE, purpose="B")
+        # Event codes are irrelevant to ticket scoping now; authorship is what
+        # counts, so one row is this user's and one is nobody's.
+        self.mine = Ticket.objects.create(
+            event_code=IN_SCOPE, purpose="A", created_by=self.user)
+        self.theirs = Ticket.objects.create(
+            event_code=OUT_OF_SCOPE, purpose="B")
 
-    def test_ticket_delete_is_intentionally_cross_team(self):
-        req = self.factory.post("/", {"ids": [self.t1.id, self.t2.id]}, format="json")
-        force_authenticate(req, user=self.user)
+    def _delete(self, user, ids):
+        req = self.factory.post("/", {"ids": ids}, format="json")
+        force_authenticate(req, user=user)
         resp = TICKET_BULK_DELETE(req)
         resp.render()
+        return resp
+
+    def test_scoped_role_deletes_only_its_own_tickets(self):
+        resp = self._delete(self.user, [self.mine.id, self.theirs.id])
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data["deleted"], 1)
+        self.assertEqual(resp.data["out_of_scope"], 1)
+        self.assertFalse(Ticket.objects.filter(id=self.mine.id).exists())
+        self.assertTrue(Ticket.objects.filter(id=self.theirs.id).exists())
+
+    def test_data_mining_is_exempt_and_reaches_the_whole_queue(self):
+        """
+        DMD works tickets other people raised, so scoping them to their own
+        rows would empty the queue the role exists to service.
+        """
+        resp = self._delete(self.dmd, [self.mine.id, self.theirs.id])
 
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(resp.data["deleted"], 2)

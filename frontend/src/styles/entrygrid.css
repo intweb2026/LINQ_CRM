@@ -1,0 +1,385 @@
+/*
+  entrygrid.css — Ticket Central's inline entry grid.
+
+  Every colour here is a token from base.css, so both themes come for free and
+  the grid cannot drift away from the rest of the CRM. Nothing in this file is
+  reused by another module; the prefix is `eg-` throughout to keep it that way.
+
+  The one thing worth reading before editing: the selection rectangle, the active
+  cell outline and the drag-fill preview are absolutely positioned overlays, not
+  cell borders. Borders on a <td> change its box, so moving the selection nudged
+  every column by a pixel and the whole grid shimmered. The overlays sit above
+  the cells and below the sticky header.
+*/
+
+.eg-wrap {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-sm);
+  overflow: hidden;
+  /* Tall enough to be a workspace, short enough to leave the page's chrome in
+     view. The grid itself scrolls inside. */
+  height: calc(100vh - 190px);
+  min-height: 420px;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
+.eg-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 13px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.eg-title h2 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  color: var(--text);
+}
+.eg-title p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+  max-width: 68ch;
+}
+.eg-title b { color: var(--text-2); font-weight: 600; }
+.eg-acts { display: flex; gap: 8px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.eg-acts .eg-ib { width: 34px; padding: 0; }
+
+/* ── Shortcut legend ──────────────────────────────────────────────────────── */
+.eg-legend {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 9px 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.eg-kb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 3px 10px 3px 5px;
+}
+.eg-kb kbd {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-s);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.eg-sp { flex: 1 1 10px; }
+.eg-tgl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.eg-tgl input { position: absolute; opacity: 0; width: 0; height: 0; }
+.eg-sw {
+  width: 34px;
+  height: 19px;
+  border-radius: var(--r-full);
+  background: var(--border-s);
+  position: relative;
+  transition: background .15s var(--ease);
+  flex: 0 0 auto;
+}
+.eg-sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--sh-xs);
+  transition: transform .15s var(--ease);
+}
+.eg-tgl input:checked + .eg-sw { background: var(--t-500); }
+.eg-tgl input:checked + .eg-sw::after { transform: translateX(15px); }
+.eg-tgl input:focus-visible + .eg-sw { outline: 2px solid var(--t-500); outline-offset: 2px; }
+.eg-tgl small { font-weight: 500; color: var(--text-4); font-size: 11px; }
+
+/* ── Grid ─────────────────────────────────────────────────────────────────── */
+.eg-scroll { flex: 1 1 auto; overflow: auto; position: relative; outline: none; }
+.eg-scroll:focus-visible { box-shadow: inset 0 0 0 2px var(--t-200); }
+.eg-cv { position: relative; min-width: max-content; }
+
+.eg-t {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  width: max-content;
+  /* Dragging a selection across cells would otherwise highlight the text in
+     them. Copy is handled by the grid's own handler, not the text selection. */
+  user-select: none;
+}
+.eg-t th,
+.eg-t td {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  height: 31px;
+  vertical-align: middle;
+}
+.eg-t thead th {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--n-50);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  text-align: left;
+  padding: 0 9px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-s);
+  cursor: pointer;
+}
+.eg-t thead th.hl { background: var(--t-50); color: var(--t-700); }
+.eg-t thead th.lock { font-style: italic; cursor: default; }
+.eg-rq { color: var(--red); margin-left: 2px; font-size: 11px; }
+
+.eg-t th.eg-gut,
+.eg-t td.eg-gut {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: var(--surface-2);
+  width: 54px;
+  border-right: 1px solid var(--border-s);
+  text-align: center;
+}
+.eg-t thead th.eg-gut { z-index: 8; }
+.eg-t td.eg-gut {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-4);
+  cursor: pointer;
+}
+.eg-t td.eg-gut:hover { background: var(--n-50); color: var(--text-2); }
+.eg-t tr.rsel td.eg-gut { background: var(--t-50); color: var(--t-700); }
+
+/* The row's state at a glance: grey not started, green ready, amber something
+   required is still empty, red a value is wrong or the row is a real duplicate. */
+.eg-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-s);
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.eg-dot.ok { background: var(--green); }
+.eg-dot.warn { background: var(--amber); }
+.eg-dot.bad { background: var(--red); }
+
+.eg-c { cursor: cell; position: relative; background: var(--surface); }
+.eg-v {
+  padding: 0 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.eg-c.n .eg-v {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.eg-c.m .eg-v { font-family: var(--mono); font-size: 11.5px; }
+.eg-c.sel { background: var(--t-50); }
+.eg-c.lock { background: var(--surface-2); cursor: default; }
+
+/* A value the row inherited and nobody has touched. A dotted rule rather than
+   dimmed text, because dimmed reads as disabled. */
+.eg-inh { border-bottom: 1.5px dotted var(--t-200); }
+
+/* Amber says a required field is still empty; red says a value is wrong. Both
+   put a small corner flag on the cell, and the message is the cell's title. */
+.eg-c.warn { background: var(--amber-bg); }
+.eg-c.warn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-top: 6px solid var(--amber);
+  border-left: 6px solid transparent;
+}
+.eg-c.bad { background: var(--red-bg); }
+.eg-c.bad::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-top: 6px solid var(--red);
+  border-left: 6px solid transparent;
+}
+
+.eg-lnk { color: var(--t-600); }
+.eg-tkn { font-family: var(--mono); font-size: 11.5px; color: var(--t-600); font-weight: 500; }
+.eg-tkn i { color: var(--text-4); font-style: normal; font-weight: 400; }
+
+/* ── Selection chrome ─────────────────────────────────────────────────────── */
+.eg-rbox,
+.eg-abox,
+.eg-fbox { position: absolute; pointer-events: none; z-index: 4; }
+.eg-rbox { border: 1.5px solid var(--t-500); }
+.eg-abox { border: 2px solid var(--t-600); }
+.eg-fbox { border: 1.5px dashed var(--t-600); background: var(--t-50); }
+.eg-hnd {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 9px;
+  height: 9px;
+  background: var(--t-600);
+  border: 1.5px solid var(--surface);
+  pointer-events: auto;
+  cursor: crosshair;
+}
+.eg-hide { display: none; }
+
+/* ── In-cell editor ───────────────────────────────────────────────────────── */
+.eg-ed {
+  position: absolute;
+  inset: -2px -2px -2px -2px;
+  z-index: 20;
+  min-width: calc(100% + 4px);
+  background: var(--surface);
+  border: 2px solid var(--t-600);
+  box-shadow: var(--sh-md);
+  display: flex;
+}
+.eg-ed input {
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 0 7px;
+  width: 100%;
+  height: 100%;
+}
+.eg-ed.n input {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.eg-ed.m input { font-family: var(--mono); }
+.eg-pop {
+  position: absolute;
+  top: 100%;
+  left: -2px;
+  margin-top: 3px;
+  z-index: 30;
+  min-width: 190px;
+  max-height: 216px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-s);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-lg);
+  padding: 4px;
+}
+.eg-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: var(--r-xs);
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.eg-opt.on { background: var(--t-50); color: var(--t-700); font-weight: 600; }
+.eg-opt small { font-family: var(--mono); font-size: 11px; color: var(--text-4); }
+.eg-none { padding: 6px 8px; font-size: 11.5px; color: var(--text-4); }
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+.eg-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-3);
+}
+.eg-foot b { color: var(--text); font-variant-numeric: tabular-nums; }
+.eg-hint { font-size: 11.5px; color: var(--text-4); }
+.eg-foot-r { margin-left: auto; display: flex; gap: 8px; }
+
+/* ── After a batch is created ─────────────────────────────────────────────── */
+.eg-done { padding: 26px; overflow: auto; }
+.eg-done-h { display: flex; gap: 13px; align-items: flex-start; }
+.eg-done-ic {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--green-bg);
+  color: var(--green-tx);
+}
+.eg-done h2 { margin: 0 0 3px; font-size: 16px; font-weight: 700; color: var(--text); }
+.eg-done p { margin: 0; font-size: 12.5px; color: var(--text-3); max-width: 70ch; }
+.eg-done p b { color: var(--text-2); font-weight: 600; }
+.eg-nums { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 20px; }
+.eg-nums span {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--t-700);
+  background: var(--t-50);
+  border: 1px solid var(--t-100);
+  border-radius: var(--r-xs);
+  padding: 3px 7px;
+}
+.eg-done-a { display: flex; gap: 8px; }
+
+@media (max-width: 720px) {
+  .eg-wrap { height: calc(100vh - 150px); }
+  .eg-bar, .eg-legend, .eg-foot { padding-left: 12px; padding-right: 12px; }
+}

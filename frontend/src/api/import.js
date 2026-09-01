@@ -115,7 +115,7 @@ export const TARGET_FIELDS = {
     ['event_month_year', 'Event Month/Year'], ['event_location', 'Event Location'],
     ['relationship', 'Relationship'], ['priority', 'Priority'], ['estimate', 'Estimate'],
     ['assigned_mr', 'Assigned MR'], ['link_url', 'Link URL'],
-    ['linkedin_keywords', 'LinkedIn Keywords'], ['duplicate_tickets', 'Duplicate Tickets'],
+    ['linkedin_keywords', 'LinkedIn Keywords'],
     ['mr_comments', 'MR Comments'],
     ['assign_name', 'Assign Name'], ['assign_date', 'Assign Date'],
     ['actual_number', 'Actual Number'], ['new_contacts_created', 'New Contacts Created'],

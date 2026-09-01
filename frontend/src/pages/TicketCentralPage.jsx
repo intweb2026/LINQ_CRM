@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
@@ -14,6 +14,7 @@ import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 import TicketFormModal from './tickets/TicketFormModal';
+import TicketEntryGrid from './tickets/TicketEntryGrid';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
@@ -40,10 +41,13 @@ const day = (v) => dim(v) || fdate(v);
  * already loaded and DataTable says so rather than implying a full-table result.
  */
 const tkCols = () => [
+  // "Added Time" is the row's own insert stamp and the table's default sort,
+  // ASCENDING — see defaultSort below. The Duplicate Tickets column that used to
+  // sit in this list is gone with its database column (migration 0008); a
+  // repeated link is flagged while it is being typed instead.
   { key: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => fdate(v) },
   { key: 'link_url', serverField: 'link_url', label: 'Link URL', group: 'mr', cell: (v) => <ExtLink value={v} /> },
   { key: 'linkedin_keywords', serverField: 'linkedin_keywords', label: 'LinkedIn Keywords', group: 'mr' },
-  { key: 'duplicate_tickets', serverField: 'duplicate_tickets', label: 'Duplicate Tickets', group: 'mr', cell: (v) => dim(v) || <span className="mono" style={{ color: 'var(--amber)' }}>{v}</span> },
   { key: 'ticket_number', serverField: 'ticket_number', label: 'Ticket Number', group: 'rec', cell: (v) => dim(v) || <span className="mono lnk">{v}</span> },
   { key: 'type_of_ticket', serverField: 'type_of_ticket', label: 'Type of Ticket', group: 'mr', opts: () => TK_TYPES },
   { key: 'purpose', serverField: 'purpose', label: 'Purpose', group: 'mr' },
@@ -87,11 +91,41 @@ const TK_COLS = tkCols();
 
 const HIDDEN_DEFAULT = ['competitor_event_name', 'organizer', 'event_month_year', 'event_location', 'relationship', 'actual_count_lx2'];
 
+/**
+ * Criteria arriving in the URL, from a Mining Matrix row.
+ *
+ * WHY NOT PUT THEM IN THE TABLE'S OWN FILTER BAR. DataTable persists `conds` per
+ * tableId in localStorage and seeds its state from that ONCE, on first render
+ * (components/DataTable.jsx, `storedRef`). Writing an incoming link's filter in
+ * there would therefore either be ignored, on any browser that had opened this
+ * page before, or would overwrite a filter the user had built by hand and left
+ * set. Neither is acceptable for a link.
+ *
+ * So the link's filter rides on `serverCriteria` instead, the same channel the
+ * status tabs use: ANDed into every request by the SERVER, not layered onto one
+ * loaded page, so the row count under it is the real one. It is not editable in
+ * place, which is why the banner below says what is applied and offers one click
+ * to drop it.
+ *
+ * `unmined` is `actual_number is_empty` — the Data Mining result column, so NULL
+ * means raised and not yet worked. It is the very predicate mining_matrix
+ * aggregates on (backend/mining_matrix/services.py), which is what makes the
+ * figure on the matrix row and the row count here the same number.
+ */
+function linkedCriteria(params) {
+  const out = [];
+  const purpose = (params.get('purpose') || '').trim();
+  if (purpose) out.push({ field: 'purpose', op: 'is', value: purpose });
+  if (params.get('unmined') === '1') out.push({ field: 'actual_number', op: 'is_empty' });
+  return out;
+}
+
 export default function TicketCentralPage() {
   const { canView, can, user } = useSession();
   const toast = useToast();
   const nav = useNavigate();
   const { tab: subTab } = useParams();
+  const [params, setParams] = useSearchParams();
   // No ticketsApi.list() here any more: that was a fetchAllPages walk of 35,690
   // rows (~72 sequential requests) before the table could render a single row.
   // DataTable now pages against the server. Tab counts already came from
@@ -120,9 +154,11 @@ export default function TicketCentralPage() {
     refreshStats();
   }, [tableRefetch, refreshStats]);
   const bulk = useBulkUpdate('tickets', refresh);
-  // null = closed; a row = edit that ticket; NEW = the add form. Same component
-  // either way, so the two layouts cannot drift apart.
+  // null = closed; a row = edit that ticket. Adding is no longer this modal's
+  // job — new tickets are typed into the inline grid below, so the modal is only
+  // ever an EDIT form now and never has to render an empty one.
   const [formTicket, setFormTicket] = useState(null);
+  const [entryOpen, setEntryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   if (!canView('ticket_central')) return <NoAccessPage module="Ticket Central" />;
@@ -137,7 +173,12 @@ export default function TicketCentralPage() {
   const isMR = user.role === 'market_research' || user.role === 'admin';
   // `status` is a registered filter_spec field on TicketViewSet, so the tab is
   // evaluated by the database over all 35,690 rows rather than over one page.
-  const serverCriteria = tab ? [{ field: 'status', op: 'is', value: tab }] : null;
+  // The tab and any linked-in criteria are ANDed together, which is what lets a
+  // Mining Matrix link be narrowed further by clicking a status tab.
+  const linked = linkedCriteria(params);
+  const criteria = [...(tab ? [{ field: 'status', op: 'is', value: tab }] : []), ...linked];
+  const serverCriteria = criteria.length ? criteria : null;
+  const linkedPurpose = (params.get('purpose') || '').trim();
 
   return (
     <>
@@ -148,7 +189,7 @@ export default function TicketCentralPage() {
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))}
         actions={<div className="ph-act">
           {user.role === 'admin' ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Smart import</button> : null}
-          {isMR && can('create', 'ticket_central') ? <button className="btn btn-p" onClick={() => setFormTicket('NEW')}><Icon name="plus" size={15} />New ticket</button> : null}
+          {isMR && can('create', 'ticket_central') && !entryOpen ? <button className="btn btn-p" onClick={() => setEntryOpen(true)}><Icon name="plus" size={15} />New tickets</button> : null}
           {/* HP only — ClearAllButton renders nothing for anyone else, mirroring
               IsHPAccount on tickets/clear_all/. The endpoint already existed; there
               was simply no way to reach it from the UI. */}
@@ -158,7 +199,35 @@ export default function TicketCentralPage() {
         </div>}
       />
 
-      <DataTable
+      {/* The grid REPLACES the table while it is open rather than sitting above
+          it. It owns arrow keys, Tab, Enter and Ctrl+C/V, and a scrolling table
+          underneath would compete for every one of them. */}
+      {entryOpen ? (
+        <TicketEntryGrid
+          onClose={() => setEntryOpen(false)}
+          onSaved={refresh}
+        />
+      ) : (
+        <>
+          {linked.length ? (
+            /* Says what arrived in the URL, and undoes it in one click. Without
+               this the rows would simply be missing with nothing on screen
+               accounting for it — the table's own filter bar cannot show these,
+               because they are not in its `conds` (see linkedCriteria above). */
+            <div className="lnk-filter">
+              <Icon name="filter" size={14} />
+              <span>
+                Showing{' '}
+                {params.get('unmined') === '1' ? <b>unmined</b> : 'all'} tickets
+                {linkedPurpose ? <> for <b className="mono">{linkedPurpose}</b></> : null}
+              </span>
+              <button className="btn btn-sm btn-s" onClick={() => setParams({}, { replace: true })}>
+                <Icon name="x" size={12} />Clear
+              </button>
+            </div>
+          ) : null}
+
+          <DataTable
         // Renamed from 'tickets' on purpose. Column visibility is persisted per
         // tableId (localStorage), and every user who had opened this page carried
         // a stored `hidden` set from the OLD default — which hid twelve of the
@@ -170,7 +239,11 @@ export default function TicketCentralPage() {
         serverParams={{ period }}
         onServerReady={keepRefetch}
         noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={1000}
-        defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"
+        // ASCENDING. Added Time is the row's own insert stamp, so oldest first
+        // puts the newest ticket at the END of the table, which is where the
+        // entry grid leaves a batch and how people read one back. Matches
+        // Ticket.Meta.ordering, so the server and the header arrow agree.
+        defaultSort={{ key: 'created_at', dir: 'asc' }} searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}
         // TK_COLS, not tkCols(). The call returned a fresh array on every render,
@@ -200,7 +273,9 @@ export default function TicketCentralPage() {
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
           </div>
         )}
-      />
+          />
+        </>
+      )}
 
       {bulk.ready ? (
         <BulkUpdateModal {...bulk.props} rowLabel="ticket" totalMatching={S.total} />
@@ -208,7 +283,7 @@ export default function TicketCentralPage() {
 
       {formTicket ? (
         <TicketFormModal
-          ticket={formTicket === 'NEW' ? null : formTicket}
+          ticket={formTicket}
           onClose={() => setFormTicket(null)}
           onSaved={refresh}
         />

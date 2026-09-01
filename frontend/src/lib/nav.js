@@ -64,6 +64,11 @@ export const NAV = [
   { g: 'Insights', items: [
     { id: 'dashboard', l: 'Dashboard', ic: 'grid', needsAny: DASH_MODULES, path: '/dashboard' },
     { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', path: '/performance' },
+    // Its own module, not a corner of ticket_central: the matrix aggregates
+    // tickets but it is a capacity-planning surface, and ticket_central's grant
+    // carries create/update/delete over the live queue. See CRM_MODULES in
+    // backend/accounts/models.py and migration 0029.
+    { id: 'mining_matrix', l: 'Mining Matrix', ic: 'chart', mod: 'mining_matrix', path: '/mining-matrix' },
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },

@@ -57,6 +57,41 @@ export function create(payload) {
   const { ticket_number, ...body } = payload;
   return http.post('tickets/', body).then((r) => toFrontend(r.data));
 }
+/**
+ * Purpose codes in use, commonest first — the entry grid's picker.
+ *
+ * Unscoped server-side on purpose: a new MR user owns no tickets, and offering
+ * only their own purposes would leave the dropdown empty on day one.
+ */
+export const purposes = () => http.get('tickets/purposes/').then((r) => r.data);
+
+/**
+ * Has this link been raised before, for a whole batch of rows at once.
+ *
+ * `rows` is [{ link_url, purpose }] and the answer comes back in the SAME
+ * ORDER, one entry per row: { severity: 'block'|'warn'|null, matches, total }.
+ * One request and one indexed query for the batch — never call this per row in
+ * a loop, that is the shape it exists to avoid.
+ */
+export function checkLinks(rows) {
+  return http.post('tickets/check_links/', { rows }).then((r) => r.data.results);
+}
+
+/**
+ * Create a batch of tickets IN THE ORDER GIVEN.
+ *
+ * Not `Promise.all(rows.map(create))`: that fires concurrently, so created_at —
+ * the "Added Time" the table sorts by — would not follow the order the rows
+ * were typed. The server inserts them in sequence inside one transaction.
+ *
+ * All or nothing. A 400 carries { detail, errors: { "<row index>": {field: msg} } }
+ * and creates nothing, so the grid can mark the offending cells while keeping
+ * everything the user typed.
+ */
+export function bulkCreate(rows) {
+  return http.post('tickets/bulk_create/', { rows }).then((r) => r.data);
+}
+
 export function bulkSubmit(ids) {
   assertIdArray(ids, 'tickets.bulkSubmit');
   return mapLimit(ids, SUBMIT_CONCURRENCY, (id) => submitToDMD(id).then(() => 1).catch(() => 0))

@@ -75,7 +75,10 @@ class Ticket(models.Model):
     # D3: was URLField(500) — ~33% of Zoho data overflows, so plain TextField.
     link_url                = models.TextField(blank=True, default="")
     linkedin_keywords       = models.CharField(max_length=500, blank=True, default="")
-    duplicate_tickets       = models.CharField(max_length=255, blank=True, default="")
+    # `duplicate_tickets` used to live here, a free-text column where Zoho wrote
+    # "⚠️ <earlier ticket number>" by hand. Repeats are detected live now, off
+    # link_key below, so the column was dropped in migration 0008 rather than
+    # left to disagree with the check.
     competitor_event_name   = models.CharField(max_length=255, blank=True, default="")
     organizer               = models.CharField(max_length=255, blank=True, default="")
     event_month_year        = models.DateField(null=True, blank=True)
@@ -115,7 +118,23 @@ class Ticket(models.Model):
     dm_comments_lx2         = models.TextField(blank=True, default="")
 
     # D16: preserve Zoho "Added User" as free text (no FK resolution).
+    # Also the second half of who-may-see-this: get_queryset() scopes a
+    # non-exempt role to created_by OR this, so an import that names a real
+    # person hands them their own rows. Indexed on Upper() below, because
+    # __iexact compiles to UPPER(col) = UPPER(%s) and a bare-column index is
+    # not matched against that expression.
     added_user_text         = models.CharField(max_length=150, blank=True, default="")
+
+    # ── Repeated-link detection ──────────────────────────────────────────
+    # A stable digest of link_url, normalised (see utils.normalize_link), kept
+    # in step by save(). A real column rather than a functional index on
+    # link_url for two reasons: normalisation drops the scheme, "www." and any
+    # trailing slash, which no index expression could reproduce; and link_url is
+    # an unbounded TextField, where a btree index risks the 2704-byte row limit
+    # on a long URL and would fail at INSERT time rather than at migrate time.
+    link_key                = models.CharField(
+        max_length=40, blank=True, default="", db_index=True,
+    )
 
     # ── Audit / lifecycle ────────────────────────────────────────────────
     created_by       = models.ForeignKey(
@@ -144,7 +163,20 @@ class Ticket(models.Model):
 
     class Meta:
         db_table = "tickets"
-        ordering = ["-created_at"]
+        # ASCENDING, oldest first: Added Time is the row's own insert stamp, so
+        # ascending puts the newest entry at the END of the table, which is how
+        # the inline entry grid builds a batch and how people read it back.
+        #
+        # The descending indexes below are still the right ones and did NOT need
+        # rebuilding: PostgreSQL scans a btree backwards, and (-created_at, -id)
+        # reversed is exactly (created_at, id). Measured with EXPLAIN after the
+        # flip, on 42,912 rows:
+        #   status tab   → Index Only Scan Backward, no sort at all
+        #   plain list   → Index Scan Backward on the single-column created_at
+        #                  index, plus an Incremental Sort for the id tiebreak,
+        #                  which only ever sorts within one tied timestamp
+        # so the first page stays a cheap partial scan either way.
+        ordering = ["created_at", "id"]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["event_code"]),
@@ -199,7 +231,31 @@ class Ticket(models.Model):
                      name="tickets_assigned_mr_trgm_idx"),
             GinIndex(OpClass(Upper("assign_name"), name="gin_trgm_ops"),
                      name="tickets_assign_name_trgm_idx"),
+            # Equality, not substring, so a plain btree on the same expression
+            # __iexact emits. Feeds the per-user scope in get_queryset().
+            models.Index(Upper("added_user_text"),
+                         name="tickets_added_user_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        """
+        Keep link_key in step with link_url.
+
+        Imported here rather than at module scope because utils imports this
+        model. When a caller passes update_fields, link_key is added to it only
+        if link_url is in there — otherwise a targeted save (the workflow
+        transitions all use one) would widen into a column it did not touch.
+        """
+        from .utils import link_digest
+
+        self.link_key = link_digest(self.link_url)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if "link_url" in update_fields:
+                update_fields.add("link_key")
+                kwargs["update_fields"] = list(update_fields)
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.ticket_number or '(pending)'} — {self.purpose[:40]}"

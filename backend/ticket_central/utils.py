@@ -32,6 +32,11 @@ IMPORT_HIDDEN_FIELDS = frozenset({
     "created_by", "mr_submitted_by", "mr_submitted_at",
     "dmd_submitted_by", "dmd_submitted_at",
     "returned_by", "returned_at", "return_reason",
+    # Derived from link_url by Ticket.save(), never typed. A spreadsheet column
+    # mapped onto it would be overwritten on the way in at best, and at worst —
+    # if it ever stopped being recomputed — would quietly break the repeated-link
+    # check for every row it touched.
+    "link_key",
 })
 
 
@@ -136,6 +141,144 @@ def _parse_int(v):
         return int(float(s)) if ("." in s) else int(s)
     except (ValueError, TypeError):
         return None
+
+
+# ── Repeated-link detection ─────────────────────────────────────────────────
+#
+# Replaces the old hand-typed `duplicate_tickets` column (dropped in 0008).
+#
+# The rule, and why it is not "warn on any repeat": repeating a link under a
+# DIFFERENT purpose is normal practice here. In the live table 1,929 links
+# already appear more than once, and one directory page is used nine times
+# across eight purposes. A blanket warning would fire on a large share of rows
+# and be trained away within a week. So:
+#
+#   same link, same purpose, earlier ticket newer than DUP_BLOCK_DAYS  → block
+#   same link, same purpose, earlier ticket older than that            → warn
+#   same link, different purpose                                       → warn
+#
+# Only the first case refuses the save. The other two carry the earlier ticket
+# number and its purpose so whoever is typing can decide.
+DUP_BLOCK_DAYS = 90
+
+SEVERITY_BLOCK = "block"
+SEVERITY_WARN = "warn"
+
+
+def normalize_link(url):
+    """
+    The comparable form of a link.
+
+    Case, surrounding whitespace, the scheme, a leading "www." and any trailing
+    slash are all noise for "is this the same page", so they come off. Query
+    strings stay: ?page=2 is a different listing, and dropping tracking
+    parameters selectively would need a rule per site.
+    """
+    s = (url or "").strip().lower()
+    if not s:
+        return ""
+    for scheme in ("https://", "http://", "//"):
+        if s.startswith(scheme):
+            s = s[len(scheme):]
+            break
+    if s.startswith("www."):
+        s = s[4:]
+    return s.rstrip("/")
+
+
+def link_digest(url):
+    """
+    Stable 40-char digest of normalize_link(), or "" for a blank link.
+
+    sha1 for the width, not for any security property; this is a lookup key.
+    """
+    import hashlib
+
+    norm = normalize_link(url)
+    if not norm:
+        return ""
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()
+
+
+def _purpose_matches(a, b):
+    return (a or "").strip().upper() == (b or "").strip().upper()
+
+
+def find_link_matches(pairs, exclude_ids=None, limit_per_row=5):
+    """
+    For each (link_url, purpose) pair, the existing tickets on the same link.
+
+    Returns a list the same length as `pairs`; each entry is
+        {"severity": "block"|"warn"|None, "matches": [ {...}, ... ]}
+    with matches newest first. One query for the whole batch, keyed on the
+    indexed link_key column, so a 40-row paste costs a single round trip.
+    """
+    exclude_ids = set(exclude_ids or ())
+    out = [{"severity": None, "matches": []} for _ in pairs]
+
+    digests = {}
+    for i, (link, _purpose) in enumerate(pairs):
+        d = link_digest(link)
+        if d:
+            digests.setdefault(d, []).append(i)
+    if not digests:
+        return out
+
+    cutoff = timezone.now() - timedelta(days=DUP_BLOCK_DAYS)
+    rows = (
+        Ticket.objects
+        .filter(link_key__in=list(digests))
+        .exclude(id__in=exclude_ids)
+        .order_by("-created_at")
+        .values("id", "ticket_number", "purpose", "link_url",
+                "created_at", "link_key", "status")
+    )
+
+    by_key = {}
+    for row in rows:
+        by_key.setdefault(row["link_key"], []).append(row)
+
+    for digest, idxs in digests.items():
+        found = by_key.get(digest, [])
+        if not found:
+            continue
+        for i in idxs:
+            purpose = pairs[i][1]
+            matches, severity = [], None
+            for row in found[:limit_per_row]:
+                same = _purpose_matches(row["purpose"], purpose)
+                recent = row["created_at"] >= cutoff
+                if same and recent:
+                    row_sev = SEVERITY_BLOCK
+                elif same:
+                    row_sev = SEVERITY_WARN
+                else:
+                    row_sev = SEVERITY_WARN
+                if row_sev == SEVERITY_BLOCK:
+                    severity = SEVERITY_BLOCK
+                elif severity is None:
+                    severity = SEVERITY_WARN
+                matches.append({
+                    "id": row["id"],
+                    "ticket_number": row["ticket_number"],
+                    "purpose": row["purpose"],
+                    "status": row["status"],
+                    "created_at": row["created_at"].isoformat(),
+                    "same_purpose": same,
+                    "within_window": recent,
+                    "severity": row_sev,
+                })
+            # Most decisive first, not merely newest. One directory page in the
+            # live table carries nine earlier tickets across eight purposes, and
+            # both the grid's warning and the create serializer's error read
+            # matches[0] — leading with a same-purpose match means the message
+            # names the ticket that actually decides whether this row is a
+            # mistake, instead of whichever one happens to be newest.
+            matches.sort(key=lambda m: (not m["same_purpose"],
+                                        not m["within_window"]))
+            out[i] = {"severity": severity, "matches": matches,
+                      "total": len(found)}
+    return out
 
 
 # ── Auto-generation helpers (mirror Zoho Deluge logic) ──────────────────────

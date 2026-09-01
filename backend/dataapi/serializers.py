@@ -133,7 +133,7 @@ class DataApiTicketSerializer(serializers.ModelSerializer):
         model = Ticket
         fields = [
             "id", "ticket_number", "external_id", "event_code", "event_name", "status",
-            "purpose", "link_url", "linkedin_keywords", "duplicate_tickets",
+            "purpose", "link_url", "linkedin_keywords",
             "competitor_event_name", "organizer", "event_month_year", "event_location",
             "relationship", "type_of_ticket", "priority", "estimate", "mr_comments",
             "assigned_mr",

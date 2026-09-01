@@ -31,6 +31,7 @@ const BookingsPage = lazy(() => import('./pages/BookingsPage'));
 const TicketCentralPage = lazy(() => import('./pages/TicketCentralPage'));
 const EventsPage = lazy(() => import('./pages/EventsPage'));
 const EventPerformancePage = lazy(() => import('./pages/EventPerformancePage'));
+const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
@@ -105,6 +106,7 @@ export default function App() {
                 <Route path="proposal-submission" element={<ProposalSubmissionPage />} />
                 <Route path="events" element={<EventsPage />} />
                 <Route path="performance" element={<EventPerformancePage />} />
+                <Route path="mining-matrix" element={<MiningMatrixPage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />
                 <Route path="teams" element={<TeamsManagementPage />} />

@@ -383,6 +383,13 @@ CRM_MODULES = [
     # ahead of the real feature; every existing role is backfilled all-False
     # by migration 0020, so nothing is visible until it is granted.
     "paper_review", "proposal_submission",
+    # Mining Resource Matrix. Its own module rather than a corner of
+    # ticket_central: the matrix aggregates tickets but its audience is whoever
+    # schedules mining capacity, and folding the two together would mean nobody
+    # could be given the planning view without also being given the ticket queue
+    # and its create/update rights. Backfilled all-False by migration 0029, so
+    # nothing is visible until it is granted.
+    "mining_matrix",
 ]
 
 PERM_ACTIONS = ("view", "create", "update", "delete")

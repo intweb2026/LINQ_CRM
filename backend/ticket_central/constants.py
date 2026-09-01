@@ -5,7 +5,7 @@ Single source of truth for field ownership.
 """
 
 MR_FIELDS = frozenset([
-    "purpose", "link_url", "linkedin_keywords", "duplicate_tickets",
+    "purpose", "link_url", "linkedin_keywords",
     "competitor_event_name", "organizer", "event_month_year",
     "event_location", "relationship", "type_of_ticket",
     "priority", "estimate", "mr_comments", "assigned_mr",
@@ -31,7 +31,7 @@ DMD_WORK_FIELDS = frozenset([
 
 # Used for status inference — these signal MR has done their part
 MR_ACTIVITY_FIELDS = frozenset([
-    "purpose", "link_url", "linkedin_keywords", "duplicate_tickets",
+    "purpose", "link_url", "linkedin_keywords",
     "competitor_event_name", "organizer", "event_month_year",
     "event_location", "relationship", "type_of_ticket",
     "priority", "estimate", "mr_comments", "assigned_mr",
