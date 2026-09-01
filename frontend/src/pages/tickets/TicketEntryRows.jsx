@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../lib/icons';
-import { TK_PRIORITY, TK_TYPES } from '../../lib/constants';
+import { TK_PRIORITY, TK_RELATIONSHIPS, TK_TYPES } from '../../lib/constants';
 import * as ticketsApi from '../../api/tickets';
 import { useFetch } from '../../hooks/useFetch';
 import { useSession } from '../../context/SessionContext';
@@ -80,6 +80,14 @@ const MR_FIELDS = {
  *   only ever DISPLAYS month and year (helpers.fmy), so the editor asks for a
  *   month and the submit expands it to the first of that month.
  */
+// The third override, same trap as type_of_ticket. The model enum spells these
+// lowercase ("direct"), while the table's own filter list, the ticket form and
+// every other surface offer "Direct". The column happens to be empty in all
+// 42,912 rows, so there is no stored convention to preserve — which makes it a
+// free choice, and the grid should not be the one place that writes a form the
+// rest of the UI never shows.
+const RELATIONSHIP_OVERRIDE = TK_RELATIONSHIPS;
+
 function fieldKind(key, schemaEntry) {
   if (key === 'type_of_ticket' || key === 'purpose' || key === 'assigned_mr') return 'pick';
   if (key === 'event_month_year') return 'month';
@@ -355,6 +363,7 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
   const optionsFor = useCallback((key) => {
     if (key === 'purpose') return purposeOpts;
     if (key === 'type_of_ticket') return TK_TYPES;
+    if (key === 'relationship') return RELATIONSHIP_OVERRIDE;
     return (fields[key] && fields[key].choices) || [];
   }, [purposeOpts, fields]);
 
