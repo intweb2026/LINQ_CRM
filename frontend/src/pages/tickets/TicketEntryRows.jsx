@@ -206,6 +206,7 @@ function CellEditor({ field, initial, options, seeded, onCommit, onCancel }) {
   // editor, and the input's blur then fires on the way out — without this latch
   // that second commit writes the half-typed text over the option just picked.
   const settled = useRef(false);
+  const focused = useRef(false);
   const finish = (val, dir) => {
     if (settled.current) return;
     settled.current = true;
@@ -224,6 +225,7 @@ function CellEditor({ field, initial, options, seeded, onCommit, onCancel }) {
     const el = ref.current;
     if (!el) return;
     el.focus();
+    focused.current = true;
     if (!el.value) return;
     if (seeded) el.setSelectionRange(el.value.length, el.value.length);
     else el.select();
@@ -276,7 +278,7 @@ function CellEditor({ field, initial, options, seeded, onCommit, onCancel }) {
         placeholder={field.ph || ''}
         onChange={(e) => { setQ(e.target.value); setIx(0); }}
         onKeyDown={key}
-        onBlur={() => finish(value(), null)}
+        onBlur={() => { if (focused.current) finish(value(), null); }}
       />
       {field.kind === 'pick' ? (
         <div className="eg-pop" role="listbox">
@@ -749,6 +751,8 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
                 <td className={'eg-gut' + (pins && pins.size ? ' pin-col' : '')}
                   style={pins && pins.size ? { left: 0 } : undefined}>
                   <span className={'eg-dot ' + rowState(r)} title={rowState(r) || 'not started yet'} />
+                  {/* The number the footer's messages refer to, "Row 3. …". */}
+                  <span className="eg-rn">{r + 1}</span>
                   <button
                     type="button"
                     className="eg-x"
@@ -803,7 +807,18 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
                     style={pin ? { left: pin.left } : undefined}
                     title={issue ? issue.msg : undefined}
                     onMouseDown={(ev) => {
-                      if (ev.shiftKey) { setCur({ r, c }); return; }
+                      // preventDefault is LOAD-BEARING. Without it the browser
+                      // runs mousedown's default focus change straight after
+                      // this handler, which pulls focus off the input the editor
+                      // just mounted and focused; the input blurs, onBlur
+                      // commits and closes, and the click looks like it did
+                      // nothing at all. It also stops the drag-select of text.
+                      ev.preventDefault();
+                      if (ev.shiftKey) {
+                        setCur({ r, c });
+                        if (bandRef.current) bandRef.current.focus();
+                        return;
+                      }
                       setCur({ r, c }); setAnchor({ r, c });
                       setEditing({ r, c, seed: null });
                     }}

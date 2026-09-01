@@ -48,6 +48,11 @@ html[data-theme=dark] .dt-band { box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, .5);
 .eg-t td {
   height: 30px;
   padding: 0;
+  /* The shared rule, `table.dt tbody td`, sets overflow:hidden so a long value
+     ellipsises. Here that clipped the in-cell editor and hid its dropdown list
+     inside the cell entirely. Truncation still happens, on .eg-v, which keeps
+     its own overflow — the CELL has to let the editor out. */
+  overflow: visible;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--t-50);    /* a draft row reads as pending, not as a record */
@@ -57,6 +62,10 @@ html[data-theme=dark] .dt-band { box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, .5);
 
 /* Row gutter: state dot, and the only way to drop one row. */
 .eg-gut { text-align: center; white-space: nowrap; }
+.eg-rn {
+  font-family: var(--mono); font-size: 10px; color: var(--text-4);
+  vertical-align: middle; margin-right: 2px;
+}
 .eg-dot {
   display: inline-block;
   width: 6px; height: 6px;
