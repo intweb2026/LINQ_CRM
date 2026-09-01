@@ -58,7 +58,15 @@ const ROW_HEIGHT = 44;
  * is what keeps a short column like "Ref" narrow and "Delegate Company" wide
  * without every page having to hand-tune pixel numbers itself.
  */
-function colWidth(col) {
+/**
+ * Exported for `entryBand` callers only.
+ *
+ * A band rendered under the rows has to build a <colgroup> IDENTICAL to the
+ * table's or its cells will not line up with the headers above them, and the
+ * only way to guarantee that is to measure the columns with the same function
+ * rather than a second copy of the rules.
+ */
+export function colWidth(col) {
   if (col.width) return col.width;
   /**
    * Every width is measured from the LABEL, including numeric columns.
@@ -76,6 +84,12 @@ function colWidth(col) {
    * character, and the sort padding (16px) + funnel button (26px) + sort
    * chevron (15px) come to ~57px.
    */
+  // An explicit width wins outright. Needed by any column whose CELL is wider
+  // than its header — a merged "Dates" column reading "12 Feb 2027 - 14 Feb 2027"
+  // under a five-character label would otherwise be sized to the label and clip
+  // its own content. It is also what makes a PINNED column's offset predictable:
+  // see pinLefts below, which sums these widths.
+  if (col.w) return col.w;
   const label = col.label.length * 8 + 60;
   if (col.num) return Math.max(96, Math.min(200, label));
   if (col.cls === 'st') return 220;
@@ -604,12 +618,14 @@ function sortHint(col, dir) {
  * the funnel is a separate button that opens the filter editor. Two separate controls because one button cannot both sort and
  * open a popover, which is why sorting was previously unreachable.
  */
-function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove }) {
+function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove, pin }) {
   const active = cond ? condActive(cond) : false;
   const value = cond || blankCond(col);
   const dir = sort && sort.key === col.key ? sort.dir : null;
   return (
-    <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '') + (active ? 'act' : '')}>
+    <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '')
+      + (pin ? 'pin-col ' + (pin.last ? 'pin-last ' : '') : '') + (active ? 'act' : '')}
+      style={pin ? { left: pin.left } : undefined}>
       <div className="th-w">
         {/* Balances the filter funnel on the right so the label lands on the
             column's true centre — the same axis the value below it sits on.
@@ -713,7 +729,7 @@ function EditMenu({ row, col, close }) {
  *
  * Every other prop is a primitive or a stable callback, see rowClick/toggleRow.
  */
-const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle }) {
+const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle, pins }) {
   return (
     <tr
       className={selected ? 'sel' : ''}
@@ -721,14 +737,23 @@ const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, o
       style={onClick ? { cursor: 'pointer' } : undefined}
     >
       {select ? (
-        <td className="ck" onClick={(e) => e.stopPropagation()}>
+        /* Pinned along with the columns when any of them are, or the checkbox
+           would scroll away UNDER them and leave the row with no way to be
+           ticked once the table is scrolled right. */
+        <td className={'ck' + (pins && pins.size ? ' pin-col' : '')}
+          style={pins && pins.size ? { left: 0 } : undefined}
+          onClick={(e) => e.stopPropagation()}>
           <input type="checkbox" className="ck" checked={selected} onChange={() => onToggle(row.id)} aria-label="Select row" />
         </td>
       ) : null}
       {cols.map((c) => {
         const v = row[c.key];
+        const pin = pins ? pins.get(c.key) : null;
         return (
-          <td key={c.key} className={(c.num ? 'num ' : '') + (c.cls || '')}>
+          <td key={c.key}
+            className={(c.num ? 'num ' : '') + (c.cls ? c.cls + ' ' : '')
+              + (pin ? 'pin-col' + (pin.last ? ' pin-last' : '') : '')}
+            style={pin ? { left: pin.left } : undefined}>
             {c.editOpts && canEdit ? <EditableCell row={row} col={c} value={v} /> : c.cell ? c.cell(v, row) : v == null || v === '' ? <span className="dim">—</span> : v}
           </td>
         );
@@ -778,6 +803,22 @@ export default function DataTable({
   // mere presence of editOpts, which handed a read-only role a working status
   // editor whose PATCH the server then rejected with a 403 nobody surfaced.
   canEdit = false,
+  /**
+   * Extra rows pinned under the table, for typing NEW records into it.
+   *
+   * A render function, called with { cols, select, colWidth }: the columns
+   * actually on screen after the Columns menu and the caller's hiddenDefault,
+   * whether the checkbox column is present, and the width function — everything
+   * needed to build a <colgroup> that matches this table exactly.
+   *
+   * It renders INSIDE the scroll box, so the band shares one horizontal scroll
+   * with the rows and the columns stay aligned with the headers for free. It is
+   * also rendered when the table has no rows at all, which is the normal state
+   * for someone whose first action here is to add some.
+   *
+   * Undefined for every other page, and then nothing is rendered.
+   */
+  entryBand = null,
   // Receives the table's `refetch` so a parent can reload after a write. Only
   // the function is handed out, never the whole fetch state: that object has a
   // new identity every render, so a parent storing it in state would re-render
@@ -857,6 +898,49 @@ export default function DataTable({
   // give each row a changed prop on every render and defeat the memo on Row. This
   // only holds as far as the caller's `cols` is itself stable — see Row.
   const activeCols = useMemo(() => cols.filter((c) => !hidden.has(c.key)), [cols, hidden]);
+
+  /**
+   * FROZEN COLUMNS — left offsets for the LEADING RUN of columns declaring `pin`.
+   *
+   * A column marked `pin: true` stays put while the rest of the table scrolls
+   * sideways. It exists for the wide matrix tables, where the identity of a row
+   * (its code, its dates) scrolls out of sight long before the reader reaches the
+   * column they are trying to read, and a number with nothing naming it is worth
+   * nothing.
+   *
+   * THE OFFSETS ARE SUMMED FROM colWidth, NOT GUESSED IN CSS. `position: sticky`
+   * needs an exact `left` per column, and the existing hand-written .pin1/.pin2
+   * rules could only do that by hardcoding both widths (see components.css). This
+   * table is `table-layout: fixed` with a <colgroup> built from colWidth, so the
+   * same function that decides a column's width decides where the next pinned one
+   * starts — they cannot drift apart, and hiding a pinned column through the
+   * Columns menu simply recomputes the rest.
+   *
+   * LEADING RUN ONLY, so the loop BREAKS rather than continues at the first
+   * unpinned column. A pinned column with a scrolling one before it would sit at
+   * an offset that stops describing where it actually is the moment the table
+   * moves, and would slide over its own neighbours.
+   *
+   * Memoised because it is a prop on every rendered Row, which is memo'd: a fresh
+   * Map here would change that prop on every render and defeat the memo across
+   * the whole table.
+   */
+  const pins = useMemo(() => {
+    const out = new Map();
+    let left = select ? 40 : 0;
+    let lastKey = null;
+    for (const c of activeCols) {
+      if (!c.pin) break;
+      out.set(c.key, { left, last: false });
+      lastKey = c.key;
+      left += colWidth(c);
+    }
+    // The last one carries the edge shadow that separates the frozen block from
+    // the scrolling remainder — the only cue that the table has more to the right.
+    if (lastKey) out.set(lastKey, { left: out.get(lastKey).left, last: true });
+    return out;
+  }, [activeCols, select]);
+
   const serverMode = !!(server && server.resource);
 
   // ── Server-side spec + ordering ───────────────────────────────────────────
@@ -1636,7 +1720,8 @@ export default function DataTable({
                        selected — clicking it again is the clear — because with
                        whole-set selection the useful second click is "none",
                        not "this page as well". */
-                    <th className="ck"><input type="checkbox" className="ck"
+                    <th className={'ck' + (pins.size ? ' pin-col' : '')}
+                      style={pins.size ? { left: 0 } : undefined}><input type="checkbox" className="ck"
                       checked={sel.size > 0}
                       ref={(el) => { if (el) el.indeterminate = sel.size > 0 && !selAll && total > sel.size; }}
                       onChange={toggleAll}
@@ -1653,8 +1738,12 @@ export default function DataTable({
                     // <th> put its label flush at 0px while its cells sat at
                     // 12px — the identical off-by-a-padding bug .dt-form had.
                     if (c.sortable === false) {
+                      const p = pins.get(c.key);
                       return (
-                        <th key={c.key} className={c.num ? 'num' : ''}>
+                        <th key={c.key}
+                          className={(c.num ? 'num ' : '')
+                            + (p ? 'pin-col' + (p.last ? ' pin-last' : '') : '')}
+                          style={p ? { left: p.left } : undefined}>
                           <div className="th-w"><span className="th-sort th-nosort">{c.label}</span></div>
                         </th>
                       );
@@ -1667,6 +1756,7 @@ export default function DataTable({
                     const canSort = !serverMode || !!c.serverOrdering;
                     return (
                       <HeaderCell key={c.key} col={c} cond={cond} sort={sort} canSort={canSort}
+                        pin={pins.get(c.key)}
                         onSort={() => cycleSort(c.key)}
                         onChange={(next) => setColFilter(c.key, next)}
                         onRemove={() => removeCond(c.key)}
@@ -1693,6 +1783,7 @@ export default function DataTable({
                     selected={sel.has(r.id)}
                     select={select}
                     canEdit={canEdit}
+                    pins={pins}
                     onClick={onRow ? rowClick : null}
                     onToggle={toggleRow}
                   />
@@ -1705,6 +1796,12 @@ export default function DataTable({
               </tbody>
             </table>
             {moreBar}
+            {/* Sticky to the bottom of THIS box, so it is reachable at any
+                scroll position — the table is sorted oldest first and the true
+                last row can be 42,912 down. */}
+            {entryBand ? (
+              <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
+            ) : null}
           </div>
           <Footer />
         </div>
@@ -1713,6 +1810,15 @@ export default function DataTable({
       ) : (
         <>
           {emptyState}
+          {/* The band belongs here too. A scoped MR user starts with no tickets
+              at all, so this branch — not the one above — is where they will do
+              their first entry, and hiding it here would leave them looking at
+              "No Tickets Found" with nothing to type into. */}
+          {entryBand ? (
+            <div className="tw dt-tw dt-band-only"><div className="tsc">
+              <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
+            </div></div>
+          ) : null}
           <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
         </>
       )}

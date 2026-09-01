@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
@@ -16,7 +16,7 @@ import { apiErrorMessage } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 import TicketFormModal from './tickets/TicketFormModal';
-import TicketEntryGrid from './tickets/TicketEntryGrid';
+import TicketEntryRows from './tickets/TicketEntryRows';
 import ImportWizard from '../components/ImportWizard';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
@@ -166,7 +166,13 @@ export default function TicketCentralPage() {
   // job — new tickets are typed into the inline grid below, so the modal is only
   // ever an EDIT form now and never has to render an empty one.
   const [formTicket, setFormTicket] = useState(null);
-  const [entryOpen, setEntryOpen] = useState(false);
+  // Handle the entry band registers on mount, so "New tickets" can ask it for a
+  // row. A ref, not state: the band owns the drafts (and persists them), and
+  // copying that count up here would be a second source of truth for it.
+  const entryRef = useRef(null);
+  const addEntryRow = useCallback(() => {
+    if (entryRef.current) entryRef.current.addRows(1);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
 
   if (!canView('ticket_central')) return <NoAccessPage module="Ticket Central" />;
@@ -197,7 +203,7 @@ export default function TicketCentralPage() {
       <Tabs list={TABS} active={tab} onPick={(id) => nav('/tickets' + (id ? '/' + id : ''))}
         actions={<div className="ph-act">
           {user.role === 'admin' ? <button className="btn btn-s" onClick={() => setImportOpen(true)}><Icon name="download" size={15} />Smart import</button> : null}
-          {isMR && can('create', 'ticket_central') && !entryOpen ? <button className="btn btn-p" onClick={() => setEntryOpen(true)}><Icon name="plus" size={15} />New tickets</button> : null}
+          {isMR && can('create', 'ticket_central') ? <button className="btn btn-p" onClick={addEntryRow}><Icon name="plus" size={15} />New ticket row</button> : null}
           {/* HP only — ClearAllButton renders nothing for anyone else, mirroring
               IsHPAccount on tickets/clear_all/. The endpoint already existed; there
               was simply no way to reach it from the UI. */}
@@ -207,16 +213,7 @@ export default function TicketCentralPage() {
         </div>}
       />
 
-      {/* The grid REPLACES the table while it is open rather than sitting above
-          it. It owns arrow keys, Tab, Enter and Ctrl+C/V, and a scrolling table
-          underneath would compete for every one of them. */}
-      {entryOpen ? (
-        <TicketEntryGrid
-          onClose={() => setEntryOpen(false)}
-          onSaved={refresh}
-        />
-      ) : (
-        <>
+      <>
           {linked.length ? (
             /* Says what arrived in the URL, and undoes it in one click. Without
                this the rows would simply be missing with nothing on screen
@@ -269,6 +266,13 @@ export default function TicketCentralPage() {
         // editor only where the page says the viewer may write, so this has to be
         // passed explicitly or the column goes read-only.
         canEdit={can('update', 'ticket_central')}
+        // New tickets are typed into the table itself: DataTable renders this
+        // inside its scroll box, pinned under the last row, sharing the columns
+        // and the horizontal scroll. It renders nothing until there is a draft,
+        // so the table looks untouched until somebody starts one.
+        entryBand={isMR && can('create', 'ticket_central') ? (band) => (
+          <TicketEntryRows {...band} openRef={entryRef} onCreated={refresh} />
+        ) : null}
         onRow={(r) => setFormTicket(r)}
         bulkActions={(ids, { clear }) => (
           <div className="bulk">
@@ -307,8 +311,7 @@ export default function TicketCentralPage() {
           </div>
         )}
           />
-        </>
-      )}
+      </>
 
       {bulk.ready ? (
         <BulkUpdateModal {...bulk.props} rowLabel="ticket" totalMatching={S.total} />

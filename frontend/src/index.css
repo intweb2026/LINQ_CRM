@@ -38,6 +38,12 @@
                   topbar. Nothing here belongs to one page.
    components.css everything that lives INSIDE #main; the parts a page is
                   assembled out of, from a button up to the whole data table.
+   entrygrid.css  one page's one feature, and the only file here that is not
+                  shared: the rows you type a new ticket into, pinned under the
+                  Ticket Central table. It sits apart because it styles a SECOND
+                  table sharing DataTable's scroll box, and reading those rules
+                  next to the ordinary table rules invites changing one and
+                  breaking the alignment between them.
    overlays.css   the dashboard, and everything that floats ABOVE a page;
                   scrims, drawers, modals, the command palette, toasts, plus
                   the login screen, which is its own full-viewport layout, and
@@ -95,7 +101,8 @@
                           delegate columns in the booking dialogs
    Events                 as Bookings, plus [drawer] for the event drawer and
                           [cards_empty_state] for the card view
-   Ticket Central         as Bookings, plus [kanban_board] for the board view
+   Ticket Central         as Bookings, plus [ticket_entry_band] for the new-row
+                          grid under the table, [kanban_board] for the board view
                           and [richtext_editor] in the ticket dialog
    Paper Review           as Bookings, plus [import_wizard_steps]
                           [import_dropzone] [import_column_mapping]
@@ -193,4 +200,11 @@
    [toasts]                    .tst .ts
    [login_page]                .lgn .lg-
    [responsive_breakpoints]    every @media query; keep it last in the file
+
+   ─────────────────────────────────────────────────────────────────────────────
+   styles/entrygrid.css — Ticket Central's new-row band
+   ─────────────────────────────────────────────────────────────────────────────
+   [ticket_entry_band]         .dt-band .eg-, the draft rows pinned under the
+                               table, their cell states, the in-cell editor and
+                               the Submit strip
    ═════════════════════════════════════════════════════════════════════════ */
