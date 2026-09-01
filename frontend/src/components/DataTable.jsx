@@ -1796,13 +1796,15 @@ export default function DataTable({
               </tbody>
             </table>
             {moreBar}
-            {/* Sticky to the bottom of THIS box, so it is reachable at any
-                scroll position — the table is sorted oldest first and the true
-                last row can be 42,912 down. */}
-            {entryBand ? (
-              <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
-            ) : null}
           </div>
+          {/* Below the scroll box, not inside it: the band carries its own
+              columns now, so sharing the table's horizontal scroll would just
+              drag it sideways under headings that do not describe it. Sitting
+              here it is on screen at any scroll position, which matters in a
+              table sorted oldest-first whose true last row is 42,912 down. */}
+          {entryBand ? (
+            <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
+          ) : null}
           <Footer />
         </div>
       ) : serverMode && serverState.loading ? (
@@ -1815,9 +1817,9 @@ export default function DataTable({
               their first entry, and hiding it here would leave them looking at
               "No Tickets Found" with nothing to type into. */}
           {entryBand ? (
-            <div className="tw dt-tw dt-band-only"><div className="tsc">
+            <div className="tw dt-tw dt-band-only">
               <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
-            </div></div>
+            </div>
           ) : null}
           <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
         </>

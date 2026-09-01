@@ -3,201 +3,122 @@
 
   The rows you type a NEW ticket into, pinned under the Ticket Central table.
 
-  Two things carry the whole design and are worth reading before editing:
-
-  1. This is a SECOND <table> inside DataTable's own scroll box (.tsc), carrying
-     a <colgroup> built from the same colWidth() the table uses. That is what
-     keeps a draft cell under the heading that names it, and it is why the band
-     scrolls sideways with the rows for nothing. Do not give it widths of its
-     own.
-  2. It is `position: sticky; bottom: 0`, so it stays reachable at any scroll
-     position. The table is sorted oldest first and the real last row can be
-     42,912 down, so a band that scrolled away would be a band nobody could
-     reach.
+  Every cell is a NATIVE control — a real <select>, month picker, number box —
+  which is the whole design: nothing here opens, mounts or positions a custom
+  editor, so nothing here can be broken by focus order or clipping again. The
+  band carries its OWN thirteen columns (the ticket form's field set), sits
+  BELOW DataTable's scroll box rather than inside it, and scrolls sideways on
+  its own when it must.
 
   Every colour is a token from base.css, so both themes come for free.
 */
 
-/* The sticky shell DataTable renders around the band. */
+/* The shell DataTable renders. Empty band, no trace: the component returns null
+   when there are no drafts, and an empty shell must not paint a bar. */
 .dt-band {
-  position: sticky;
-  bottom: 0;
-  z-index: 7;                 /* over the rows, under the sticky header (8+) */
   background: var(--surface);
-  box-shadow: 0 -8px 16px -8px rgba(19, 26, 35, .16);
+  border-top: 2px solid var(--t-500);
 }
-html[data-theme=dark] .dt-band { box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, .5); }
-/* No drafts, no band. The component returns null, leaving the shell genuinely
-   empty, and an empty shell would otherwise still paint its background, border
-   and shadow across the bottom of the table. The :has rule takes the whole
-   placeholder box with it in DataTable's no-rows branch, where the shell is
-   wrapped in a bordered .tw of its own. */
 .dt-band:empty { display: none; }
-/* .dt-band-only is DataTable's NO-ROWS wrapper, and the class matters: the
-   wrapper around the real table has the identical shape, so a selector matching
-   on structure alone would hide the whole table every time there were no
-   drafts — which is most of the time. */
-.dt-band-only:has(> .tsc > .dt-band:empty) { display: none; }
+/* .dt-band-only is DataTable's NO-ROWS wrapper. The class matters: a selector
+   on structure alone could catch the real table's wrapper and hide the whole
+   table whenever there were no drafts, which is most of the time. */
+.dt-band-only:has(> .dt-band:empty) { display: none; }
 
-.eg-band { outline: none; border-top: 2px solid var(--t-500); }
-.eg-band:focus-visible { box-shadow: inset 0 0 0 2px var(--t-200); }
+/* The band's own horizontal scroll, independent of the table's. */
+.eg-scroll { overflow-x: auto; }
 
-/* The band's table inherits .dt .dt-grid from DataTable, so only the
-   differences belong here. */
-.eg-t { user-select: none; }
-.eg-t td {
-  height: 30px;
-  padding: 0;
-  /* The shared rule, `table.dt tbody td`, sets overflow:hidden so a long value
-     ellipsises. Here that clipped the in-cell editor and hid its dropdown list
-     inside the cell entirely. Truncation still happens, on .eg-v, which keeps
-     its own overflow — the CELL has to let the editor out. */
-  overflow: visible;
-  border-right: 1px solid var(--border);
+.eg-t {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  width: max-content;
+}
+.eg-t thead th {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  text-align: left;
+  padding: 6px 8px 4px;
+  white-space: nowrap;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--border);
-  background: var(--t-50);    /* a draft row reads as pending, not as a record */
-  position: relative;
+}
+.eg-rq { color: var(--red); margin-left: 2px; font-size: 11px; }
+
+.eg-t td {
+  padding: 3px 4px;
+  background: var(--t-50);          /* a draft row reads as pending */
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
-/* Row gutter: state dot, and the only way to drop one row. */
-.eg-gut { text-align: center; white-space: nowrap; }
-.eg-rn {
-  font-family: var(--mono); font-size: 10px; color: var(--text-4);
-  vertical-align: middle; margin-right: 2px;
-}
+/* Row gutter: state dot, row number, and the way to drop one row. */
+.eg-t td.eg-gut,
+.eg-t th.eg-gut { text-align: center; white-space: nowrap; padding: 3px 2px; }
 .eg-dot {
   display: inline-block;
   width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--border-s);
   vertical-align: middle;
-  margin-right: 4px;
+  margin-right: 3px;
 }
 .eg-dot.ok { background: var(--green); }
 .eg-dot.warn { background: var(--amber); }
 .eg-dot.bad { background: var(--red); }
+.eg-rn {
+  font-family: var(--mono); font-size: 10px; color: var(--text-4);
+  vertical-align: middle; margin-right: 2px;
+}
 .eg-x {
   border: 0; background: none; padding: 0; cursor: pointer;
   color: var(--text-4); vertical-align: middle; line-height: 1;
-  opacity: 0; transition: opacity .12s var(--ease), color .12s var(--ease);
 }
-.eg-row:hover .eg-x { opacity: 1; }
 .eg-x:hover { color: var(--red); }
-.eg-x:focus-visible { opacity: 1; outline: 2px solid var(--t-500); }
+.eg-x:focus-visible { outline: 2px solid var(--t-500); }
 
-/* Cells */
-.eg-c { cursor: cell; }
-/* 12px, matching `table.dt tbody td`, so a draft value sits on exactly the axis
-   its column heading and the real rows above use. Centring is NOT set here: the
-   band's cells are inside a table.dt tbody, so they already inherit the CRM's
-   one alignment rule, and restating it would be a second place to change. */
-.eg-v {
-  display: block;
-  padding: 0 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12.5px; color: var(--text);
-}
-.eg-c.n .eg-v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; }
-.eg-c.m .eg-v { font-family: var(--mono); font-size: 11.5px; }
-.eg-c.sel { background: var(--t-100); }
-.eg-c.cur { box-shadow: inset 0 0 0 2px var(--t-600); }
-
-/* THE TYPE HAS TO BE VISIBLE. A dropdown that looks exactly like a text box is
-   a dropdown nobody finds: the list only appeared once the cell was opened, so
-   every column read as free text. The chevron marks anything with a list, and
-   the placeholder says what shape of value belongs in an empty cell. */
-.eg-c { padding-right: 0; }
-.eg-chev {
-  position: absolute;
-  right: 3px; top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  color: var(--text-4);
-  pointer-events: none;
-}
-.eg-c:hover .eg-chev { color: var(--t-600); }
-/* Room for the chevron, so a long value does not run under it. */
-.eg-c:has(.eg-chev) .eg-v { padding-right: 18px; }
-.eg-ph { color: var(--text-4); font-style: italic; }
-
-/* Columns a draft cannot hold: the DMD result, the LX-2 pass, the provenance,
-   the stamps. Flat and quiet, so the eye goes to what can be typed. */
-.eg-lock { background: var(--surface-2); }
-.eg-lock .eg-tkn { padding: 0 9px; }
-.eg-tkn { font-family: var(--mono); font-size: 11.5px; color: var(--t-600); }
-.eg-tkn i { color: var(--text-4); font-style: normal; }
-
-/* A value inherited from the row above and not yet touched. A dotted rule, not
-   dimmed text, because dimmed reads as disabled. */
-.eg-v.inh { text-decoration: underline dotted var(--t-400) 1.5px; text-underline-offset: 3px; }
-
-/* Amber says a required field is still empty; red says a value is wrong, or the
-   row is a real duplicate. The message itself is the cell's title. */
-.eg-c.warn { background: var(--amber-bg); }
-.eg-c.bad { background: var(--red-bg); }
-.eg-c.warn::after,
-.eg-c.bad::after {
-  content: "";
-  position: absolute; top: 0; right: 0;
-  border-left: 6px solid transparent;
-}
-.eg-c.warn::after { border-top: 6px solid var(--amber); }
-.eg-c.bad::after { border-top: 6px solid var(--red); }
-
-/* Fill handle, on the bottom-right of the selection. */
-.eg-hnd {
-  position: absolute; right: -3px; bottom: -3px;
-  width: 8px; height: 8px;
-  background: var(--t-600);
-  border: 1.5px solid var(--surface);
-  cursor: crosshair;
-  z-index: 2;
-}
-.eg-hnd:hover { transform: scale(1.3); }
-
-/* In-cell editor */
-.eg-ed {
-  position: absolute; inset: -2px;
-  z-index: 20;
-  display: flex;
-  background: var(--surface);
-  border: 2px solid var(--t-600);
-  box-shadow: var(--sh-md);
-}
-.eg-ed input {
-  width: 100%; height: 100%;
-  border: 0; outline: none; background: transparent;
-  color: var(--text); font-family: inherit; font-size: 12.5px; padding: 0 10px;
-  text-align: center;
-}
-.eg-ed.n input { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.eg-ed.m input { font-family: var(--mono); }
-.eg-pop {
-  position: absolute; left: -2px; bottom: 100%; margin-bottom: 3px;
-  z-index: 30;
-  min-width: 190px; max-height: 210px; overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--border-s); border-radius: var(--r-sm);
-  box-shadow: var(--sh-lg); padding: 4px;
-}
-/* Upwards, not down: the band is at the BOTTOM of the scroll box, so a menu
-   opening downwards would fall outside it and be clipped. */
-.eg-opt {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+/* ── The controls ─────────────────────────────────────────────────────────────
+   Shaped like the app's own inputs (.in in components.css), only shorter, so a
+   row of thirteen still reads as one row. Native appearance is kept on selects
+   and pickers ON PURPOSE: the arrow and the calendar glyph are what say
+   "dropdown" and "date" at a glance, which is what was missing. */
+.eg-in {
   width: 100%;
-  border: 0; background: none; font-family: inherit; text-align: left;
-  padding: 5px 8px; border-radius: var(--r-xs);
-  font-size: 12.5px; color: var(--text-2); cursor: pointer;
+  height: 28px;
+  padding: 0 7px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-s);
+  border-radius: var(--r-sm);
+  outline: none;
+  transition: border-color .12s var(--ease), box-shadow .12s var(--ease);
 }
-.eg-opt.on { background: var(--t-50); color: var(--t-700); font-weight: 600; }
-.eg-opt small { font-family: var(--mono); font-size: 11px; color: var(--text-4); }
-.eg-none { padding: 6px 8px; font-size: 11.5px; color: var(--text-4); }
+.eg-in:hover { border-color: var(--n-300); }
+.eg-in:focus {
+  border-color: var(--t-500);
+  box-shadow: 0 0 0 2px var(--t-100);
+}
+.eg-in::placeholder { color: var(--text-4); font-style: italic; }
+select.eg-in { cursor: pointer; }
+select.eg-in option[value=""] { color: var(--text-4); }
 
-/* The one compact strip: what is staged, what is wrong, and Submit. */
+/* A value inherited from the row above and not yet touched. Italic reads as
+   provisional; the title on the control says why. */
+.eg-in.inh { font-style: italic; color: var(--text-2); }
+
+/* Amber: something required is still empty. Red: the value is wrong, or the row
+   is a real duplicate. The message is the control's title. */
+.eg-in.warn { border-color: var(--amber); background: var(--amber-bg); }
+.eg-in.bad { border-color: var(--red); background: var(--red-bg); }
+.eg-in.bad:focus { box-shadow: 0 0 0 2px var(--red-bg); }
+
+/* ── The strip: what is staged, what is wrong, and Submit ──────────────────── */
 .eg-foot {
-  position: sticky; left: 0;
-  width: fit-content; max-width: 100%;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 7px 12px;
   background: var(--surface);
@@ -205,7 +126,7 @@ html[data-theme=dark] .dt-band { box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, .5);
   font-size: 12px; color: var(--text-3);
 }
 .eg-n b { color: var(--text); font-variant-numeric: tabular-nums; }
-.eg-hint { font-size: 11.5px; color: var(--text-4); flex: 1 1 180px; min-width: 0; }
+.eg-hint { font-size: 11.5px; color: var(--text-4); flex: 1 1 160px; min-width: 0; }
 .eg-keys { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-4); }
 .eg-keys kbd {
   font-family: var(--mono); font-size: 10px; font-weight: 600;
