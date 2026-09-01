@@ -5,7 +5,8 @@ Every number the Mining Resource Matrix shows, computed live.
 
 WHAT THE MATRIX IS
 One row per event, answering "how much market-research output is still waiting to
-be mined for this event, and how is it split by priority". Nothing is stored: the
+be mined for this event, and how does it split by priority and by ticket type".
+Nothing is stored: the
 figures are aggregates over Ticket Central, joined to the Events catalogue through
 codes.canonical_code, so they cannot go stale and there is no sync to run.
 
@@ -17,7 +18,8 @@ that was mined and yielded nothing is finished work, and lumping it in here woul
 put it back on the queue for ever.
 
 TWO QUERIES, WHATEVER THE ROW COUNT
-The aggregate is a single GROUP BY (purpose, priority) over the unmined rows, and
+The aggregate is a single GROUP BY over the unmined rows (purpose plus every
+SPLITS field, so adding a dimension widens it rather than adding a query), and
 the catalogue is a single values() over Events. Everything after that is
 dictionary work in Python. There is deliberately no per-event query: the obvious
 shape for this page is one COUNT per row, which on a 400-event catalogue is 400
@@ -48,17 +50,69 @@ VIEWS = (VIEW_UPCOMING, VIEW_ALL, VIEW_UNLINKED)
 # in the future — a cancelled event dated next March is not upcoming work.
 CLOSED_STATUSES = frozenset({Event.Status.COMPLETED, Event.Status.CANCELLED})
 
-# Ticket.priority is a free CharField (the D4 note in ticket_central/models.py:
-# Zoho's values vary), so the enum is the PREFERRED ORDER of the columns, not the
-# permitted set. Anything else observed in the data is appended rather than
-# dropped — a priority the matrix refused to show would be unmined work invisible
-# on the one screen that exists to surface it.
-PRIORITY_ORDER = tuple(Ticket.Priority.values)
+# ── The split dimensions (Col E onwards) ─────────────────────────────────────
+#
+# Col D is broken down twice, side by side: by Priority and by Type of Ticket.
+# Both are plain CharFields on Ticket, NOT constrained choice sets (the D4 notes
+# in ticket_central/models.py — Zoho's values vary), so the enum below is the
+# PREFERRED ORDER of each block's columns and not the permitted set. A value the
+# enum has never heard of is appended rather than dropped: a column the matrix
+# refused to draw would be unmined work invisible on the one screen that exists
+# to surface it.
+#
+# WHICH TYPE COLUMN. `type_of_ticket` is the Market Research field, and
+# `ticket_type` is the Data Mining one — a different column with a different
+# vocabulary ("Simple"/"Complex"). It has to be the MR one here: DMD fills its
+# own in as it works a ticket, so on the unmined rows this page is made of it is
+# empty 93% of the time, and a block of columns that is nearly all blank by
+# construction says nothing about the work waiting to be done.
+#
+# The stored values are DISPLAY strings — 'White - WH', 'Comp.-CX', 'ZID' — so
+# they are reduced to their code with ticket_central's own extract_type_code,
+# the same function that builds ticket numbers out of them. Three columns headed
+# "White - WH", "LinkedIn - LX" and "Platinum - PX" would be most of the width of
+# this table spent on words the reader already knows.
 
-# The bucket for a ticket whose priority was never filled in. Keyed on "" so it
-# round-trips as a filter value; labelled for the column header.
-BLANK_PRIORITY = ""
-BLANK_PRIORITY_LABEL = "No priority"
+
+def _priority_value(row):
+    return (row["priority"] or "").strip().upper()
+
+
+def _type_value(row):
+    from ticket_central.utils import extract_type_code
+
+    return extract_type_code(row["type_of_ticket"] or "").strip().upper()
+
+
+SPLIT_PRIORITY = "priority"
+SPLIT_TYPE = "type"
+
+# ORDER IS THE PAGE ORDER. Ticket type leads because it is the coarser cut —
+# it says what KIND of work is waiting, which is what decides who can pick it
+# up; priority then ranks within that. The frontend draws the blocks in this
+# order and nothing there needs changing to reorder them.
+SPLITS = (
+    {
+        "key": SPLIT_TYPE,
+        "label": "Ticket type",
+        "field": "type_of_ticket",
+        "value_of": _type_value,
+        "order": tuple(Ticket.TypeOfTicket.values),
+        "blank_label": "No type",
+    },
+    {
+        "key": SPLIT_PRIORITY,
+        "label": "Priority",
+        "field": "priority",
+        "value_of": _priority_value,
+        "order": tuple(Ticket.Priority.values),
+        # Keyed on "" so it round-trips as a filter value; labelled for the header.
+        "blank_label": "No priority",
+    },
+)
+
+SPLIT_KEYS = tuple(spec["key"] for spec in SPLITS)
+BLANK_VALUE = ""
 
 
 def _today():
@@ -68,15 +122,33 @@ def _today():
 
 # ── The aggregate ────────────────────────────────────────────────────────────
 
+def _new_bucket():
+    return {
+        "links": 0,
+        "estimate": 0,
+        "splits": {
+            spec["key"]: defaultdict(lambda: {"links": 0, "estimate": 0})
+            for spec in SPLITS
+        },
+    }
+
+
 def unmined_by_purpose(user):
     """
     {PURPOSE_UPPER: bucket} over every unmined ticket this user may see.
 
     bucket = {
-        "links":      int,                       # rows
-        "estimate":   int,                       # SUM(estimate)
-        "priorities": {PRI: {"links", "estimate"}},
+        "links":    int,                                   # rows
+        "estimate": int,                                    # SUM(estimate)
+        "splits":   {dim: {value: {"links", "estimate"}}},  # one per SPLITS entry
     }
+
+    STILL ONE QUERY with the second dimension added. Grouping by
+    (purpose, priority, type_of_ticket) rather than by (purpose, priority) widens
+    the GROUP BY, not the number of round trips, and the result is bounded by the
+    unmined row count either way — 13,250 on the live table, in practice a few
+    hundred groups. The alternative, one aggregate per dimension, would have to
+    keep two answers agreeing about the same rows.
 
     SCOPED, deliberately. The row a user clicks navigates to Ticket Central
     filtered on the same purpose, and that table applies author scoping — so an
@@ -94,60 +166,62 @@ def unmined_by_purpose(user):
     """
     rows = (
         scope_tickets(Ticket.objects.filter(actual_number__isnull=True), user)
-        .values("purpose", "priority")
+        .values("purpose", *(spec["field"] for spec in SPLITS))
         .annotate(links=Count("id"), estimate=Sum("estimate"))
     )
 
     out = {}
     for row in rows:
         code = (row["purpose"] or "").strip().upper() or None
-        priority = (row["priority"] or "").strip().upper()
         links = row["links"] or 0
         estimate = row["estimate"] or 0
 
         bucket = out.get(code)
         if bucket is None:
-            bucket = {
-                "links": 0,
-                "estimate": 0,
-                "priorities": defaultdict(lambda: {"links": 0, "estimate": 0}),
-            }
+            bucket = _new_bucket()
             out[code] = bucket
         bucket["links"] += links
         bucket["estimate"] += estimate
-        bucket["priorities"][priority]["links"] += links
-        bucket["priorities"][priority]["estimate"] += estimate
+        for spec in SPLITS:
+            cell = bucket["splits"][spec["key"]][spec["value_of"](row)]
+            cell["links"] += links
+            cell["estimate"] += estimate
     return out
 
 
-def priority_columns(buckets):
+def split_columns(buckets):
     """
-    The priority columns to draw, in a stable order, for THESE rows only.
+    {dim: [{key, label}]} — the columns to draw for THESE rows, per dimension.
 
     Enum order first so the familiar columns never move, then any unexpected
-    value alphabetically, then the blank bucket last. A priority carrying no
-    unmined work anywhere in the result is omitted: the table is already wide, and
-    a column of zeros on every row is width spent saying nothing.
+    value alphabetically, then the blank bucket last. A value carrying no unmined
+    work anywhere in the result is omitted: this table is already wide, and a
+    column of zeros on every row is width spent saying nothing.
     """
-    seen = set()
-    for bucket in buckets:
-        seen.update(bucket["priorities"].keys())
+    out = {}
+    for spec in SPLITS:
+        seen = set()
+        for bucket in buckets:
+            seen.update(bucket["splits"][spec["key"]].keys())
 
-    ordered = [p for p in PRIORITY_ORDER if p in seen]
-    extra = sorted(p for p in seen if p and p not in PRIORITY_ORDER)
-    cols = ordered + extra
-    if BLANK_PRIORITY in seen:
-        cols.append(BLANK_PRIORITY)
-    return [
-        {"key": p, "label": BLANK_PRIORITY_LABEL if p == BLANK_PRIORITY else p}
-        for p in cols
-    ]
+        ordered = [v for v in spec["order"] if v in seen]
+        extra = sorted(v for v in seen if v and v not in spec["order"])
+        values = ordered + extra
+        if BLANK_VALUE in seen:
+            values.append(BLANK_VALUE)
+        out[spec["key"]] = [
+            {"key": v, "label": spec["blank_label"] if v == BLANK_VALUE else v}
+            for v in values
+        ]
+    return out
 
 
 # ── Row assembly ─────────────────────────────────────────────────────────────
 
 def _empty_bucket():
-    return {"links": 0, "estimate": 0, "priorities": {}}
+    """A code with no unmined work. Every split is present and empty, so callers
+    never have to test for a missing dimension."""
+    return {"links": 0, "estimate": 0, "splits": {k: {} for k in SPLIT_KEYS}}
 
 
 def _row(*, event_code, canonical, event, bucket, today):
@@ -156,7 +230,6 @@ def _row(*, event_code, canonical, event, bucket, today):
     end = getattr(event, "end_date", None)
     days = (start - today).days if start else None
 
-    priorities = bucket["priorities"]
     return {
         # Col A — the code AS THE EVENTS MODULE HOLDS IT, which is what the user
         # recognises. `canonical_code` beside it is what the figures were actually
@@ -174,10 +247,18 @@ def _row(*, event_code, canonical, event, bucket, today):
         # Col C / Col D
         "unmined_links": bucket["links"],
         "unmined_data": bucket["estimate"],
-        # Col E onwards. Estimate is the headline figure, so these sum to Col D;
-        # the counts ride along for the hover, and sum to Col C.
-        "priority_data": {k: v["estimate"] for k, v in priorities.items()},
-        "priority_links": {k: v["links"] for k, v in priorities.items()},
+        # Col E onwards, one block per SPLITS entry. Estimate is the headline
+        # figure, so EACH block sums to Col D on its own — priority and ticket
+        # type are two cuts of the same money, not two halves of it. The counts
+        # ride along for the hover and likewise sum to Col C per block.
+        "split_data": {
+            dim: {k: v["estimate"] for k, v in cells.items()}
+            for dim, cells in bucket["splits"].items()
+        },
+        "split_links": {
+            dim: {k: v["links"] for k, v in cells.items()}
+            for dim, cells in bucket["splits"].items()
+        },
         # True when this event code resolved onto a purpose Ticket Central has
         # actually raised work under. False means the join found nothing — the
         # zeros read "no tickets exist", not "everything is mined".
@@ -282,7 +363,7 @@ def build_payload(user, view=VIEW_UPCOMING, include_zero=False):
                 event=event, bucket=bucket, today=today,
             ))
 
-    columns = priority_columns(
+    columns = split_columns(
         [buckets[c] for c in {r["canonical_code"] for r in rows} if c in buckets]
     )
     no_purpose = buckets.get(None) or _empty_bucket()
@@ -291,7 +372,11 @@ def build_payload(user, view=VIEW_UPCOMING, include_zero=False):
         "view": view,
         "today": today,
         "include_zero": include_zero,
-        "priority_columns": columns,
+        # {dim: [{key,label}]}. The frontend draws one block of columns per
+        # entry, in this order, so a dimension added to SPLITS appears on the
+        # page without a change there.
+        "split_columns": columns,
+        "splits": [{"key": spec["key"], "label": spec["label"]} for spec in SPLITS],
         "rows": rows,
         "totals": _totals(rows, buckets, columns),
         "view_counts": _view_counts(
@@ -346,16 +431,19 @@ def _totals(rows, buckets, columns):
     right in every view without the caller having to know which one it is in.
     """
     codes = {r["canonical_code"] for r in rows if r["canonical_code"] in buckets}
-    by_priority = {}
-    for col in columns:
-        key = col["key"]
-        by_priority[key] = sum(
-            buckets[c]["priorities"].get(key, {}).get("estimate", 0) for c in codes
-        )
+    split_data = {}
+    for dim, cols in columns.items():
+        split_data[dim] = {
+            col["key"]: sum(
+                buckets[c]["splits"][dim].get(col["key"], {}).get("estimate", 0)
+                for c in codes
+            )
+            for col in cols
+        }
     return {
         "codes": len(codes),
         "rows": len(rows),
         "unmined_links": sum(buckets[c]["links"] for c in codes),
         "unmined_data": sum(buckets[c]["estimate"] for c in codes),
-        "priority_data": by_priority,
+        "split_data": split_data,
     }

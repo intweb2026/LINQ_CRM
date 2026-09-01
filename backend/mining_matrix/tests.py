@@ -127,16 +127,22 @@ class MatrixDataTests(TestCase):
 
         # AFS: three unmined (one without an estimate, one without a priority)
         # and one already mined, which must not be counted.
-        Ticket.objects.create(purpose="AFS", priority="AS", estimate=100)
-        Ticket.objects.create(purpose="AFS", priority="DD", estimate=50)
-        Ticket.objects.create(purpose="AFS", priority="", estimate=None)
+        # type_of_ticket carries the DISPLAY string the live column holds, both
+        # spacings, so extract_type_code is exercised rather than assumed.
+        Ticket.objects.create(purpose="AFS", priority="AS", estimate=100,
+                              type_of_ticket="White - WH")
+        Ticket.objects.create(purpose="AFS", priority="DD", estimate=50,
+                              type_of_ticket="Comp.-CX")
+        Ticket.objects.create(purpose="AFS", priority="", estimate=None,
+                              type_of_ticket="")
         Ticket.objects.create(purpose="AFS", priority="AS", estimate=999,
-                              actual_number=7)
+                              type_of_ticket="White - WH", actual_number=7)
         # Mined but yielded nothing. Finished work, NOT unmined.
         Ticket.objects.create(purpose="AFS", priority="AS", estimate=40,
-                              actual_number=0)
+                              type_of_ticket="White - WH", actual_number=0)
         # A purpose the catalogue has never heard of.
-        Ticket.objects.create(purpose="ZZQ", priority="SPEX", estimate=70)
+        Ticket.objects.create(purpose="ZZQ", priority="SPEX", estimate=70,
+                              type_of_ticket="LinkedIn - LX")
 
     def _payload(self, view, include_zero=False):
         return services.build_payload(self.user, view=view, include_zero=include_zero)
@@ -167,23 +173,76 @@ class MatrixDataTests(TestCase):
         row = self._payload(services.VIEW_UPCOMING)["rows"][0]
         self.assertEqual(row["unmined_links"], 3, "actual_number=0 was counted")
 
-    def test_the_priority_split_adds_up_to_col_d(self):
+    def test_every_split_adds_up_to_col_d_on_its_own(self):
+        """
+        Priority and ticket type are two CUTS of the same money, not two halves of
+        it, so each block sums to Col D independently. A block that summed to half
+        would look like a rounding bug and be reconciled by hand for ever.
+        """
         row = self._payload(services.VIEW_UPCOMING)["rows"][0]
-        self.assertEqual(sum(row["priority_data"].values()), row["unmined_data"])
-        self.assertEqual(sum(row["priority_links"].values()), row["unmined_links"])
-        self.assertEqual(row["priority_data"], {"AS": 100, "DD": 50, "": 0})
+        for dim in services.SPLIT_KEYS:
+            self.assertEqual(sum(row["split_data"][dim].values()), row["unmined_data"], dim)
+            self.assertEqual(sum(row["split_links"][dim].values()), row["unmined_links"], dim)
 
-    def test_a_blank_priority_gets_its_own_column(self):
-        cols = self._payload(services.VIEW_UPCOMING)["priority_columns"]
-        keys = [c["key"] for c in cols]
-        self.assertIn(services.BLANK_PRIORITY, keys)
-        self.assertEqual(keys[-1], services.BLANK_PRIORITY, "blank belongs last")
-        label = next(c["label"] for c in cols if c["key"] == services.BLANK_PRIORITY)
-        self.assertEqual(label, services.BLANK_PRIORITY_LABEL)
+    def test_the_priority_split_is_the_priority_column(self):
+        row = self._payload(services.VIEW_UPCOMING)["rows"][0]
+        self.assertEqual(row["split_data"][services.SPLIT_PRIORITY],
+                         {"AS": 100, "DD": 50, "": 0})
 
-    def test_a_priority_with_no_work_gets_no_column(self):
-        keys = [c["key"] for c in self._payload(services.VIEW_UPCOMING)["priority_columns"]]
-        self.assertNotIn("ASSOC", keys)
+    def test_the_type_split_reduces_the_display_string_to_its_code(self):
+        """
+        The live column holds 'White - WH', 'Comp.-CX', 'ZID'. Three columns headed
+        with the long form would be most of this table's width spent on words the
+        reader already knows, so extract_type_code reduces them — the same function
+        that builds ticket numbers out of the field.
+        """
+        row = self._payload(services.VIEW_UPCOMING)["rows"][0]
+        self.assertEqual(row["split_data"][services.SPLIT_TYPE],
+                         {"WH": 100, "CX": 50, "": 0})
+
+    def test_ticket_type_leads_and_priority_follows(self):
+        """
+        SPLITS order IS the page order — the frontend draws the blocks in the
+        order the payload lists them and hardcodes neither. Ticket type first: it
+        is the coarser cut, saying what KIND of work is waiting and so who can
+        pick it up, with priority ranking within that.
+        """
+        payload = self._payload(services.VIEW_UPCOMING)
+        self.assertEqual([d["key"] for d in payload["splits"]],
+                         [services.SPLIT_TYPE, services.SPLIT_PRIORITY])
+
+    def test_the_type_split_reads_the_mr_column_not_the_dmd_one(self):
+        """
+        `ticket_type` is the Data Mining field and is empty on 93% of unmined rows
+        by construction — DMD fills it in as it works a ticket. Reading it here
+        would produce a block that is almost entirely blank on the very rows this
+        page exists to show.
+        """
+        self.assertEqual(
+            next(s["field"] for s in services.SPLITS if s["key"] == services.SPLIT_TYPE),
+            "type_of_ticket",
+        )
+
+    def test_a_blank_value_gets_its_own_column_in_every_split(self):
+        cols = self._payload(services.VIEW_UPCOMING)["split_columns"]
+        for spec in services.SPLITS:
+            keys = [c["key"] for c in cols[spec["key"]]]
+            self.assertIn(services.BLANK_VALUE, keys, spec["key"])
+            self.assertEqual(keys[-1], services.BLANK_VALUE, "blank belongs last")
+            label = next(c["label"] for c in cols[spec["key"]]
+                         if c["key"] == services.BLANK_VALUE)
+            self.assertEqual(label, spec["blank_label"])
+
+    def test_a_value_with_no_work_gets_no_column(self):
+        cols = self._payload(services.VIEW_UPCOMING)["split_columns"]
+        self.assertNotIn("ASSOC", [c["key"] for c in cols[services.SPLIT_PRIORITY]])
+        self.assertNotIn("GX", [c["key"] for c in cols[services.SPLIT_TYPE]])
+
+    def test_the_totals_carry_every_split(self):
+        totals = self._payload(services.VIEW_UPCOMING)["totals"]
+        for dim in services.SPLIT_KEYS:
+            self.assertEqual(sum(totals["split_data"][dim].values()),
+                             totals["unmined_data"], dim)
 
     def test_days_to_go_counts_from_today(self):
         row = self._payload(services.VIEW_UPCOMING)["rows"][0]
@@ -426,6 +485,78 @@ class WireSourceTests(TestCase):
         src = self._read("pages", "TicketCentralPage.jsx")
         self.assertIn("field: 'purpose', op: 'is'", src)
         self.assertIn("field: 'actual_number', op: 'is_empty'", src)
+
+    def test_every_enum_value_has_a_column_band_colour(self):
+        """
+        Col E onwards is two adjacent blocks of numbers, coloured so the boundary
+        between them is visible without reading a header. A value with no class
+        renders unbanded — which is the deliberate fallback for the free-text
+        values these CharFields permit, but is a GAP for a value the model itself
+        declares. Those are known in advance, so they are asserted rather than
+        discovered when one first appears in the data.
+
+        Class names are the value lower-cased and stripped to alphanumerics; see
+        bandClass() in MiningMatrixPage.jsx, which must keep agreeing with this.
+        """
+        import re
+
+        src = self._read("styles", "components.css")
+        defined = set(re.findall(r"^\.bnd-([a-z0-9]+)\{", src, re.M))
+        for value in list(Ticket.TypeOfTicket.values) + list(Ticket.Priority.values):
+            slug = re.sub(r"[^a-z0-9]", "", value.lower())
+            self.assertIn(slug, defined,
+                          f"{value} has no .bnd-{slug} band colour")
+
+    def test_the_band_palette_defines_all_three_properties_per_value(self):
+        """
+        A class setting only some of --bd / --bd-bg / --bd-tx would inherit the
+        rest from the neutral defaults on `.bnd`, giving a column the wrong
+        accent against the right tint — visible, but only as "that looks a bit
+        off", which is the kind of defect nobody files.
+        """
+        import re
+
+        src = self._read("styles", "components.css")
+        for cls, body in re.findall(r"^\.bnd-([a-z0-9]+)\{([^}]*)\}", src, re.M):
+            for prop in ("--bd:", "--bd-bg:", "--bd-tx:"):
+                self.assertIn(prop, body, f".bnd-{cls} is missing {prop}")
+
+    def test_the_band_palette_has_a_dark_theme_for_every_token(self):
+        """
+        The colours are theme tokens rather than inline hex precisely so they can
+        follow the theme. A token defined only in :root would be a light-theme
+        colour painted on a dark surface — the one thing on the page that ignores
+        the switch.
+
+        SLICED FROM THE [band_palette] MARKER, not from the first ':root{' in the
+        file. Written the obvious way this test passed while asserting nothing:
+        base.css opens with its own :root and dark blocks long before this
+        palette, so the "light" slice was the ORIGINAL theme block, which holds no
+        --bd-* token at all, and an empty set minus anything is empty. Hence the
+        non-empty guard below — a parity test that can pass with nothing on either
+        side is worse than no test, because it reports coverage it does not have.
+        """
+        import re
+
+        src = self._read("styles", "base.css")
+        block = src[src.index("[band_palette]"):]
+        light_at = block.index(":root{")
+        dark_at = block.index("html[data-theme=dark]{")
+        light = block[light_at:block.index("}", light_at)]
+        dark = block[dark_at:block.index("}", dark_at)]
+
+        names = lambda blob: set(re.findall(r"(--bd-[a-z0-9-]+):", blob))
+        light_names, dark_names = names(light), names(dark)
+
+        self.assertTrue(light_names, "no band tokens found — the slice is wrong")
+        self.assertEqual(
+            sorted(light_names - dark_names), [],
+            "these band tokens have no dark-theme value",
+        )
+        self.assertEqual(
+            sorted(dark_names - light_names), [],
+            "these band tokens exist only in dark theme",
+        )
 
     def test_the_matrix_page_is_gated_on_its_own_module(self):
         src = self._read("pages", "MiningMatrixPage.jsx")
