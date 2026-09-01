@@ -94,6 +94,24 @@ html[data-theme=dark] .dt-band { box-shadow: 0 -8px 16px -8px rgba(0, 0, 0, .5);
 .eg-c.sel { background: var(--t-100); }
 .eg-c.cur { box-shadow: inset 0 0 0 2px var(--t-600); }
 
+/* THE TYPE HAS TO BE VISIBLE. A dropdown that looks exactly like a text box is
+   a dropdown nobody finds: the list only appeared once the cell was opened, so
+   every column read as free text. The chevron marks anything with a list, and
+   the placeholder says what shape of value belongs in an empty cell. */
+.eg-c { padding-right: 0; }
+.eg-chev {
+  position: absolute;
+  right: 3px; top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  color: var(--text-4);
+  pointer-events: none;
+}
+.eg-c:hover .eg-chev { color: var(--t-600); }
+/* Room for the chevron, so a long value does not run under it. */
+.eg-c:has(.eg-chev) .eg-v { padding-right: 18px; }
+.eg-ph { color: var(--text-4); font-style: italic; }
+
 /* Columns a draft cannot hold: the DMD result, the LX-2 pass, the provenance,
    the stamps. Flat and quiet, so the eye goes to what can be typed. */
 .eg-lock { background: var(--surface-2); }

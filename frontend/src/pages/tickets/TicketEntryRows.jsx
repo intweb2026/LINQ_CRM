@@ -805,9 +805,8 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
                     onMouseDown={(ev) => {
                       if (ev.shiftKey) { setCur({ r, c }); return; }
                       setCur({ r, c }); setAnchor({ r, c });
-                      if (bandRef.current) bandRef.current.focus();
+                      setEditing({ r, c, seed: null });
                     }}
-                    onDoubleClick={() => setEditing({ r, c, seed: null })}
                   >
                     {isEditing ? (
                       <CellEditor
@@ -835,8 +834,15 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
                       <>
                         {dotHere ? <span className={'eg-dot ' + rowState(r)} /> : null}
                         <span className={'eg-v' + (d.carry[col.key] && raw ? ' inh' : '')}>
-                          {raw ? cellText(col.key, raw) : null}
+                          {raw
+                            ? cellText(col.key, raw)
+                            : <span className="eg-ph">{placeholderFor(field)}</span>}
                         </span>
+                        {field.kind === 'pick' ? (
+                          <span className="eg-chev" aria-hidden="true">
+                            <Icon name="chevD" size={11} />
+                          </span>
+                        ) : null}
                         {/* The fill handle, on the bottom-right of the range. */}
                         {r === r2 && c === c2 ? (
                           // eslint-disable-next-line jsx-a11y/no-static-element-interactions
@@ -908,6 +914,22 @@ function TicketEntryRows({ cols, select, colWidth, pins, onCreated, openRef }) {
 }
 
 // ── Cell display ────────────────────────────────────────────────────────────
+
+/**
+ * What an empty cell shows, so the control is legible before it is opened.
+ *
+ * Not the column label — that is already in the heading directly above. This
+ * says what SHAPE of value belongs here, which is the part the heading cannot
+ * tell you.
+ */
+function placeholderFor(field) {
+  if (field.ph) return field.ph;
+  if (field.kind === 'pick') return 'Select';
+  if (field.kind === 'num') return '0';
+  if (field.kind === 'month') return 'Mon YYYY';
+  if (field.kind === 'date') return 'YYYY-MM-DD';
+  return '';
+}
 
 function numberPrefix(d) {
   const p = (d.v.purpose || '').trim();
