@@ -56,6 +56,18 @@ export function gradeFor(score) {
   return 'E';
 }
 
+/**
+ * The six criteria as NOS wants them, for spreading over the form.
+ *
+ * A NOS speaker is not scored: the rubric does not apply, so the boxes lock and
+ * the total reads 0 / 45, grade E, which is what the server derives anyway.
+ * Unchecking blanks them rather than leaving the zeroes behind — a real review
+ * saved at 0 / 45 because nobody noticed the boxes were still holding NOS's
+ * zeroes is the one outcome worse than retyping six numbers.
+ */
+export const scoreReset = (nos) =>
+  Object.fromEntries(PAPER_REVIEW_CRITERIA.map((c) => [c.key, nos ? 0 : '']));
+
 export const scoreOf = (form) =>
   PAPER_REVIEW_CRITERIA.reduce((s, c) => s + (+form[c.key] || 0), 0);
 
@@ -167,7 +179,7 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd" style={{ gridColumn: '1/3' }}>{lab('linkedin_speaker', 'LinkedIn profile of speaker', true)}<input className="in" id="pr-linkedin_speaker" name="linkedin_speaker" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
           <div className="fd" style={{ gridColumn: '3/-1' }}>{lab('linkedin_company', 'LinkedIn company profile')}<input className="in" id="pr-linkedin_company" name="linkedin_company" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
           <div className="fd" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 18 }}>
-            <input type="checkbox" className="ck" id="pr-nos" name="nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked }))} />
+            <input type="checkbox" className="ck" id="pr-nos" name="nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked, ...scoreReset(e.target.checked) }))} />
             <label className="fd-l" htmlFor="pr-nos" style={{ marginBottom: 0 }}>NOS?</label>
           </div>
         </div>
@@ -181,7 +193,7 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
               {/* NumField, not a bare number input: min/max on an <input> are a
                   spinner hint, not a restriction, so every one of these boxes
                   accepted 99999 and the derived total read 364994 / 45. */}
-              <NumField id={'pr-' + c.key} name={c.key} min={0} max={c.max} value={form[c.key]} onChange={set(c.key)} />
+              <NumField id={'pr-' + c.key} name={c.key} min={0} max={c.max} value={form[c.key]} onChange={set(c.key)} disabled={!!form.nos} />
             </div>
           ))}
           <div className="fd">
@@ -202,9 +214,10 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
             {picker('session_location_on_agenda', PAPER_SESSION_OPTIONS)}
           </div>
           <div className="fd" style={{ gridColumn: '2/-1' }}>{lab('theme', 'Theme', true)}<input className="in" id="pr-theme" name="theme" value={form.theme} onChange={set('theme')} /></div>
-          {/* MR-only, and absent rather than disabled on the public MRE form:
-              PublicPaperReviewSerializer does not accept the field, so an input
-              for it would silently discard whatever was typed. */}
+          {/* MR-only. Always on the CRM form; on the public MRE form only when
+              the link's reviewer may write it, which is what config's
+              show_internal reports. Absent rather than disabled there, because a
+              reviewer outside MR/Admin has the value refused on save. */}
           {showInternal ? (
             <div className="fd" style={{ gridColumn: '1/3' }}>{lab('internal_footnotes', 'Internal footnotes')}<input className="in" id="pr-internal_footnotes" name="internal_footnotes" value={form.internal_footnotes} onChange={set('internal_footnotes')} /></div>
           ) : null}

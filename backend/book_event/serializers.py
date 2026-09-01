@@ -508,7 +508,30 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
                     event_code=instance.event_code,
                     updated_at=timezone.now(),
                 )
-                
+
+                # THE PREFETCH CACHE IS NOW A LIE, AND BOTH READS BELOW GO
+                # THROUGH IT. BookEventViewSet.get_queryset() loads this instance
+                # with prefetch_related("delegates__company") on the update
+                # actions, so `instance.delegates.all()` answers from a list
+                # captured BEFORE the loop above created and deleted rows.
+                #
+                # Two things read it after this point, and both were wrong by
+                # exactly the delegates this request changed:
+                #   - instance.delegates.count() below, which is a len() of the
+                #     cached list, so adding a 6th delegate in the Bookings modal
+                #     stored delegate_count = 5;
+                #   - to_representation(), which serialises instance.delegates
+                #     .all() into the response, so the PATCH answered 200 with the
+                #     FIVE delegates the invoice had before the save. The row was
+                #     really in the database; the server's own answer to the save
+                #     said it was not.
+                #
+                # Dropping the entry is what sends both back to the database. It
+                # is popped rather than refetched here so the count below is the
+                # only extra query, and the response's prefetch is rebuilt once,
+                # by the serializer that actually needs it.
+                getattr(instance, "_prefetched_objects_cache", {}).pop("delegates", None)
+
                 instance.delegate_count = instance.delegates.count()
                 instance.save(update_fields=["delegate_count"])
 

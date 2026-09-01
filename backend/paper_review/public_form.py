@@ -32,13 +32,16 @@ ProposalSubmission is minted and the production-team email is queued, the same a
 a create from inside the CRM. The webhook stays as it is; a sender replaying a
 backlog must not send mail per row.
 
-TWO THINGS THIS ENDPOINT DELIBERATELY DOES NOT INHERIT
+internal_footnotes IS ON THIS FORM, for the reviewers allowed to write it
+The link names one reviewer and the submission is saved AS that reviewer, so the
+MR rule that governs the field inside the CRM governs it here too: config reports
+show_internal = may_see_mr_fields(mre), the page renders the box only when that is
+true, and PaperReviewSerializer.validate remains the authority on the write. A
+link bound to somebody outside MR/Admin is therefore never shown a field their own
+save would refuse. The submit response is hand-built and names no MR field, so
+nothing is echoed back to a public browser either way.
 
-  internal_footnotes. may_see_mr_fields() returns True for the market_research
-  role, so running the ordinary serializer as the MRE would accept the MR-only
-  field from an anonymous poster. PublicPaperReviewSerializer drops the field
-  outright, so it is not writable and not readable here whatever the reviewer's
-  role is.
+WHAT THIS ENDPOINT DELIBERATELY DOES NOT INHERIT
 
   Full visibility. has_full_visibility() would hand a link bound to an admin, or
   to anyone with all-records on this module, the entire event catalogue and the
@@ -58,7 +61,7 @@ from events.models import Event
 from webhooks.models import WebhookApiKey
 from webhooks.utils import authenticate_request, extract_ip
 
-from .access import permitted_event_codes
+from .access import may_see_mr_fields, permitted_event_codes
 from .models import CRITERIA, RUBRIC_TOTAL
 from .serializers import PaperReviewSerializer
 from .views import create_review_with_workflows
@@ -83,21 +86,6 @@ class FormThrottle(AnonRateThrottle):
     the same address on the next link.
     """
     scope = "paper_review_form"
-
-
-class PublicPaperReviewSerializer(PaperReviewSerializer):
-    """
-    The ordinary serializer minus internal_footnotes.
-
-    Popped rather than blanked: DRF ignores keys it has no field for, so a poster
-    who sends the field gets it dropped instead of a 400 naming a field they were
-    never shown. to_representation loses it too, which is the point — the create
-    response goes back to a browser on the public internet.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields.pop("internal_footnotes", None)
 
 
 class PaperReviewFormBase(APIView):
@@ -179,6 +167,9 @@ class PaperReviewFormConfigView(PaperReviewFormBase):
         return Response({
             "reviewer":     mre.get_full_name() or mre.username,
             "form_name":    api_key.name,
+            # The MR-only footnotes box. Shown only to a link whose reviewer
+            # would be allowed to write it — see the module docstring.
+            "show_internal": may_see_mr_fields(mre),
             "events":       events,
             "rubric":       [{"field": f, "max": m} for f, m in CRITERIA],
             "rubric_total": RUBRIC_TOTAL,
@@ -217,7 +208,7 @@ class PaperReviewFormSubmitView(PaperReviewFormBase):
         # in that path is handed an AnonymousUser.
         request.user = mre
 
-        serializer = PublicPaperReviewSerializer(
+        serializer = PaperReviewSerializer(
             data=request.data, context={"request": request},
         )
         serializer.is_valid(raise_exception=True)

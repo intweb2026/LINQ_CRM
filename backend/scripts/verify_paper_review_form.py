@@ -31,8 +31,9 @@ WHAT EACH CHECK IS FOR, since a green tick nobody can interpret is worth nothing
   6  an unknown event is refused        the validator is wired
   7  (--submit) a review is created     both workflows ran, and the response
                                         names the proposal submission
-  8  (--submit) MR field is not echoed  internal_footnotes never reaches a
-                                        public browser
+  8  (--submit) MR field is not echoed  the receipt carries no
+                                        internal_footnotes, even on a link whose
+                                        reviewer is allowed to write one
 """
 from __future__ import annotations
 
@@ -51,8 +52,8 @@ KEY_PARAM = "crm_key"
 SMOKE_SPEAKER = "SMOKE TEST - delete me"
 
 
-def review_body(event_code):
-    return {
+def review_body(event_code, footnotes=False):
+    payload = {
         "event_code": event_code,
         "paper_submission_date": "2026-01-01",
         "speaker_name": SMOKE_SPEAKER,
@@ -70,10 +71,13 @@ def review_body(event_code):
         "proposal_received": "Smoke test, safe to delete.",
         "theme": "Smoke test",
         "agenda_addition": "Smoke test",
-        # Sent deliberately. The public serializer has no such field, so this
-        # must be dropped rather than stored — check 8 proves it.
-        "internal_footnotes": "MUST NOT BE STORED OR ECHOED",
     }
+    # Only for a link whose reviewer may write it — config said so. Sending it
+    # otherwise is a 400 on the whole submission, which would fail check 7 for
+    # the wrong reason. Check 8 proves the receipt still does not echo it.
+    if footnotes:
+        payload["internal_footnotes"] = "Smoke test footnote, safe to delete."
+    return payload
 
 
 def net_hint(exc):
@@ -158,6 +162,7 @@ def main(argv):
     # 2, 3 — the link itself.
     print("\nLink")
     events = []
+    show_internal = False
     try:
         r = requests.get(config_url, params={KEY_PARAM: key}, timeout=TIMEOUT)
         detail = "" if r.status_code == 200 else f"HTTP {r.status_code}: {r.text[:160]}"
@@ -171,6 +176,7 @@ def main(argv):
         if c.expect(r.status_code == 200, "the link opens", detail):
             data = r.json()
             events = data.get("events") or []
+            show_internal = bool(data.get("show_internal"))
             c.expect(bool(data.get("reviewer")), "the reviewer is named",
                      data.get("reviewer"))
             c.expect(len(events) > 0, "events came back", f"{len(events)} event(s)")
@@ -212,7 +218,8 @@ def main(argv):
         print(f"\nSubmission  (writes one review against {code})")
         try:
             r = requests.post(submit_url, params={KEY_PARAM: key},
-                              json=review_body(code), timeout=TIMEOUT)
+                              json=review_body(code, footnotes=show_internal),
+                              timeout=TIMEOUT)
             if c.expect(r.status_code == 201, "the review is created",
                         f"HTTP {r.status_code}: {r.text[:200]}"):
                 out = r.json()

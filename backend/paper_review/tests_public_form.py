@@ -12,9 +12,9 @@ WHAT MUST NOT MOVE
     ProposalSubmission is minted and the notification is logged. This is the one
     behaviour that separates this endpoint from /api/webhooks/paper-review/, and
     a regression here is silent: the review still saves;
-  * internal_footnotes is neither writable nor readable here, whatever role the
-    reviewer holds. market_research CAN write it inside the CRM, which is exactly
-    why this needs its own test;
+  * internal_footnotes follows the same MR rule the CRM form follows: config
+    says whether this link's reviewer may write it, an MR reviewer's value is
+    stored, and a reviewer outside MR is refused rather than silently dropped;
   * the review is attributed to the reviewer the link names, not to nobody.
 """
 from datetime import date
@@ -117,6 +117,12 @@ class ConfigTests(FormLinkBase):
         self.assertEqual([e["event_code"] for e in r.data["events"]], ["BIU"])
         self.assertEqual(r.data["rubric_total"], 45)
 
+    def test_config_says_whether_the_reviewer_may_write_footnotes(self):
+        self.assertIs(self.config().data["show_internal"], True)
+        self.mre.role = "sales"
+        self.mre.save(update_fields=["role"])
+        self.assertIs(self.config().data["show_internal"], False)
+
     def test_opening_the_form_counts_as_usage(self):
         self.config()
         self.key.refresh_from_db()
@@ -206,11 +212,22 @@ class SubmitTests(FormLinkBase):
         self.assertEqual(r.status_code, 400)
         self.assertEqual(PaperReview.objects.count(), 0)
 
-    def test_internal_footnotes_is_ignored_and_never_echoed(self):
+    def test_internal_footnotes_is_stored_for_an_mr_reviewer(self):
         r = self.submit(body(internal_footnotes="MR only, do not publish"))
         self.assertEqual(r.status_code, 201, r.content)
+        # Stored, but not echoed: the receipt is hand-built and names no MR field.
         self.assertNotIn("internal_footnotes", r.data)
-        self.assertEqual(PaperReview.objects.get().internal_footnotes, "")
+        self.assertEqual(PaperReview.objects.get().internal_footnotes,
+                         "MR only, do not publish")
+
+    def test_internal_footnotes_is_refused_for_a_reviewer_outside_mr(self):
+        """The form hides the box for them; the serializer refuses it anyway."""
+        self.mre.role = "sales"
+        self.mre.save(update_fields=["role"])
+        r = self.submit(body(internal_footnotes="not mine to write"))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("internal_footnotes", r.data)
+        self.assertEqual(PaperReview.objects.count(), 0)
 
     def test_a_missing_required_field_is_a_400_and_writes_nothing(self):
         payload = body()

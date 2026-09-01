@@ -706,3 +706,101 @@ class RequestDateEditTests(TestCase):
 
         ids = [r["id"] for r in resp.data["results"]]
         self.assertEqual(ids, [self.d.id, other.id])
+
+
+class AddedDelegateIsVisibleToTheSaveTests(TestCase):
+    """
+    A delegate ADDED to a saved booking, and one REMOVED from it, as the invoice
+    endpoint reports them back.
+
+    THE FIFTH SILENT FAILURE. Adding a sixth delegate to a five-delegate booking
+    wrote the row and then answered the save as if it had not: the response
+    listed the original five and `delegate_count` stayed at five, so every
+    surface reading either — the modal's own 200, the invoice list, the delegate
+    export — agreed that the save had done nothing. The row was in the database
+    the whole time, which is what made it look like an intermittent write.
+
+    The cause is the viewset, not the payload. BookEventViewSet.get_queryset()
+    loads the instance with prefetch_related("delegates__company") for the update
+    actions, and BookEventDetailSerializer.update() then created and deleted rows
+    underneath that cache. instance.delegates.count() is a len() of the cached
+    list, and to_representation() serialises the same list, so both answered from
+    a snapshot taken before the write.
+
+    IT HAS TO RUN THROUGH THE VIEWSET. Calling the serializer directly builds an
+    instance with no prefetch cache, so the count and the response are correct by
+    accident and the bug is invisible — the prefetch IS the defect.
+
+        python manage.py test book_event.tests_booking_modal_writes
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="modal_add_admin", is_all_access=True)
+        cls.admin = User.objects.create_user(
+            username="modal_add_u", password="x", role="admin", email="mad@iq-hub.com",
+        )
+        cls.admin.team = cls.role
+        cls.admin.save()
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        make_event(EVENT_A)
+        self.inv = BookEvent.objects.create(
+            invoice_number="MOD-ADD", event_code=EVENT_A,
+            payment_status="Pending", booking_code="Delegate",
+        )
+        self.five = [
+            BookDelegate.objects.create(
+                invoice=self.inv, event_code=self.inv.event_code,
+                first_name=f"P{i}", last_name="Person", email=f"p{i}@acme.test",
+            )
+            for i in range(1, 6)
+        ]
+        self.inv.delegate_count = 5
+        self.inv.save(update_fields=["delegate_count"])
+
+    def patch(self, delegates):
+        body = {"invoice_number": self.inv.invoice_number, "event_code": EVENT_A,
+                "delegates": delegates}
+        req = self.factory.patch(f"/api/invoices/{self.inv.pk}/", body, format="json")
+        force_authenticate(req, user=self.admin)
+        resp = _view({"patch": "partial_update"})(req, pk=self.inv.pk)
+        resp.render()
+        return resp
+
+    @staticmethod
+    def _row(d):
+        return {"id": d.id, "first_name": d.first_name,
+                "last_name": d.last_name, "email": d.email}
+
+    def test_the_sixth_delegate_is_in_the_response_and_the_count(self):
+        resp = self.patch(
+            [self._row(d) for d in self.five]
+            + [{"first_name": "P6", "last_name": "Person", "email": "p6@acme.test"}]
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        # The write itself. This half always passed.
+        self.assertEqual(BookDelegate.objects.filter(invoice=self.inv).count(), 6)
+
+        # What the save ANSWERED. This half is the bug.
+        self.assertEqual(len(resp.data["delegates"]), 6)
+        self.assertIn("p6@acme.test", [d["email"] for d in resp.data["delegates"]])
+        self.assertEqual(resp.data["delegate_count"], 6)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.delegate_count, 6)
+
+    def test_a_removed_delegate_is_gone_from_the_response_and_the_count(self):
+        """The same cache, the other direction: a deleted row was echoed back."""
+        resp = self.patch([self._row(d) for d in self.five[:4]])
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.assertEqual(BookDelegate.objects.filter(invoice=self.inv).count(), 4)
+        self.assertEqual(len(resp.data["delegates"]), 4)
+        self.assertNotIn("p5@acme.test", [d["email"] for d in resp.data["delegates"]])
+        self.assertEqual(resp.data["delegate_count"], 4)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.delegate_count, 4)

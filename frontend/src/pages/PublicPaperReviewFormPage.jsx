@@ -138,11 +138,12 @@ export default function PublicPaperReviewFormPage() {
             means two different messages for one problem, and the native bubble
             is the one that cannot be read back by anything filling this in.
 
-            showInternal={false}: internal_footnotes is MR-internal and the public
-            serializer does not accept it. native: real <select> elements for the
-            two pickers. Both are explained in PaperReviewFields. */}
+            showInternal: the MR-only footnotes box, rendered only when config
+            says this link's reviewer may write it — the serializer still decides.
+            native: real <select> elements for the two pickers. Both are explained
+            in PaperReviewFields. */}
         <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}>
-          <PaperReviewFields form={form} setForm={setForm} events={data.events} showInternal={false} native />
+          <PaperReviewFields form={form} setForm={setForm} events={data.events} showInternal={!!data.show_internal} native />
 
           {/* role=alert so the message is announced when it appears, rather than
               only being visible to whoever is already looking at this corner. */}
