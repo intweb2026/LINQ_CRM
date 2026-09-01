@@ -167,6 +167,14 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         # there for why it accepts either form.
         if user and not validated_data.get("added_user_text"):
             validated_data["added_user_text"] = _name(user)
+        # Assigned MR defaults to whoever is raising the ticket. The column
+        # stores an EMAIL — every non-blank value in it matches an active user's
+        # email, which is also what the bulk-update choices offer — and a person
+        # typing a batch into the entry grid is assigning that work to
+        # themselves unless they say otherwise. An explicit value is untouched,
+        # and a webhook delivery has no user, so it keeps whatever it sent.
+        if user and not (validated_data.get("assigned_mr") or "").strip():
+            validated_data["assigned_mr"] = user.email or ""
 
         # Submit directly as MR Submitted — no draft step.
         validated_data["status"] = Ticket.Status.MR_SUBMITTED

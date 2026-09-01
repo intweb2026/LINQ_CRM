@@ -163,20 +163,16 @@ class Ticket(models.Model):
 
     class Meta:
         db_table = "tickets"
-        # ASCENDING, oldest first: Added Time is the row's own insert stamp, so
-        # ascending puts the newest entry at the END of the table, which is how
-        # the inline entry grid builds a batch and how people read it back.
-        #
-        # The descending indexes below are still the right ones and did NOT need
-        # rebuilding: PostgreSQL scans a btree backwards, and (-created_at, -id)
-        # reversed is exactly (created_at, id). Measured with EXPLAIN after the
-        # flip, on 42,912 rows:
-        #   status tab   → Index Only Scan Backward, no sort at all
-        #   plain list   → Index Scan Backward on the single-column created_at
-        #                  index, plus an Incremental Sort for the id tiebreak,
-        #                  which only ever sorts within one tied timestamp
-        # so the first page stays a cheap partial scan either way.
-        ordering = ["created_at", "id"]
+        # NEWEST FIRST. This went to ascending for a while, on the reasoning
+        # that Added Time is the row's own insert stamp so the newest entry
+        # belongs at the end — and it was reversed on request after real use:
+        # the row people want to see is the one they just made, and oldest-first
+        # put it 42,912 rows away. The entry band no longer cares either way; it
+        # sits below the table, not at its end.
+        # (-created_at, -id): the id tiebreak keeps pagination stable when two
+        # rows share a timestamp, and the tickets_created_id_idx composite index
+        # serves this ordering forwards.
+        ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["event_code"]),

@@ -158,7 +158,11 @@ class BulkCreateTests(APITestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.mr = make_user("grid_bulk_mr", "market_research")
+        # An email, deliberately: assigned_mr defaults to the raiser's EMAIL,
+        # and a user without one would make that assertion compare '' to ''
+        # and pass while proving nothing.
+        cls.mr = make_user("grid_bulk_mr", "market_research",
+                           email="grid.bulk.mr@iq-hub.com")
 
     def _post(self, rows):
         auth(self.client, self.mr)
@@ -194,6 +198,18 @@ class BulkCreateTests(APITestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         numbers = [row["ticket_number"] for row in resp.data["created"]]
         self.assertEqual(numbers, ["WH-SCU 10001", "WH-SCU 10002", "WH-SCU 10003"])
+
+    def test_assigned_mr_defaults_to_the_person_raising_the_batch(self):
+        """
+        Typing a batch into the grid assigns that work to yourself unless the
+        row says otherwise; an explicit assignee is never overwritten.
+        """
+        rows = [self._row(0), {**self._row(1), "assigned_mr": "someone.else@iq-hub.com"}]
+        resp = self._post(rows)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        created = resp.data["created"]
+        self.assertEqual(created[0]["assigned_mr"], self.mr.email)
+        self.assertEqual(created[1]["assigned_mr"], "someone.else@iq-hub.com")
 
     def test_the_author_is_recorded_on_every_row(self):
         resp = self._post([self._row(i) for i in range(3)])
@@ -358,7 +374,11 @@ class OrderingTests(APITestCase):
     def setUpTestData(cls):
         cls.mr = make_user("order_mr", "market_research")
 
-    def test_the_list_is_oldest_first_so_new_entries_land_at_the_end(self):
+    def test_the_list_is_newest_first_so_a_fresh_submit_is_the_top_row(self):
+        """
+        Flipped from oldest-first on request, after real use: the row someone
+        wants to see is the one they just made.
+        """
         first = make_ticket(purpose="FIRST", created_by=self.mr)
         second = make_ticket(purpose="SECOND", created_by=self.mr)
         third = make_ticket(purpose="THIRD", created_by=self.mr)
@@ -367,4 +387,4 @@ class OrderingTests(APITestCase):
         resp = self.client.get("/api/tickets/")
         self.assertEqual(resp.status_code, 200, resp.content)
         ids = [row["id"] for row in resp.data["results"]]
-        self.assertEqual(ids, [first.id, second.id, third.id])
+        self.assertEqual(ids, [third.id, second.id, first.id])

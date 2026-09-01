@@ -159,9 +159,14 @@ function TicketEntryRows({ onCreated, openRef }) {
   const assignees = (schema && schema.assigned_mr && schema.assigned_mr.choices) || [];
 
   // ── Persistence, debounced off the typing path ──────────────────────
+  //
+  // The cleanup FLUSHES, never drops. This component unmounts and remounts
+  // whenever DataTable's rows empty and refill — which a post-submit refresh
+  // does — and a dropped save let the remount reload a stale store and
+  // resurrect rows that had just been submitted.
   useEffect(() => {
     const t = setTimeout(() => saveDrafts(who, drafts), 300);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); saveDrafts(who, drafts); };
   }, [who, drafts]);
 
   const addRows = useCallback((n = 1) => {
@@ -357,6 +362,8 @@ function TicketEntryRows({ onCreated, openRef }) {
       // Rows leave by identity, not index: a row added while the request is in
       // flight must not shift which ones are removed.
       const submitted = new Set(rowMap.map((i) => drafts[i].key));
+      const remaining = drafts.filter((d) => !submitted.has(d.key));
+      saveDrafts(who, remaining);   // synchronously, BEFORE the table refresh
       setDrafts((cur) => cur.filter((d) => !submitted.has(d.key)));
       setDups({});
       toast(`${made} ${made === 1 ? 'ticket' : 'tickets'} submitted`, 'ok');

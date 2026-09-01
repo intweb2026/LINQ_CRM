@@ -234,9 +234,8 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "competitor_event_name", "assigned_mr", "assign_name",
     ]
     ordering_fields = ["id", "created_at", "updated_at", "status", "priority"]
-    # Oldest first, so the newest ticket is the LAST row. See Ticket.Meta for why
-    # the descending composite indexes still serve this without a sort.
-    ordering        = ["created_at", "id"]
+    # Newest first — see Ticket.Meta.ordering for the history of this flip.
+    ordering        = ["-created_at", "-id"]
 
     # Roles that see every ticket regardless of who raised it. Re-exported as a
     # class attribute because it read as one here before; the list itself lives

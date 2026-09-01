@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DataTable from '../components/DataTable';
-import { Kpi, Tabs } from '../components/UI';
-import { EvBadge } from '../components/Badge';
+import { Tabs } from '../components/UI';
 import { Icon } from '../lib/icons';
 import { fdate, nf } from '../lib/helpers';
 import * as matrixApi from '../api/miningMatrix';
@@ -19,10 +18,15 @@ import NoAccessPage from './NoAccessPage';
  *
  * Col A   the event code, as the Events module holds it, linking through to
  *         Ticket Central already filtered to exactly these tickets
- * Col B   the event's start and end dates, plus how many days until it opens
+ * Col B   how many days until it opens, and the dates it runs
  * Col C   unmined links — tickets whose `actual_number` has not been filled in
  * Col D   unmined data — the estimate those tickets carry
- * Col E+  Col D split by priority, one column per value in use
+ * Col E+  Col D split twice over, by Priority and by Ticket type, one column per
+ *         value actually in use
+ *
+ * Col A and Col B are FROZEN. The two split blocks push the table well past the
+ * width of any screen, and a reader scrolled into the ticket-type columns needs
+ * to still know which event they are reading.
  *
  * THE JOIN, AND WHY IT IS NOT event_code = event_code. Ticket Central files work
  * under a short stable code (`purpose`: AFS, DDU, BAPE) that does not change from
@@ -51,6 +55,25 @@ const dim = () => <span className="dim">—</span>;
 const zero = () => <span className="dim">0</span>;
 
 /**
+ * The class that colours one split column.
+ *
+ * The COLOURS are not here — they are theme tokens in styles/base.css
+ * [band_palette], selected by these classes in components.css. That split is the
+ * point: the palette has a dark-theme half, and a hex chosen in JavaScript and
+ * set inline would be the one colour on the page that cannot follow the theme.
+ *
+ * The value is lower-cased and stripped to alphanumerics because it comes from a
+ * free CharField (see services.SPLITS) and reaches the DOM as a class name. A
+ * value the palette has no entry for simply matches nothing and the column
+ * renders unbanded, which is the intended fallback rather than a defect —
+ * `.bnd` carries neutral defaults for exactly that case.
+ */
+const bandClass = (value) => {
+  const slug = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return slug ? `bnd bnd-${slug}` : 'bnd';
+};
+
+/**
  * How long until the event opens — the column the whole default view is ordered
  * by, so it is a badge rather than a bare integer.
  *
@@ -68,12 +91,18 @@ function DaysBadge({ value }) {
   return <span className={'tg bg-' + tone}>{nf(value)}d</span>;
 }
 
-function buildCols(priorityColumns) {
+function buildCols(splits, splitColumns) {
   const cols = [
     {
       key: 'event_code',
       label: 'Event code',
       group: 'ev',
+      // FROZEN. This column and the two after it are the row's identity, and this
+      // table is wide enough that without them pinned a reader scrolled into the
+      // ticket-type block is looking at numbers with nothing naming them. See the
+      // `pins` block in DataTable for how the offsets are derived.
+      pin: true,
+      w: 150,
       /**
        * A real <Link>, not a row click. Ctrl/cmd-click and "open in new tab" have
        * to work: the normal way to use this page is to open three or four codes
@@ -84,37 +113,59 @@ function buildCols(priorityColumns) {
        * later be given a drawer; a plain click must follow the link and do
        * nothing else.
        */
+      /**
+       * ALSO CARRIES THE JOIN WARNING, since the Ticket code column that used to
+       * show it is gone. A row whose event code resolved onto a purpose Ticket
+       * Central has never raised work under reads zero straight across, which is
+       * indistinguishable from an event that is genuinely fully mined — so the
+       * code is tinted and the tooltip says which of the two it is. Without this
+       * the removal would have made a wrong-looking row unexplainable.
+       */
       cell: (v, r) => (
         <Link
           className="mono lnk"
+          style={r.matched ? undefined : { color: 'var(--amber-tx)' }}
           to={matrixApi.ticketsHref(r)}
           onClick={(e) => e.stopPropagation()}
-          title={`Open ${r.canonical_code} tickets in Ticket Central, filtered to unmined`}
+          title={r.matched
+            ? `Open ${r.canonical_code} tickets in Ticket Central, filtered to unmined`
+            : `No tickets are filed under "${r.canonical_code}" — this row is empty `
+              + 'because the code join found nothing, not because the work is done'}
         >
           {v}
         </Link>
       ),
     },
     {
-      key: 'canonical_code',
-      label: 'Ticket code',
-      group: 'ev',
-      // Shown, not hidden behind the Columns menu. It is the answer to "why does
-      // this row read zero" whenever the code join is the reason, and a column
-      // nobody can see cannot answer anything.
-      cell: (v, r) => (
-        <span className="mono" style={{ color: r.matched ? 'var(--text-3)' : 'var(--amber-tx)' }}
-          title={r.matched ? '' : 'No tickets are filed under this code'}>
-          {v || '—'}
-        </span>
-      ),
+      key: 'days_to_go',
+      label: 'Days to go',
+      group: 'dt',
+      num: true,
+      pin: true,
+      w: 100,
+      cell: (v) => <DaysBadge value={v} />,
     },
-    { key: 'event_name', label: 'Event', group: 'ev', cls: 'st', cell: (v) => v || dim() },
-    { key: 'status', label: 'Status', group: 'ev', cell: (v) => (v ? <EvBadge value={v} /> : dim()) },
+    {
+      // ONE column, not a Starts and an Ends. It is read as a single fact — the
+      // window the event occupies — and splitting it spent two frozen columns on
+      // it, which is width taken from the numbers this page exists to show.
+      //
+      // Keyed on `start_date` and typed `date` so DataTable's date comparator
+      // still orders it correctly (undated rows last in both directions), which a
+      // synthesised "12 Feb - 14 Feb" string could not.
+      key: 'start_date',
+      label: 'Dates',
+      type: 'date',
+      group: 'dt',
+      pin: true,
+      w: 190,
+      cell: (v, r) => {
+        if (!v) return dim();
+        if (!r.end_date || r.end_date === v) return fdate(v);
+        return `${fdate(v)} – ${fdate(r.end_date)}`;
+      },
+    },
     { key: 'location', label: 'Location', group: 'ev', cell: (v) => v || dim() },
-    { key: 'days_to_go', label: 'Days to go', group: 'dt', num: true, cell: (v) => <DaysBadge value={v} /> },
-    { key: 'start_date', label: 'Starts', type: 'date', group: 'dt', cell: (v) => (v ? fdate(v) : dim()) },
-    { key: 'end_date', label: 'Ends', type: 'date', group: 'dt', cell: (v) => (v ? fdate(v) : dim()) },
     {
       key: 'unmined_links', label: 'Unmined links', group: 'un', num: true,
       cell: (v) => (v ? <b style={{ color: 'var(--text)' }}>{nf(v)}</b> : zero()),
@@ -125,37 +176,47 @@ function buildCols(priorityColumns) {
     },
   ];
 
-  // Col E onwards. Keyed 'pri_<value>' so a priority can never collide with one
-  // of the fixed column keys above, and flattened onto the row (see toRows) so
-  // DataTable's numeric sort compares numbers rather than the strings a nested
-  // lookup would hand it.
-  for (const p of priorityColumns) {
-    cols.push({
-      key: 'pri_' + p.key,
-      label: p.label,
-      group: 'pri',
-      num: true,
-      // The hover carries the LINK count for the same cell. Both figures matter —
-      // 4,000 estimated across two links is a different afternoon from 4,000
-      // across ninety — and giving each its own column would double the width of
-      // the widest part of the table.
-      cell: (v, r) => {
-        const links = r.priority_links[p.key] || 0;
-        if (!v && !links) return zero();
-        return (
-          <span title={`${nf(links)} link${links === 1 ? '' : 's'} at ${p.label}`}>
-            {nf(v)}
-          </span>
-        );
-      },
+  // Col E onwards: one BLOCK of columns per split dimension, in the order the
+  // server lists them. Keyed 'sp_<dim>_<value>' so a value can never collide with
+  // a fixed column key, nor a priority with an identically named ticket type, and
+  // flattened onto the row (see toRows) so DataTable's numeric sort compares
+  // numbers rather than the strings a nested lookup would hand it.
+  for (const dim of splits) {
+    const block = splitColumns[dim.key] || [];
+    block.forEach((c, i) => {
+      cols.push({
+        key: `sp_${dim.key}_${c.key}`,
+        label: c.label,
+        group: 'sp_' + dim.key,
+        num: true,
+        // `sec` on the FIRST column of each block draws the rule that separates
+        // Ticket type from Priority. The band colours alone were not enough: two
+        // adjacent runs of tinted columns still read as one continuous field, and
+        // the reader has to know where one question ends and the next begins.
+        cls: bandClass(c.key) + (i === 0 ? ' sec' : ''),
+        // The hover carries the LINK count for the same cell. Both figures matter
+        // — 4,000 estimated across two links is a different afternoon from 4,000
+        // across ninety — and giving each its own column would double the width of
+        // the widest part of this table.
+        cell: (v, r) => {
+          const links = (r.split_links[dim.key] || {})[c.key] || 0;
+          if (!v && !links) return zero();
+          return (
+            <span title={`${nf(links)} link${links === 1 ? '' : 's'} — ${dim.label} ${c.label}`}>
+              {nf(v)}
+            </span>
+          );
+        },
+      });
     });
   }
   return cols;
 }
 
-/** Flattens the priority maps onto each row, and gives DataTable a stable id. */
+/** Flattens each split's map onto the row, and gives DataTable a stable id. */
 function toRows(payload) {
-  const keys = (payload.priority_columns || []).map((c) => c.key);
+  const splits = payload.splits || [];
+  const splitColumns = payload.split_columns || {};
   return (payload.rows || []).map((r, i) => {
     const flat = {
       ...r,
@@ -163,9 +224,14 @@ function toRows(payload) {
       // its own; the index makes the row identity unique without inventing one
       // the server would then have to keep stable.
       id: `${r.event_code}#${i}`,
-      priority_links: r.priority_links || {},
+      split_links: r.split_links || {},
     };
-    for (const k of keys) flat['pri_' + k] = (r.priority_data || {})[k] || 0;
+    for (const dim of splits) {
+      const data = (r.split_data || {})[dim.key] || {};
+      for (const c of splitColumns[dim.key] || []) {
+        flat[`sp_${dim.key}_${c.key}`] = data[c.key] || 0;
+      }
+    }
     return flat;
   });
 }
@@ -191,11 +257,12 @@ export default function MiningMatrixPage() {
   // every render and hand DataTable a fresh array each time — defeating the memo
   // on Row across a table this wide. One useMemo fixes the identity.
   const payload = useMemo(() => data || {}, [data]);
-  const priorityColumns = useMemo(() => payload.priority_columns || [], [payload]);
+  const splits = useMemo(() => payload.splits || [], [payload]);
+  const splitColumns = useMemo(() => payload.split_columns || {}, [payload]);
   // Memoised on the payload, not rebuilt each render: DataTable memoises its Row
   // on the `cols` identity, and this table is wide enough that losing that memo
   // is felt. See the TK_COLS note in TicketCentralPage.
-  const cols = useMemo(() => buildCols(priorityColumns), [priorityColumns]);
+  const cols = useMemo(() => buildCols(splits, splitColumns), [splits, splitColumns]);
   const rows = useMemo(() => toRows(payload), [payload]);
 
   if (!canView('mining_matrix')) return <NoAccessPage module="Mining Resource Matrix" />;
@@ -211,39 +278,57 @@ export default function MiningMatrixPage() {
     <>
       <Tabs list={TABS} active={view} onPick={setView} />
 
-      {/* WHY THE TOTALS SIT HERE AND NOT IN A FOOTER ROW. In the All view one
-          family appears once per edition and every one of those rows carries the
-          same figures, because Ticket Central has one purpose code and not three
-          — so adding the visible column up double-counts. The server totals over
-          DISTINCT codes instead (mining_matrix/services._totals), and `codes`
-          below is what makes the difference legible rather than mysterious. */}
-      <div className="kpis">
-        <Kpi label="Unmined links" value={totals.unmined_links || 0} icon="link"
-          sub={`across ${nf(totals.codes || 0)} event ${(totals.codes === 1) ? 'code' : 'codes'}`} />
-        <Kpi label="Unmined data" value={totals.unmined_data || 0} icon="chart"
-          sub="sum of estimates still to mine" />
-        <Kpi label={isUnlinked ? 'Unlinked codes' : 'Events listed'} value={totals.rows || 0}
-          icon={isUnlinked ? 'warn' : 'calendar'}
-          tone={isUnlinked ? 'var(--amber)' : undefined}
-          sub={isUnlinked
-            ? 'no upcoming event covers this work'
-            : `${nf(counts[matrixApi.VIEWS.UNLINKED] || 0)} more in Unlinked codes`} />
-      </div>
+      {/* THE TOTALS BAR.
 
-      {/* The per-priority totals, in the same order and with the same labels as
-          the columns below, so the strip reads as the table's footer without
-          having to live inside it. These sum to "Unmined data" above. */}
-      {priorityColumns.length ? (
-        <div className="pri-tot">
-          <span className="pri-tot-l">By priority</span>
-          {priorityColumns.map((p) => (
-            <span className="pri-tot-i" key={p.key}>
-              <em>{p.label}</em>
-              <b>{nf((totals.priority_data || {})[p.key] || 0)}</b>
-            </span>
-          ))}
+          NOT A FOOTER ROW. In the All view one family appears once per edition
+          and every one of those rows carries identical figures, because Ticket
+          Central has one purpose code and not three — so a total summed down the
+          visible column double-counts. The server totals over DISTINCT codes
+          instead (mining_matrix/services._totals), which is a different number
+          from the one under the column; at the foot of that column it would read
+          as an arithmetic error rather than as the correction it is.
+
+          THE LAYOUT. Hierarchy carries this, not boxes: the three figures that
+          answer "how much is outstanding" are set large and lead, and everything
+          after them is a breakdown at roughly half the size. No cards, no borders
+          between items, one hairline per section — so the bar is scanned in the
+          order the numbers matter rather than as fifteen equal tiles.
+
+          COLOUR IS AN ACCENT, NOT A FILL. Each breakdown figure carries a small
+          dot in its column's own hue, so a value here points at the block below
+          it. Tinting the figures themselves would make a summary line read as a
+          colour chart and cost the numbers their contrast — the same restraint
+          the column bands use.
+
+          Each split run sums to Data on its own: ticket type and priority are two
+          cuts of the same money, not two halves of it. */}
+      <div className="kbar">
+        <div className="kbar-lead">
+          <span className="kbar-fig">
+            <b>{nf(totals.unmined_links || 0)}</b><em>Unmined links</em>
+          </span>
+          <span className="kbar-fig">
+            <b>{nf(totals.unmined_data || 0)}</b><em>Unmined data</em>
+          </span>
+          <span className="kbar-fig">
+            <b>{nf(totals.rows || 0)}</b><em>{isUnlinked ? 'Codes' : 'Events'}</em>
+          </span>
         </div>
-      ) : null}
+        {splits.map((dim) => (
+          <div className="kbar-sec" key={dim.key}>
+            <span className="kbar-sec-l">{dim.label}</span>
+            <span className="kbar-chips">
+              {(splitColumns[dim.key] || []).map((c) => (
+                <span className={'kbar-chip ' + bandClass(c.key)} key={c.key}>
+                  <i aria-hidden="true" />
+                  <b>{nf(((totals.split_data || {})[dim.key] || {})[c.key] || 0)}</b>
+                  <em>{c.label}</em>
+                </span>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
 
       {payload.no_purpose && payload.no_purpose.links ? (
         /* Unmined tickets carrying no purpose at all. They can never be a row —
@@ -298,10 +383,13 @@ export default function MiningMatrixPage() {
           { key: 'ev', label: 'Event' },
           { key: 'dt', label: 'Dates' },
           { key: 'un', label: 'Unmined' },
-          { key: 'pri', label: 'By priority' },
+          ...splits.map((d) => ({ key: 'sp_' + d.key, label: 'By ' + d.label.toLowerCase() })),
         ]}
         hiddenDefault={['location']}
-        searchPlaceholder="Search event code or name…"
+        // Not "or name": the Event and Status columns were removed, and DataTable's
+        // in-memory search reads the COLUMNS, so a name is no longer searchable
+        // here. Saying otherwise would promise a match the table cannot make.
+        searchPlaceholder="Search event code…"
         // No tab strip to fold these into — the strip above switches VIEWS, which
         // is a different question — so they ride on the table's own toolbar row,
         // the same placement Paper Review uses for its filter toggle.

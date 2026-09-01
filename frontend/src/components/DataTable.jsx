@@ -1798,10 +1798,10 @@ export default function DataTable({
             {moreBar}
           </div>
           {/* Below the scroll box, not inside it: the band carries its own
-              columns now, so sharing the table's horizontal scroll would just
-              drag it sideways under headings that do not describe it. Sitting
-              here it is on screen at any scroll position, which matters in a
-              table sorted oldest-first whose true last row is 42,912 down. */}
+              columns, so sharing the table's horizontal scroll would just drag
+              it sideways under headings that do not describe it. Sitting here
+              it is on screen at any scroll position, however the table above
+              happens to be sorted. */}
           {entryBand ? (
             <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
           ) : null}

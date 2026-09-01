@@ -579,6 +579,94 @@ table.dt td.pin1,table.dt td.pin2{background:var(--surface);z-index:2}
 table.dt th.pin1,table.dt th.pin2{z-index:4}
 /* An opaque cell cannot inherit the row's hover tint, so it is repainted. */
 table.dt tbody tr:hover td.pin1,table.dt tbody tr:hover td.pin2{background:var(--t-50)}
+/* ── Frozen columns, declared per column ──  [table_frozen_columns]
+   The general form of .pin1/.pin2 above. A column carrying `pin: true` gets
+   position:sticky and an inline `left` computed in DataTable from the SAME
+   colWidth() the <colgroup> uses, so the offsets cannot drift from the widths.
+   Only the class and the paint live here; the arithmetic belongs where the
+   widths are known. Used by the Mining Matrix, whose priority and ticket-type
+   blocks push the row's identity off-screen without it.
+
+   z-index mirrors the pair above: the header row is 3, so a pinned header must
+   clear it at 4, and a pinned cell sits at 2 above ordinary cells.
+   The background is opaque or the scrolling columns show through, which also
+   means the row tints have to be repainted by hand. */
+table.dt th.pin-col,table.dt td.pin-col{position:sticky}
+table.dt td.pin-col{background:var(--surface);z-index:2}
+table.dt th.pin-col{z-index:4}
+table.dt tbody tr:hover td.pin-col{background:var(--t-50)}
+table.dt tbody tr.sel td.pin-col{background:var(--t-50)}
+/* Only the LAST frozen column carries the edge, so the block reads as one unit
+   rather than as a set of ruled columns. It is the sole cue that the table
+   continues to the right. */
+table.dt th.pin-col.pin-last,table.dt td.pin-col.pin-last{box-shadow:inset -1px 0 var(--border)}
+
+/* ── Coloured column bands ──  [table_column_bands]
+   Used by the Mining Resource Matrix, where Col E onwards is two adjacent blocks
+   of numbers — Ticket type, then Priority — that mean entirely different things.
+   Unbanded, they read as one undifferentiated field of digits twenty columns
+   wide, and the only way to know which block a figure sits in is to scroll back
+   up to the header.
+
+   A column carries `.bnd` plus one value class (.bnd-wh, .bnd-as, …) that sets
+   the three --bd-* properties; the palette itself, and its dark theme, live in
+   base.css [band_palette]. Nothing here names a colour.
+
+   RESTRAINT IS THE DESIGN. The accent is a 2px rule above the header and the
+   header label takes the hue; the CELLS get only the faint --bd-bg wash. Tinting
+   cells any harder turns a data table into a stained-glass window and costs the
+   numbers their contrast — the band has to sit behind the figures, not on them.
+
+   The defaults on .bnd matter: priority and type are free CharFields, so a value
+   the palette has never seen still gets a column (see services.SPLITS) and must
+   render as a plain, unbanded one rather than with three undefined properties. */
+/* Defaults on the bare class, NOT on `table.dt th.bnd`. The value classes below
+   are single-class selectors, so a default carrying the table's own specificity
+   would outrank every one of them and no column would ever be coloured. Same
+   specificity, declared first, so source order decides and the value wins. */
+.bnd{--bd:var(--n-300);--bd-bg:transparent;--bd-tx:var(--text-4)}
+/* THE TINT IS COMPOSITED OVER AN OPAQUE GROUND, not set as the background.
+   Two reasons, and the first is a bug this shape avoids: the header row is
+   position:sticky, so painting it with a --bd-bg that resolves to `transparent`
+   — which is the documented fallback for an unrecognised value — would let the
+   rows scroll visibly THROUGH the header. The second is dark mode, where every
+   tint is a low-alpha rgba() of the accent and has to sit on the surface rather
+   than replace it. A gradient of the tint over the surface colour does both. */
+table.dt th.bnd{background:linear-gradient(var(--bd-bg),var(--bd-bg)),var(--surface-2);box-shadow:inset 0 2px 0 var(--bd)}
+table.dt th.bnd .th-sort span,table.dt th.bnd .th-nosort{color:var(--bd-tx)}
+table.dt td.bnd{background:linear-gradient(var(--bd-bg),var(--bd-bg)),var(--surface)}
+/* An opaque tint cannot inherit the row tint, so hover and selection repaint it —
+   the same trade the pinned columns make above. The band is a property of the
+   COLUMN and the row state is about the ROW, so the row wins while pointed at. */
+table.dt tbody tr:hover td.bnd,table.dt tbody tr.sel td.bnd{background:var(--t-50)}
+
+.bnd-wh{--bd:var(--bd-wh);--bd-bg:var(--bd-wh-bg);--bd-tx:var(--bd-wh-tx)}
+.bnd-bx{--bd:var(--bd-bx);--bd-bg:var(--bd-bx-bg);--bd-tx:var(--bd-bx-tx)}
+.bnd-gr{--bd:var(--bd-gr);--bd-bg:var(--bd-gr-bg);--bd-tx:var(--bd-gr-tx)}
+.bnd-yl{--bd:var(--bd-yl);--bd-bg:var(--bd-yl-bg);--bd-tx:var(--bd-yl-tx)}
+.bnd-lx{--bd:var(--bd-lx);--bd-bg:var(--bd-lx-bg);--bd-tx:var(--bd-lx-tx)}
+.bnd-cx{--bd:var(--bd-cx);--bd-bg:var(--bd-cx-bg);--bd-tx:var(--bd-cx-tx)}
+.bnd-px{--bd:var(--bd-px);--bd-bg:var(--bd-px-bg);--bd-tx:var(--bd-px-tx)}
+.bnd-gx{--bd:var(--bd-gx);--bd-bg:var(--bd-gx-bg);--bd-tx:var(--bd-gx-tx)}
+.bnd-zid{--bd:var(--bd-zid);--bd-bg:var(--bd-zid-bg);--bd-tx:var(--bd-zid-tx)}
+.bnd-as{--bd:var(--bd-as);--bd-bg:var(--bd-as-bg);--bd-tx:var(--bd-as-tx)}
+.bnd-ad{--bd:var(--bd-ad);--bd-bg:var(--bd-ad-bg);--bd-tx:var(--bd-ad-tx)}
+.bnd-spex{--bd:var(--bd-spex);--bd-bg:var(--bd-spex-bg);--bd-tx:var(--bd-spex-tx)}
+.bnd-dd{--bd:var(--bd-dd);--bd-bg:var(--bd-dd-bg);--bd-tx:var(--bd-dd-tx)}
+.bnd-assoc{--bd:var(--bd-assoc);--bd-bg:var(--bd-assoc-bg);--bd-tx:var(--bd-assoc-tx)}
+.bnd-media{--bd:var(--bd-media);--bd-bg:var(--bd-media-bg);--bd-tx:var(--bd-media-tx)}
+.bnd-ab{--bd:var(--bd-ab);--bd-bg:var(--bd-ab-bg);--bd-tx:var(--bd-ab-tx)}
+/* ── Section rule ──
+   Carried by the FIRST column of each split block, so Ticket type and Priority
+   read as two sections rather than one continuous field of tinted columns. The
+   band colours alone did not do this: adjacent runs of tint still look like one
+   block, and nothing said where one question ended and the next began.
+
+   border-left, not another inset box-shadow: the header already spends its
+   box-shadow on the band's top accent, and a second value there would have to
+   restate the first. */
+table.dt th.sec,table.dt td.sec{border-left:2px solid var(--border-s)}
+/* The totals bar's dot takes the same hue, straight off --bd. See .kbar-chip i. */
 /* ── editable cell ──  [table_cell_editable]
    A cell that opens an editor when clicked, marked by the caret on hover. */
 .ec{position:relative;display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:-2px -6px;border-radius:var(--r-sm);cursor:pointer;transition:background .12s;max-width:100%}
@@ -687,15 +775,46 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
 .lnk-filter b{color:var(--text);font-weight:650}
 .lnk-filter b.mono{font-family:var(--mono)}
 
-/* ═══ Priority totals strip (Mining Matrix) ═══
-   The table's footer, lifted out of the table. It cannot be a footer ROW: in the
-   All view one event family appears once per edition, each carrying identical
-   figures, so a total summed down the visible column would double-count. The
-   server totals over distinct codes instead, which is a different number from
-   the one under the column — putting it at the bottom of that column would read
-   as an arithmetic error rather than as the correction it is. */
-.pri-tot{display:flex;align-items:center;flex-wrap:wrap;gap:7px 18px;margin-bottom:18px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
-.pri-tot-l{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.075em;color:var(--text-4)}
-.pri-tot-i{display:flex;align-items:baseline;gap:6px}
-.pri-tot-i em{font-style:normal;font-size:11px;font-weight:650;color:var(--text-4)}
-.pri-tot-i b{font-size:13px;font-weight:650;color:var(--text);font-variant-numeric:tabular-nums}
+/* ═══ Totals bar (Mining Matrix) ═══  [mining_matrix_totals_bar]
+   The table's footer, lifted above the table, and the page's only header.
+
+   IT CANNOT BE A FOOTER ROW. In the All view one event family appears once per
+   edition, each carrying identical figures, so a total summed down the visible
+   column double-counts. The server totals over distinct codes instead, which is a
+   different number from the one under the column — at the bottom of that column
+   it would read as an arithmetic error rather than as the correction it is.
+
+   COMPACT BY HIERARCHY, NOT BY SHRINKING. This replaced a row of KPI cards. The
+   three lead figures are set large because they answer the page's question; the
+   fifteen breakdown figures are half their size because they qualify the answer.
+   No card, no border per item, one hairline per section: the whole bar is about
+   as tall as a single table row, and it is read in the order the numbers matter.
+
+   Values before labels, and the label is the SMALLER of the pair. A row of
+   figures is scanned for its digits — putting the caption first makes every item
+   cost a word before it yields a number. */
+.kbar{display:flex;align-items:stretch;flex-wrap:wrap;gap:0 22px;margin-bottom:14px;padding:11px 15px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
+.kbar-lead{display:flex;align-items:baseline;gap:22px;flex-shrink:0}
+.kbar-fig{display:flex;flex-direction:column;gap:1px}
+.kbar-fig b{font-size:21px;font-weight:700;line-height:1.05;color:var(--text);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kbar-fig em{font-style:normal;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);white-space:nowrap}
+/* The hairline is the ONLY divider in the bar, and it marks the boundary the
+   table repeats below with .sec — so the grouping is stated once in each place
+   and the two agree. border-left rather than a spacer element: it stretches to
+   the bar's height for free and adds no node per section. */
+.kbar-sec{display:flex;align-items:center;gap:11px;padding-left:22px;border-left:1px solid var(--border);min-width:0;flex:1 1 auto}
+.kbar-sec-l{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);white-space:nowrap;flex-shrink:0}
+.kbar-chips{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 13px;min-width:0}
+.kbar-chip{display:flex;align-items:baseline;gap:4px}
+/* The dot is the whole of the colour. It ties the figure to its column below
+   without tinting the number, which is what keeps this a summary line rather
+   than a colour chart — and it is the same restraint .bnd uses on the cells. */
+.kbar-chip i{width:6px;height:6px;border-radius:var(--r-full);background:var(--bd);flex-shrink:0;align-self:center}
+.kbar-chip b{font-size:12.5px;font-weight:650;color:var(--text);font-variant-numeric:tabular-nums}
+.kbar-chip em{font-style:normal;font-size:10px;font-weight:650;color:var(--text-4);white-space:nowrap}
+@media (max-width:900px){
+  /* Stacked, the hairline runs the wrong way — it would sit above a section
+     rather than beside it — so it becomes a rule along the top instead. */
+  .kbar{gap:11px 0}
+  .kbar-sec{padding-left:0;border-left:none;padding-top:10px;border-top:1px solid var(--border);flex-basis:100%}
+}

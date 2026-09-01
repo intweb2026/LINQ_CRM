@@ -49,7 +49,7 @@ const tkCols = () => [
   // an edit invisible for the rest of the day it was made on, which reads as
   // "Modified Time is not updating".
   //
-  // This is also the table's default sort, ASCENDING — see defaultSort below.
+  // This is also the table's default sort, newest first — see defaultSort below.
   // The Duplicate Tickets column that used to sit next in this list is gone with
   // its database column; a repeated link is flagged while it is being typed.
   { key: 'created_at', serverField: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => stamp(v) },
@@ -266,11 +266,14 @@ export default function TicketCentralPage() {
         // but not update must still be able to select — otherwise the button is
         // rendered on a table that hands it nothing.
         noun="tickets" select={can('update', 'ticket_central') || can('delete', 'ticket_central')} infinite pageSize={1000}
-        // ASCENDING. Added Time is the row's own insert stamp, so oldest first
-        // puts the newest ticket at the END of the table, which is where the
-        // entry grid leaves a batch and how people read one back. Matches
+        // NEWEST FIRST, reversed from a spell of ascending on request: a fresh
+        // submit belongs at the top, not 42,912 rows away. Matches
         // Ticket.Meta.ordering, so the server and the header arrow agree.
-        defaultSort={{ key: 'created_at', dir: 'asc' }} searchPlaceholder="Search ticket, organizer, keywords…"
+        // The version bump below is what makes this real for anyone who has
+        // already visited the page — a stored sort outranks the default, and
+        // everyone who visited during the ascending spell has one stored.
+        defaultSort={{ key: 'created_at', dir: 'desc' }} defaultSortVersion={1}
+        searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}
         // TK_COLS, not tkCols(). The call returned a fresh array on every render,

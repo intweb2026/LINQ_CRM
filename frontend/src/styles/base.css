@@ -72,6 +72,77 @@ html[data-theme=dark]{
   --sh-lg:0 12px 28px -6px rgba(0,0,0,.5);
   --sh-xl:0 28px 56px -12px rgba(0,0,0,.6);
 }
+/* ═══════ COLUMN BAND PALETTE ═══════  [band_palette]
+   The per-value colours the Mining Resource Matrix paints its two split blocks
+   with. Read only by the .bnd rules in components.css, which take the three
+   properties below off whichever value class a column carries.
+
+   TWO FAMILIES, AND THE SPLIT IS THE POINT. The table draws Ticket type and
+   Priority as adjacent blocks of numbers that mean entirely different things.
+   One palette across both would make the boundary between them invisible, so
+   ticket type takes SATURATED, COOL jewel tones and priority takes MUTED, WARM
+   earth tones. Which block a column belongs to is legible before any label is
+   read, and no hue appears in both.
+
+   Ticket type follows the names the codes already carry, because those names are
+   what people say out loud: BX is Blue, GR Green, YL Yellow, PX Platinum
+   (purple), GX Gold, LX LinkedIn (its own navy), WH White (silver, since white
+   on white is nothing), CX Comp. (teal, the remaining blue that is not BX or LX).
+
+   Priority has no colour vocabulary of its own, so it takes an ordered warm ramp
+   rather than semantic colours: these are categories, and painting DD red would
+   assert an urgency the data does not carry.
+
+   THREE PROPERTIES PER VALUE, mirroring the --green / --green-bg / --green-tx
+   convention above rather than deriving a tint with color-mix(), which Safari
+   only gained in 16.2 and which would silently degrade to no colour at all on
+   anything older.
+     --bd     the accent rule above the header
+     --bd-bg  the column tint, kept very faint: it must read as a band behind
+              numbers, not as a highlight on them
+     --bd-tx  the header label, which has to clear AA on --surface-2 */
+:root{
+  --bd-wh:#8E9AA8;--bd-wh-bg:#F4F6F8;--bd-wh-tx:#556070;
+  --bd-bx:#3B82F6;--bd-bx-bg:#EFF5FE;--bd-bx-tx:#1B4599;
+  --bd-gr:#0E9F6E;--bd-gr-bg:#ECFAF4;--bd-gr-tx:#036448;
+  --bd-yl:#D9A400;--bd-yl-bg:#FDF7E6;--bd-yl-tx:#7A5C00;
+  --bd-lx:#0A4C8B;--bd-lx-bg:#ECF1F8;--bd-lx-tx:#0A4C8B;
+  --bd-cx:#0E8FA8;--bd-cx-bg:#EAF7FA;--bd-cx-tx:#0A5F70;
+  --bd-px:#7150C8;--bd-px-bg:#F4F1FD;--bd-px-tx:#48328E;
+  --bd-gx:#A8802A;--bd-gx-bg:#FBF5E7;--bd-gx-tx:#6E5216;
+  --bd-zid:#B2506B;--bd-zid-bg:#FCF0F3;--bd-zid-tx:#7C2F45;
+
+  --bd-as:#8C7B6B;--bd-as-bg:#F6F4F2;--bd-as-tx:#5C5148;
+  --bd-ad:#B5764A;--bd-ad-bg:#FAF3ED;--bd-ad-tx:#7A4C2C;
+  --bd-spex:#8E6A9B;--bd-spex-bg:#F6F2F8;--bd-spex-tx:#5E4368;
+  --bd-dd:#6F8C5A;--bd-dd-bg:#F2F6EF;--bd-dd-tx:#475B38;
+  --bd-assoc:#A5843C;--bd-assoc-bg:#F9F5EC;--bd-assoc-tx:#6B5525;
+  --bd-media:#A2606A;--bd-media-bg:#FAF1F2;--bd-media-tx:#6D3D45;
+  --bd-ab:#7A5C45;--bd-ab-bg:#F6F3F0;--bd-ab-tx:#513C2C;
+}
+html[data-theme=dark]{
+  /* Accents lift to the light end of each hue, tints become a low-alpha wash of
+     the accent so they sit ON the dark surface rather than replacing it, and the
+     label takes the accent itself — the light theme's deep -tx values would be
+     near-black on #161B22. Same structure as the --green/--amber overrides. */
+  --bd-wh:#A9B4C1;--bd-wh-bg:rgba(169,180,193,.11);--bd-wh-tx:#C0C8D2;
+  --bd-bx:#60A5FA;--bd-bx-bg:rgba(96,165,250,.12);--bd-bx-tx:#93C5FD;
+  --bd-gr:#34D399;--bd-gr-bg:rgba(52,211,153,.12);--bd-gr-tx:#6EE7B7;
+  --bd-yl:#EAB308;--bd-yl-bg:rgba(234,179,8,.12);--bd-yl-tx:#FCD34D;
+  --bd-lx:#5B9BD5;--bd-lx-bg:rgba(91,155,213,.13);--bd-lx-tx:#8FBEE8;
+  --bd-cx:#38BDF8;--bd-cx-bg:rgba(56,189,248,.12);--bd-cx-tx:#7DD3FC;
+  --bd-px:#A78BFA;--bd-px-bg:rgba(167,139,250,.12);--bd-px-tx:#C4B5FD;
+  --bd-gx:#D4AF54;--bd-gx-bg:rgba(212,175,84,.13);--bd-gx-tx:#E3C77E;
+  --bd-zid:#D98098;--bd-zid-bg:rgba(217,128,152,.13);--bd-zid-tx:#EAA8B9;
+
+  --bd-as:#B5A48F;--bd-as-bg:rgba(181,164,143,.11);--bd-as-tx:#CBBEAD;
+  --bd-ad:#D89A6D;--bd-ad-bg:rgba(216,154,109,.12);--bd-ad-tx:#E6B893;
+  --bd-spex:#B392C0;--bd-spex-bg:rgba(179,146,192,.12);--bd-spex-tx:#CBB2D5;
+  --bd-dd:#94B37C;--bd-dd-bg:rgba(148,179,124,.12);--bd-dd-tx:#B4CBA1;
+  --bd-assoc:#CBA75E;--bd-assoc-bg:rgba(203,167,94,.12);--bd-assoc-tx:#DCC28C;
+  --bd-media:#C98693;--bd-media-bg:rgba(201,134,147,.12);--bd-media-tx:#DCA9B3;
+  --bd-ab:#A88769;--bd-ab-bg:rgba(168,135,105,.12);--bd-ab-tx:#C4A98C;
+}
 /* ═══════ RESET / SCROLLBARS / A11Y ═══════  [global_reset_scrollbar]
    The reset, the base typography, the custom scrollbar, .sr for
    screen-reader-only text, and .skip for the skip-to-content link. */
