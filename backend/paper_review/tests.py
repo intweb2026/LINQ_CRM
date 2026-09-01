@@ -24,6 +24,10 @@ from teams.models import Team, TeamPermission
 # assumed, and every address below is under example.com / .invalid.
 LOCMEM = "django.core.mail.backends.locmem.EmailBackend"
 ALERT = "crm-alerts@example.invalid"
+# Stands in for settings.PAPER_REVIEW_CC_EMAILS (James Trevino, Arthur Pina in
+# production). Pinned here rather than left at the real default so no test can
+# assert against, or send to, a live address.
+FIXED_CC = ["fixed.one@example.invalid", "fixed.two@example.invalid"]
 
 
 def make_event(code, name="Some Event", event_date=date(2026, 5, 1), **extra):
@@ -34,6 +38,11 @@ def make_event(code, name="Some Event", event_date=date(2026, 5, 1), **extra):
 
 @override_settings(EMAIL_BACKEND=LOCMEM, DEFAULT_FROM_EMAIL="crm@example.com",
                    PAPER_REVIEW_ALERT_EMAIL=ALERT,
+                   PAPER_REVIEW_CC_EMAILS=FIXED_CC,
+                   # Pinned OFF. A developer testing mail locally sets this in
+                   # .env, and an unpinned suite would then assert against a
+                   # redirected outbox and pass for the wrong reason.
+                   PAPER_REVIEW_REDIRECT_ALL_EMAIL="",
                    # PAPER_REVIEW_NOTIFICATIONS_ENABLED defaults False in
                    # production (see B1) — the whole suite exercises the ENABLED
                    # path so the notification behaviour keeps getting proven; the
@@ -54,8 +63,9 @@ class _Base(APITestCase):
         U = get_user_model()
 
         # The event the whole suite files reviews against. sales_executive is the
-        # Part B To recipient; the two users added to assigned_users below are the
-        # Cc recipients.
+        # Part B To recipient; the Cc is FIXED_CC and does not come from the event
+        # at all. The two role users added to assigned_users below are kept so the
+        # suite can still prove they are NOT copied.
         cls.sales_exec = U.objects.create_user(
             username="pr_sales_exec", password="x", role="sales",
             email="sales.exec@example.com", first_name="Sam", last_name="Exec",
@@ -87,8 +97,7 @@ class _Base(APITestCase):
                 can_view=True, can_create=True, can_update=True, can_delete=True,
             )
         # role="sales" deliberately: a SCOPED, non-MR, non-admin author, so the
-        # suite exercises the ordinary path — and one who is NOT himself a Part B
-        # Cc recipient, since "sales" is not in notifications.CC_ROLES.
+        # suite exercises the ordinary path.
         cls.user = U.objects.create_user(
             username="pr_author", password="x", role="sales",
             email="author@example.com", team=cls.role,

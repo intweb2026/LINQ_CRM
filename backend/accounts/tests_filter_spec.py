@@ -352,7 +352,12 @@ class SchemaTests(_Base):
         self.assertEqual(wb["type"], "boolean")
         self.assertFalse(wb["nullable"])
         self.assertNotIn("is_empty", wb["operators"])
-        self.assertEqual(wb["operators"], ["is"])
+        # is_not joined the boolean vocabulary so "not ticked" is one criterion
+        # the database can answer; without it the table's "Is Not" fell back to
+        # filtering the loaded page. is_empty is still absent, which is what this
+        # test is about: a NOT NULL column can never be empty, and offering the
+        # operator would be offering one that matches nothing.
+        self.assertEqual(wb["operators"], ["is", "is_not"])
 
 
 class TicketAndEventFilterTests(_Base):

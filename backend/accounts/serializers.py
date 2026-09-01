@@ -105,6 +105,12 @@ class UserListSerializer(serializers.ModelSerializer):
     assigned_events_count = serializers.SerializerMethodField()
     mapped_lead_id  = serializers.ReadOnlyField(source='mapped_lead.id', allow_null=True)
     mapped_lead_name = serializers.SerializerMethodField()
+    # The team this person MANAGES, which is not the team they are IN. allow_null
+    # for the same reason as the traversals above: without it the key vanishes
+    # from every row that has no managed team, and the row shape stops being one
+    # shape. See User.is_team_manager for why this is not is_team_lead.
+    managed_team_id   = serializers.ReadOnlyField(source='managed_team.id', allow_null=True)
+    managed_team_name = serializers.ReadOnlyField(source='managed_team.name', allow_null=True)
     # The team's grid, this person's deltas, and what the two add up to. All
     # three, because the user form has to draw a checkbox that says "on, because
     # your team says so" differently from "on, because someone ticked it here" —
@@ -121,6 +127,7 @@ class UserListSerializer(serializers.ModelSerializer):
             "role", "status", "is_active", "login_access", "assigned_events", "assigned_events_count",
             "date_joined", "last_login", "team_id", "team_name", "is_team_lead",
             "mapped_lead_id", "mapped_lead_name",
+            "managed_team_id", "managed_team_name",
             "team_permissions", "permission_overrides", "effective_permissions",
             "has_all_access",
         ]
@@ -166,6 +173,10 @@ class UserWriteSerializer(serializers.ModelSerializer):
     )
     team_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
     mapped_lead_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
+    # Manager rights. Writable by a super admin ONLY -- validate() rejects it from
+    # anyone else, which is what stops a manager handing themselves a second team
+    # or promoting one of their own members into a manager of Sales.
+    managed_team_id = serializers.IntegerField(required=False, write_only=True, allow_null=True)
     # Sign-in is by email (accounts/views.py RequestOTPView), so an account
     # without one cannot be used at all. AbstractUser leaves email optional and
     # non-unique, which let two accounts share an address — and RequestOTPView's
@@ -178,7 +189,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
         fields = [
             "username", "email", "first_name", "last_name",
             "password", "role", "status", "login_access", "assigned_event_ids", "team_id", "is_team_lead",
-            "mapped_lead_id",
+            "mapped_lead_id", "managed_team_id",
         ]
 
     def validate_email(self, value):
@@ -189,6 +200,79 @@ class UserWriteSerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("Another account already uses this email address.")
         return value
+
+    def validate(self, attrs):
+        """
+        What a TEAM MANAGER may write. Everyone else passes through untouched.
+
+        Three rules, and each of them closes a route out of the one team the
+        manager was given:
+
+          * `managed_team_id` is a super-admin field. Left writable it is a
+            one-request self-promotion - PATCH your own row, name a second team,
+            and the restriction is over;
+          * `role` may not be set to admin. The role column is normally a label
+            that grants nothing, but User.save() reads exactly this value to hand
+            out is_superuser and is_staff, so it is the one label that is not one;
+          * the account must end up in the manager's own team, whether the
+            request named a team, named a different one, or (on a create) named
+            none at all - an unassigned account is nobody's, which is another way
+            of saying it is not theirs to make.
+
+        A caller with no managed team keeps the behaviour they had: the
+        users-module grid is the only thing that governs them.
+        """
+        request = self.context.get("request")
+        actor = getattr(request, "user", None)
+
+        # Imported here rather than at module scope: accounts.permissions pulls in
+        # rest_framework.permissions, and this module is imported from views.
+        from .permissions import (
+            assert_can_place_in_team, is_super_admin, managed_team_id,
+        )
+
+        if "managed_team_id" in attrs and not is_super_admin(actor):
+            raise serializers.ValidationError({
+                "managed_team_id": "Only a super admin can assign manager rights.",
+            })
+
+        managed = managed_team_id(actor)
+        if managed is None:
+            return attrs
+
+        if attrs.get("role") == User.Role.ADMIN:
+            raise serializers.ValidationError({
+                "role": "Only a super admin can create administrators.",
+            })
+
+        # THE TEAM DECIDES THE ROLE, so a manager does not get to name one.
+        #
+        # Every account they touch sits in the single team they manage, and that
+        # team's NAME already implies exactly one role — role_from_team_name, the
+        # keyword chain in accounts/models.py. Leaving the field writable let a
+        # manager of Sales file people as Operations, which is a role their team
+        # is not, and the Role dropdown they were shown offered all seven.
+        #
+        # DROPPED rather than overwritten with the implied value. `role_is_explicit`
+        # is set from `"role" in validated_data` and a named role beats derivation,
+        # so removing the key is what lets User.save() derive it — one copy of the
+        # keyword chain, in the place that already owns it, instead of a second one
+        # here that can drift from it. On an update whose team is unchanged nothing
+        # derives, which is the right answer too: the stored role stays as the
+        # super admin who set it left it.
+        attrs.pop("role", None)
+
+        # `_MISSING`, so a create that never mentioned a team is defaulted rather
+        # than rejected, while an explicit null is still an instruction and still
+        # refused. On an update, an unmentioned team means "leave it", and the
+        # account is already in the managed team - get_object() said so.
+        team_id = attrs.get("team_id", _MISSING)
+        if team_id is _MISSING:
+            if self.instance is None:
+                attrs["team_id"] = managed
+        else:
+            assert_can_place_in_team(actor, team_id)
+        return attrs
 
     def to_representation(self, instance):
         """
@@ -204,6 +288,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         event_ids = validated_data.pop("assigned_event_ids", [])
         team_id = validated_data.pop("team_id", None)
+        managed_team_id = validated_data.pop("managed_team_id", None)
         mapped_lead_id = validated_data.pop("mapped_lead_id", None)
         password  = validated_data.pop("password", None)
         user = User(**validated_data)
@@ -215,6 +300,9 @@ class UserWriteSerializer(serializers.ModelSerializer):
         if team_id:
             from teams.models import Team
             user.team = Team.objects.filter(id=team_id).first()
+        if managed_team_id:
+            from teams.models import Team
+            user.managed_team = Team.objects.filter(id=managed_team_id).first()
         if mapped_lead_id:
             user.mapped_lead = User.objects.filter(id=mapped_lead_id).first()
         if password:
@@ -259,6 +347,10 @@ class UserWriteSerializer(serializers.ModelSerializer):
         # null, the server answered 200, and the old value was still there.
         event_ids = validated_data.pop("assigned_event_ids", None)
         team_id = validated_data.pop("team_id", _MISSING)
+        # _MISSING for the same reason team_id is: null is the instruction that
+        # REMOVES manager rights, and popping with a None default would make
+        # "revoke" indistinguishable from "the request said nothing".
+        managed_team_id = validated_data.pop("managed_team_id", _MISSING)
         mapped_lead_id = validated_data.pop("mapped_lead_id", _MISSING)
         password  = validated_data.pop("password", None)
 
@@ -280,6 +372,12 @@ class UserWriteSerializer(serializers.ModelSerializer):
         if team_id is not _MISSING:
             from teams.models import Team
             instance.team = Team.objects.filter(id=team_id).first() if team_id else None
+
+        if managed_team_id is not _MISSING:
+            from teams.models import Team
+            instance.managed_team = (
+                Team.objects.filter(id=managed_team_id).first() if managed_team_id else None
+            )
 
         if mapped_lead_id is not _MISSING:
             # Nobody reports to themselves. The form excludes the person from its

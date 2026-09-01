@@ -27,10 +27,13 @@ function percentValue(label) {
 /**
  * `options`, plus the row's own value when it is not among them.
  *
- * Booking codes and delegate numbers are closed lists now, and the live data holds
- * a handful of codes outside the agreed set. Appending the stored value means such
- * a row still shows what it holds — a plain dropdown would render it as blank and
- * the next save would replace real data with the first thing anyone clicked.
+ * Booking codes are a closed list now, and the live data holds a handful of codes
+ * outside the agreed set. Appending the stored value means such a row still shows
+ * what it holds — a plain dropdown would render it as blank and the next save
+ * would replace real data with the first thing anyone clicked.
+ *
+ * Columns marked `strictOptions` opt out: Delegate Number must offer 0 and 1 and
+ * nothing else, so a legacy 2 is not carried into the picker.
  */
 function optionsWith(options, value) {
   if (value == null || value === '' || options.includes(value)) return options;
@@ -77,13 +80,25 @@ export function delegateProblem(rows) {
  */
 const DEFAULT_BOOKING_CODE = 'Delegate';
 
+/**
+ * `options` with blank offered first.
+ *
+ * Payment Type only. It starts blank on a new row — nobody has paid at the moment
+ * a booking is entered, and the old 'Stripe' default asserted a method nobody had
+ * chosen — so blank has to be a value the picker can go BACK to; without an entry
+ * here a row set to Bank by mistake could never be returned to "not yet known".
+ * Payment Status is NOT in this list: it is never blank, it starts Pending.
+ * Select renders the blank entry as a dim "Blank".
+ */
+const BLANK_FIRST = (options) => ['', ...options];
+
 export function blankDelegate(today, defaultOwner = '') {
   const now = new Date().toISOString();
   return {
     key: 'new-' + Math.random().toString(36).slice(2),
     id: null, payment_status: 'Pending', booking_code: DEFAULT_BOOKING_CODE, request_date: today, invoice_date: today,
     name: '', company_name: '', email: '', phone_number: '', accounts_contact_email_raw: '',
-    delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: 'Stripe', ticket_tier: 'Regular',
+    delegate_number: 1, paid_or_free: 'Paid', payment_date: '', payment_type: '', ticket_tier: 'Regular',
     discount: 0, add_ons: '', reference: '', added_time: now, modified_time: now,
     owner: defaultOwner, attendance: 'Pending',
   };
@@ -119,6 +134,10 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'payment_status', label: 'Payment Status', type: 'select', options: PAYMENT_STATUSES, width: 160 },
   { key: 'event_code', label: 'Event Code', type: 'display', width: 130, mono: true, from: 'eventCode' },
   { key: 'booking_code', label: 'Booking Code', type: 'select', options: BOOKING_CODES, width: 170 },
+  // Per delegate, like Date Paid below it. Both dates resolve through the
+  // delegate's own override to the invoice's column (api/bookings.js
+  // OVERRIDE_FIELDS), so editing one row changes that row; the invoice keeps the
+  // shared value for as long as every delegate on it agrees.
   { key: 'request_date', label: 'Request Date', type: 'date', width: 140 },
   { key: 'invoice_date', label: 'Invoice Date', type: 'date', width: 140 },
   { key: 'invoice_number', label: 'Invoice Number', type: 'display', width: 150, mono: true, from: 'invoiceNumber' },
@@ -133,10 +152,10 @@ const baseCols = ({ onTransfer } = {}) => [
   // without being stored, and typing over it is all it takes to set a real one.
   // Editing it on any row sets it for the whole invoice; see splitPersonLevel.
   { key: 'accounts_contact_email_raw', label: 'Accounts Contact', type: 'email', width: 190, placeholderFrom: 'email' },
-  { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, width: 140 },
+  { key: 'delegate_number', label: 'Delegate Number', type: 'select', options: DELEGATE_NUMBERS, strictOptions: true, width: 140 },
   { key: 'paid_or_free', label: 'Payable/Free', type: 'select', options: PAID_OR_FREE, optionLabel: paidOrFreeLabel, width: 110 },
   { key: 'payment_date', label: 'Date Paid', type: 'date', width: 140 },
-  { key: 'payment_type', label: 'Payment Type', type: 'select', options: PAYMENT_TYPES, width: 120 },
+  { key: 'payment_type', label: 'Payment Type', type: 'select', options: BLANK_FIRST(PAYMENT_TYPES), width: 120 },
   { key: 'ticket_tier', label: 'Ticket Tier', type: 'select', options: TICKET_TIERS, width: 110 },
   { key: 'discount', label: 'Discount', type: 'select', options: DISCOUNTS, width: 100, percent: true },
   { key: 'add_ons', label: 'Add-Ons', type: 'text', width: 140 },
@@ -156,6 +175,20 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'added_time', label: 'Added Time', type: 'display', width: 150, format: 'datetime' },
   { key: 'modified_time', label: 'Modified Time', type: 'display', width: 150, format: 'datetime' },
 ];
+
+/**
+ * The booking code that is never charged for.
+ *
+ * An SPP delegate is a sponsor's pass, so the row carries no money: selecting it
+ * blanks Date Paid and sets Payable/Free to 'Free' in one go, which is what
+ * whoever picked it was going to do by hand on the next two cells anyway. Matched
+ * exactly, so the combined 'SPP / Group Pass' is left alone; that one is a group
+ * pass as well and is not automatically free.
+ *
+ * Like the Date Paid rule below, this fires only as the code CHANGES, so both
+ * cells stay ordinary editors and either can be set back by hand straight after.
+ */
+const FREE_BOOKING_CODE = 'SPP';
 
 /**
  * Statuses a Date Paid entry is allowed to promote to 'Paid'.
@@ -203,6 +236,15 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
       const auto = autoPaidStatus(next[i], value);
       if (auto) row.payment_status = auto;
     }
+    if (key === 'booking_code' && String(value).trim() === FREE_BOOKING_CODE) {
+      row.payment_date = '';
+      row.paid_or_free = 'Free';
+    }
+    // A cancelled booking does not seat a delegate, so the ordinal drops to 0
+    // along with the status; the picker still allows correcting it by hand.
+    if (key === 'payment_status' && String(value).trim() === 'Cancelled') {
+      row.delegate_number = 0;
+    }
     next[i] = row;
     onChange(next);
   }
@@ -219,7 +261,7 @@ export default function DelegateTable({ rows, onChange, onRemove, eventCode, eve
     if (c.type === 'select') {
       const value = c.percent ? percentLabel(row[c.key]) : (row[c.key] ?? '');
       return (
-        <Select className="in in-xs" value={value} options={optionsWith(c.options, value)} labelOf={c.optionLabel} width={Math.max(c.width, 160)}
+        <Select className="in in-xs" value={value} options={c.strictOptions ? c.options : optionsWith(c.options, value)} labelOf={c.optionLabel} width={Math.max(c.width, 160)}
           onChange={(v) => update(i, c.key, c.percent ? percentValue(v) : v)} />
       );
     }

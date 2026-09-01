@@ -18,7 +18,9 @@ Excel column → model field mapping:
   Date Paid         → BookEvent.payment_date
   Payment Type      → BookEvent.payment_type
   Ticket Tier       → BookEvent.ticket_tier
-  Discount          → BookEvent.discount_code
+  Discount          → BookEvent.discount (a percentage or a fraction; falls
+                       back to BookEvent.discount_code when the cell is not
+                       a number)
   Add-Ons           → BookEvent.add_ons
   Ref               → BookEvent.reference
   Event Name        → BookEvent.event_name
@@ -28,7 +30,8 @@ Excel column → model field mapping:
   Delegate Email    → BookDelegate.email  (+ BookEvent.contact_email for first)
   Direct Line       → BookDelegate.phone_number  (+ BookEvent.contact_phone for first)
   Delegate Number   → BookDelegate.delegate_number
-  Attendance - IN?  → BookDelegate.attendance  ("true" → "Confirmed", else "Pending")
+  Attendance - IN?  → BookDelegate.attendance  (via accounts/booking_coercion,
+                       so "false" translates to Pending and "Absent" to No-show)
 
 Any invoices that cannot be matched to an Event are written to import_issues.md
 in the repo root for manual resolution.
@@ -63,6 +66,17 @@ from event_performance.active_edition_service import (
 
 User = get_user_model()
 
+# Every header this command reads. Checked before the import runs, because each
+# read is a `.get(header, "")` that turns an absent column into a blank one.
+EXPECTED_COLUMNS = (
+    "Invoice Number", "Event Code", "Event Name", "Booking Code",
+    "Request Date", "Invoice Date", "Date Paid", "Payment Type",
+    "Payment Status", "Paid/Free", "Ticket Tier", "Discount", "Add-Ons", "Ref",
+    "Delegate Company", "Accounts Contact", "Sales Executive", "Added Time",
+    "Name", "Delegate Email", "Direct Line", "Delegate Number",
+    "Attendance - IN?",
+)
+
 
 def _s(v) -> str:
     """Any value → stripped string; '' for None / NaN / blank."""
@@ -78,6 +92,45 @@ def _s(v) -> str:
 # workbook column written in an unexpected style imported as a column of blanks
 # that looked exactly like a column the source had left empty.
 _date_warnings: list[str] = []
+
+# Every cell the shared coercion table refused, same treatment as the dates: the
+# value is not written, the row is not dropped over one column, and the cell is
+# named in import_issues.md rather than disappearing.
+_value_warnings: list[str] = []
+
+
+def _coerced(row, header, field):
+    """
+    One cell, through accounts/booking_coercion — the table every booking write
+    path shares. Returns "" for blank and for a value the column does not store,
+    recording the second case in _value_warnings.
+    """
+    from accounts.booking_coercion import UNSET, coerce
+
+    raw = row.get(header, "")
+    value, error = coerce(field, raw)
+    if error:
+        _value_warnings.append(f"{header}: {error}")
+        return ""
+    return "" if value is UNSET or value is None else value
+
+
+def _discount_kwargs(raw):
+    """
+    The Discount cell as create() keyword arguments.
+
+    A readable percentage or fraction goes to `discount`, the DecimalField; a
+    cell that is not a number at all is kept as `discount_code`, which is where
+    this command used to put every value including the numeric ones.
+    """
+    from accounts.booking_coercion import percent_to_fraction
+
+    if not _s(raw):
+        return {}
+    value, error = percent_to_fraction(raw)
+    if error:
+        return {"discount_code": _s(raw)}
+    return {"discount": value}
 
 
 def _parse_date(v) -> Optional[Date]:
@@ -131,6 +184,16 @@ class Command(BaseCommand):
             action="store_true",
             help="Preview counts and issues without writing to the database.",
         )
+        parser.add_argument(
+            "--allow-missing-columns",
+            action="store_true",
+            help=(
+                "Import even though a mapped column is absent, leaving it blank "
+                "on every row. Off by default; a missing column is an error, "
+                "because a blank column and an absent one look identical once "
+                "the data is stored."
+            ),
+        )
 
     def handle(self, *args, **options):
         path = Path(options["excel_path"])
@@ -141,8 +204,9 @@ class Command(BaseCommand):
             raise CommandError(f"File not found: {path}")
 
         # Module-level, so a second run in the same process would otherwise
-        # inherit the first run's unreadable dates.
+        # inherit the first run's unreadable dates and values.
         _date_warnings.clear()
+        _value_warnings.clear()
 
         # ── 1. Load Excel ─────────────────────────────────────────────────────
         self.stdout.write(f"Reading {path} ...")
@@ -153,6 +217,34 @@ class Command(BaseCommand):
             engine="openpyxl",
         )
         self.stdout.write(f"  {len(df):,} rows x {df.shape[1]} columns loaded.")
+
+        # ── 1a. Every mapped column must be PRESENT ───────────────────────────
+        # Every read below is `row.get("Header", "")`, so a column this workbook
+        # spells differently, or does not carry at all, imports as a column of
+        # blanks that is indistinguishable from a column the source left empty.
+        # That is not hypothetical. A load of an 11,288-invoice workbook stored
+        # paid_or_free as "" on 8,876 invoices and delegate_number as the model
+        # default 1 on all 15,180 delegates, because neither column arrived under
+        # the header named here; "Paid" never once reached the database, while
+        # the model declares Paid and Free as its only valid values. Cross-checked
+        # against the source afterwards, 6,204 rows reading Paid were stored as "".
+        #
+        # import_remaining_bookings already treats a missing header as an error
+        # for exactly this reason. This does the same, one release later.
+        missing = [c for c in EXPECTED_COLUMNS if c not in df.columns]
+        if missing:
+            message = (
+                f"{len(missing)} mapped column(s) are absent from this workbook, "
+                "and every row would import them as blank:\n  "
+                + "\n  ".join(missing)
+                + "\n\nHeaders found:\n  "
+                + "\n  ".join(str(c) for c in df.columns)
+                + "\n\nRename the columns in the workbook, or pass "
+                "--allow-missing-columns to import the rest and leave these empty."
+            )
+            if not options["allow_missing_columns"]:
+                raise CommandError(message)
+            self.stdout.write(self.style.WARNING(message))
 
         # ── 2. Build Event lookup: (master_code, year) → Event ───────────────
         event_lookup: dict[tuple, Event] = {}
@@ -270,12 +362,30 @@ class Command(BaseCommand):
                 contact_email          = contact_email,
                 contact_phone          = contact_phone,
                 accounts_contact_email = _s(first.get("Accounts Contact", "")),
-                paid_or_free           = _s(first.get("Paid/Free", "")),
+                # THROUGH THE SHARED COERCION TABLE, like every other write path.
+                #
+                # These four columns were written as raw strings straight off the
+                # cell. A CharField with choices is not validated on bulk_create,
+                # so a value outside the choice list was stored without complaint
+                # and then rendered as a blank cell nobody could explain — which
+                # is how paid_or_free came to hold "" on 8,876 invoices and "Paid"
+                # on none at all. The check further down this file reported that
+                # after the fact; coercing here means the value the workbook
+                # states is actually stored, including the spelling the CRM
+                # itself displays, "Payable".
+                paid_or_free           = _coerced(first, "Paid/Free", "paid_or_free"),
                 payment_date           = _parse_date(_s(first.get("Date Paid", ""))),
-                payment_type           = _s(first.get("Payment Type", "")),
-                payment_status         = _s(first.get("Payment Status", "")) or "Pending",
-                ticket_tier            = _s(first.get("Ticket Tier", "")),
-                discount_code          = _s(first.get("Discount", "")),
+                payment_type           = _coerced(first, "Payment Type", "payment_type"),
+                payment_status         = _coerced(first, "Payment Status", "payment_status") or "Pending",
+                ticket_tier            = _coerced(first, "Ticket Tier", "ticket_tier"),
+                # The workbook's Discount column holds a NUMBER in the sheets we
+                # actually import — "20%" in some rows and "0.2" in others, both
+                # meaning the same fraction — and it was being written into
+                # discount_CODE, a CharField, so the numeric discount this command
+                # imported was never stored at all. It now goes to `discount`
+                # where it is a number, and falls back to discount_code for a
+                # workbook whose column really does carry a code.
+                **_discount_kwargs(first.get("Discount", "")),
                 add_ons                = _s(first.get("Add-Ons", "")),
                 reference              = _s(first.get("Ref", "")),
                 sales_executive        = rep,
@@ -306,8 +416,13 @@ class Command(BaseCommand):
                     base_email = email.lower()
                 seen_emails.add(base_email)
 
-                attendance_raw = _s(row.get("Attendance - IN?", "")).lower()
-                attendance = "Confirmed" if attendance_raw in ("true", "1", "yes") else "Pending"
+                # Through the shared table. This was `"Confirmed" if raw in
+                # ("true","1","yes") else "Pending"`, so "false" reached Pending
+                # by falling off the end of an if rather than by being
+                # translated — and the same fallback silently absorbed No,
+                # Absent and anything else the list did not know, flattening
+                # "did not appear" onto "not yet known".
+                attendance = _coerced(row, "Attendance - IN?", "attendance") or "Pending"
 
                 del_num_s = _s(row.get("Delegate Number", ""))
                 try:
@@ -336,6 +451,46 @@ class Command(BaseCommand):
                     bd.created_at = del_dt
 
                 delegates_to_create.append(bd)
+
+        # ── 5a. Values the model would not accept ─────────────────────────────
+        # A CharField with choices is not validated on bulk_create, so a value
+        # outside the choice list is stored without complaint and then renders as
+        # a blank cell nobody can explain. paid_or_free is checked by name rather
+        # than in a loop over every field, because it is the one that went wrong
+        # and the one the Bookings table resolves through two columns.
+        valid_pof = set(BookEvent.PaidOrFree.values)
+        bad_pof = defaultdict(int)
+        for be in events_to_create:
+            if be.paid_or_free not in valid_pof:
+                bad_pof[be.paid_or_free] += 1
+        if bad_pof:
+            total_bad = sum(bad_pof.values())
+            self.stdout.write(self.style.WARNING(
+                f"{prefix}Paid/Free holds a value the model does not allow on "
+                f"{total_bad:,} of {len(events_to_create):,} invoices; the "
+                f"Payable / Free column will read blank for them. Allowed values "
+                f"are {sorted(valid_pof)}. Found:"
+            ))
+            for value, count in sorted(bad_pof.items(), key=lambda kv: -kv[1]):
+                self.stdout.write(self.style.WARNING(
+                    f"  {value!r}  on {count:,} invoice(s)"
+                ))
+            issues.append({
+                "invoice_number": "—",
+                "excel_code": "—",
+                "master": "—",
+                "year": "—",
+                "event_name": "—",
+                "delegate_count": total_bad,
+                "sample_delegates": "; ".join(
+                    f"{v!r} x{n}" for v, n in
+                    sorted(bad_pof.items(), key=lambda kv: -kv[1])[:5]
+                ),
+                "reason": (
+                    f"Paid/Free outside {sorted(valid_pof)} on {total_bad} "
+                    "invoice(s); Payable / Free will read blank for them"
+                ),
+            })
 
         # ── 6. Write issues MD ────────────────────────────────────────────────
         md_path = (
@@ -370,6 +525,36 @@ class Command(BaseCommand):
                     f"  ... and {len(distinct) - 20} more distinct value(s)."
                 ))
 
+        # Same treatment for values the shared coercion table refused. Reported
+        # by DISTINCT SPELLING rather than per row, because a workbook that
+        # spells one column wrongly spells it wrongly on every row, and 15,180
+        # identical lines is not a report anybody reads.
+        if _value_warnings:
+            distinct_vals = sorted(set(_value_warnings))
+            issues.append({
+                "invoice_number": "—",
+                "excel_code": "—",
+                "master": "—",
+                "year": "—",
+                "event_name": "—",
+                "delegate_count": len(_value_warnings),
+                "sample_delegates": "; ".join(distinct_vals[:5]),
+                "reason": (
+                    f"{len(_value_warnings)} cell(s) across "
+                    f"{len(distinct_vals)} distinct spelling(s) hold a value the "
+                    "column does not store and were left empty"
+                ),
+            })
+            self.stdout.write(self.style.WARNING(
+                f"{prefix}Values not recognised: {len(_value_warnings)} "
+                f"({len(distinct_vals)} distinct) -- left empty:"
+            ))
+            for value in distinct_vals[:20]:
+                self.stdout.write(self.style.WARNING(f"  {value}"))
+            if len(distinct_vals) > 20:
+                self.stdout.write(self.style.WARNING(
+                    f"  ... and {len(distinct_vals) - 20} more distinct value(s)."
+                ))
         if issues:
             lines = [
                 "# Booking Import Issues\n\n",

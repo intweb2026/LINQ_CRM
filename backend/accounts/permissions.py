@@ -3,6 +3,7 @@ accounts/permissions.py
 ────────────────────────
 DRF permission classes and RBAC queryset mixin.
 """
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
 # The one account permitted to destroy a whole module's data.
@@ -41,21 +42,93 @@ class IsHPAccount(BasePermission):
         )
 
 
+def is_super_admin(user) -> bool:
+    """
+    The rule IsAdminRole enforces, as a plain function.
+
+    Three kinds of caller qualify, and they always have: the HP account, anyone
+    holding role=admin, and anyone whose team is flagged is_all_access. Lifted
+    out of the permission class because the team-manager gates below ask exactly
+    the same question, and a second hand-written copy of a three-clause admin
+    test is a second chance for one clause to go missing.
+    """
+    if not (user and getattr(user, "is_authenticated", False)):
+        return False
+    if getattr(user, "username", None) == dapi_USERNAME:
+        return True
+    if user.is_admin:
+        return True
+    return bool(user.has_all_access)
+
+
+def managed_team_id(user):
+    """The team this caller manages, or None. Super admins manage no ONE team."""
+    if not (user and getattr(user, "is_authenticated", False)):
+        return None
+    if is_super_admin(user):
+        return None
+    return getattr(user, "managed_team_id", None)
+
+
+def assert_can_manage_user(actor, target):
+    """
+    Raise unless `actor` may WRITE to the account `target`.
+
+    Three answers, in this order:
+
+      * a super admin may write to anybody — unchanged behaviour;
+      * a manager may write only to accounts sitting in the team they were
+        given, and never to a super admin who happens to sit there. Without that
+        second clause a manager could reset an administrator's password out of
+        their own team page and sign in as them, which is the whole restriction
+        undone in two clicks;
+      * anybody else is left exactly as they were, governed by the users-module
+        grid alone. A grid-granted account with no managed team is not narrowed
+        by this feature.
+    """
+    if is_super_admin(actor):
+        return
+    team_id = managed_team_id(actor)
+    if team_id is None:
+        return
+    if is_super_admin(target):
+        raise PermissionDenied(
+            "Administrator accounts are managed by a super admin."
+        )
+    if target.team_id != team_id:
+        raise PermissionDenied(
+            "You can only manage users in the team you manage."
+        )
+
+
+def assert_can_place_in_team(actor, team_id):
+    """
+    Raise unless `actor` may put an account INTO the team `team_id`.
+
+    The mirror of assert_can_manage_user, and it is a separate question. That one
+    asks whether the person being edited is already the manager's to touch; this
+    asks where they are allowed to end up. Reaching a user inside your own team
+    and then moving them into Sales is creating a Sales account by another route,
+    so both ends of a move are checked.
+
+    `None` means unassigned, which is likewise out of reach for a manager.
+    """
+    if is_super_admin(actor):
+        return
+    managed = managed_team_id(actor)
+    if managed is None:
+        return
+    if team_id is None or int(team_id) != managed:
+        raise PermissionDenied(
+            "You can only place users in the team you manage."
+        )
+
+
 class IsAdminRole(BasePermission):
     message = "Admin role required."
 
     def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        # HP bypasses everything
-        if request.user.username == dapi_USERNAME:
-            return True
-        # Standard admin role check
-        if request.user.is_admin:
-            return True
-        # A team flagged is_all_access also qualifies. This read a per-user
-        # CustomRole until access moved onto the team.
-        return bool(request.user.has_all_access)
+        return is_super_admin(request.user)
     
 
 class IsSalesOrAdmin(BasePermission):
@@ -85,14 +158,37 @@ class RBACMixin:
     """
     permission_classes = [IsSalesOrAdminOrReadOnly]
 
+    # Which permission-grid module this viewset's rows belong to, so rbac_filter
+    # can honour that module's "all" cell. Stated explicitly rather than read off
+    # permission_classes[0].crm_module: the two are the same string today, and a
+    # viewset that swapped its permission class would silently change who sees
+    # every row.
+    #
+    # None means no module owns these rows, and the scope stays as it was.
+    rbac_module = None
+
     def rbac_filter(self, qs, event_code_field="event_code", owner_path=None):
         user = self.request.user
         if user.is_admin:
             return qs
 
+        # Granted every row in this module by the grid. Same answer as is_admin
+        # for these rows and only these rows — see accounts.models.PERM_ACTIONS.
+        if self.rbac_module:
+            from .crm_permissions import has_all_records
+            if has_all_records(user, self.rbac_module):
+                return qs
+
         from django.db.models import Q
 
-        codes = user.assigned_event_codes() or []
+        # visible_event_codes(), NOT assigned_event_codes(): the first is the
+        # second widened to everyone who names this caller as their reporting
+        # manager. See accounts.models.User.data_scope_user_ids for the rule.
+        codes = user.visible_event_codes() or []
+
+        # The people this caller stands in for. One id for everybody except a
+        # lead, who also carries the active accounts mapped under them.
+        scope_ids = user.data_scope_user_ids() or [user.pk]
 
         # Build event_code OR clause (used as either primary or secondary filter).
         #
@@ -119,7 +215,11 @@ class RBACMixin:
             owner_path = "sales_executive"
 
         if owner_path:
-            combined = Q(**{owner_path: user})
+            # `__in` over scope_ids rather than `= user`, so a lead reaches a row
+            # one of their reports personally sold even on an event the lead
+            # holds no assignment for. Without this the lead's two grant routes
+            # would disagree: the event-code half already covers the reports.
+            combined = Q(**{f"{owner_path}__in": scope_ids})
             if ec_query:
                 combined |= ec_query
             return qs.filter(combined)

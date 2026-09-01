@@ -75,6 +75,37 @@ def has_module_action(user, module: str, action: str) -> bool:
     return bool(resolved.get(action, False))
 
 
+def has_all_records(user, module: str) -> bool:
+    """
+    Whether `user` sees EVERY row of `module`, rather than only the rows their
+    assigned events cover. The "All records" cell of the permission grid.
+
+    THE FOUR CALLERS, and nothing else: RBACMixin.rbac_filter,
+    EventViewSet.get_queryset, paper_review/access.py and
+    proposal_submission/access.py. Ticking the cell on any other module stores
+    fine and grants nothing, because nothing asks.
+
+    Deliberately NOT has_module_action(user, module, "all"), which would be the
+    obvious reuse. That helper answers True for the HP account before consulting
+    anything, and row scope for bookings and events is one place this codebase
+    has always kept narrow: only role=admin bypasses rbac_filter, which is why a
+    caller who was is_all_access and still scoped was able to delete rows they
+    could not read (accounts/tests_write_scoping.py). Widening that here would be
+    a change nobody asked for, hidden inside a feature about sharing one module.
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    resolved = user.effective_permissions().get(module)
+    # view stays the prerequisite it is for the other four cells. Redundant in
+    # practice, because the permission class has already turned away anyone
+    # without it before a queryset is built — but a helper that answers "sees
+    # every row" for somebody who cannot open the module is a trap for whichever
+    # gate is added next.
+    if not resolved or not resolved.get("view"):
+        return False
+    return bool(resolved.get("all"))
+
+
 def crm_permission(module: str):
     """Return a DRF permission class for the given CRM module."""
 

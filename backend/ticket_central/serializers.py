@@ -6,12 +6,7 @@ Phase-specific serializers enforce which fields are writable at each stage.
 from rest_framework import serializers
 from .models import Ticket
 from .constants import MR_FIELDS, DMD_FIELDS
-
-
-def _name(user):
-    if not user:
-        return None
-    return user.get_full_name() or user.username
+from .utils import display_name as _name
 
 
 class TicketListSerializer(serializers.ModelSerializer):
@@ -121,12 +116,24 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         from django.utils import timezone
         from .utils import extract_type_code, extract_purpose_code, assign_next_ticket_number
 
-        user = self.context["request"].user
+        # A webhook delivery (webhooks/views.py TicketIngestionView) carries no
+        # logged-in user, and AnonymousUser is not something an FK will accept,
+        # so the creator columns are left NULL for it. Every request from the UI
+        # is authenticated and behaves exactly as before.
+        user = getattr(self.context.get("request"), "user", None)
+        if not getattr(user, "is_authenticated", False):
+            user = None
         validated_data["created_by"] = user
+        # "Added User" is Zoho's name for who put the row in, and it is a column
+        # on the Ticket Central table. It was only ever filled by an import, so
+        # every ticket raised in this CRM showed it blank. A webhook delivery has
+        # no user, so that case keeps whatever the payload sent.
+        if user and not validated_data.get("added_user_text"):
+            validated_data["added_user_text"] = _name(user)
 
         # Submit directly as MR Submitted — no draft step.
         validated_data["status"] = Ticket.Status.MR_SUBMITTED
-        validated_data["mr_submitted_by_id"] = user.id
+        validated_data["mr_submitted_by"] = user
         validated_data["mr_submitted_at"] = timezone.now()
 
         purpose_code = extract_purpose_code(validated_data.get("purpose", ""))

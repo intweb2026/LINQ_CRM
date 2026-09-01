@@ -19,14 +19,16 @@
  * means the same dates tomorrow, and the dates in the chip are the dates in the
  * query.
  *
- * EVERYTHING IS UTC
- * A picked date is a plain calendar date with no hour in it, and a row's cell is
- * read as its UTC date, because settings.TIME_ZONE is "UTC" and every other date
- * in the CRM is already reckoned that way. Reading a timestamp as browser-local
- * would land a row on a different day for anyone east of Greenwich, which is the
- * drift the DateRangeFilter component refuses to reintroduce by recomputing the
- * server's window locally.
+ * A PICKED DATE IS ZONE-FREE; A ROW'S DAY IS IST
+ * A picked date is a plain calendar date with no hour in it, so the calendar
+ * arithmetic below stays in UTC — that is a representation choice for a value
+ * that has no instant, not a timezone claim. Reducing a row's TIMESTAMP to a day
+ * is the part that needs a zone, and it is IST, matching what lib/helpers.js
+ * renders into the cell. It is emphatically NOT browser-local, which would land a
+ * row on a different day per viewer; that is the drift the DateRangeFilter
+ * component refuses to reintroduce by recomputing the server's window locally.
  */
+import { IST_OFFSET_MS } from './helpers';
 
 // ── Operators ────────────────────────────────────────────────────────────────
 // Order is the order they are offered in. `Is` first because it is what most
@@ -73,6 +75,16 @@ function u(y, m, d) {
 
 /** 'YYYY-MM-DD' for a UTC-midnight Date. */
 export function iso(d) { return d.toISOString().slice(0, 10); }
+
+/**
+ * The IST calendar day an INSTANT falls on, as 'YYYY-MM-DD'.
+ *
+ * Only for values that are instants — a DateTimeField's timestamp. A picked
+ * calendar date is zone-free and goes through iso()/u() above unshifted, which is
+ * why the calendar grid, todayISO() and parseISO() are deliberately left in UTC:
+ * shifting a date that has no time in it would move it for no reason.
+ */
+export function istISO(d) { return iso(new Date(d.getTime() + IST_OFFSET_MS)); }
 
 /**
  * The earliest year a picked date may carry.
@@ -265,28 +277,42 @@ export function dateCondActive(cond) {
 
 // ── Reading a row's date ─────────────────────────────────────────────────────
 /**
- * A cell value as a plain 'YYYY-MM-DD' UTC date, or null when it holds none.
+ * A cell value as a plain 'YYYY-MM-DD' date, or null when it holds none.
  *
  * Three shapes reach this: a DateField's 'YYYY-MM-DD', a DateTimeField's ISO
  * timestamp, and the em dash the table renders for an empty cell. A bare
- * timestamp with no offset is read as UTC — DRF renders 'Z' and the whole CRM
- * is UTC, whereas `new Date('2026-08-24T18:30:00')` would be read as browser
- * LOCAL time by the language spec and could land the row on the wrong day.
+ * timestamp with no offset is read as UTC — DRF renders 'Z' and storage is UTC,
+ * whereas `new Date('2026-08-24T18:30:00')` would be read as browser LOCAL time
+ * by the language spec and could land the row on the wrong day.
+ *
+ * WHICH DAY A TIMESTAMP BELONGS TO IS AN IST QUESTION
+ * Parsing is UTC, as above; the DAY it is then reduced to is IST. Those are two
+ * different steps and only the second one moved. The cell is rendered in IST
+ * (lib/helpers.js fdate/ftime), so reducing the instant to its UTC day made this
+ * browser-side pass disagree with the text on screen for everything between 00:00
+ * and 05:30 IST — a row reading 28 Aug was excluded by "is 28 Aug" and matched
+ * "is 27 Aug". The shift is IST_OFFSET_MS, imported rather than restated so the
+ * cell and its filter cannot drift apart; see the note there for why a fixed
+ * offset is exact for this zone.
+ *
+ * A DateField keeps its date untouched. 'YYYY-MM-DD' is a zone-free calendar date
+ * that never had an instant to convert, which is what the `if (!m[2])` early
+ * return is protecting.
  */
 export function rowDateISO(v) {
   if (v == null) return null;
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : iso(v);
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : istISO(v);
   const s = String(v).trim();
   if (!s || s === '—') return null;
   const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](.+))?$/.exec(s);
   if (!m) {
     const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? null : iso(d);
+    return Number.isNaN(d.getTime()) ? null : istISO(d);
   }
   if (!m[2]) return m[1];
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(s);
   const d = new Date(hasZone ? s.replace(' ', 'T') : `${m[1]}T${m[2]}Z`);
-  return Number.isNaN(d.getTime()) ? m[1] : iso(d);
+  return Number.isNaN(d.getTime()) ? m[1] : istISO(d);
 }
 
 /**

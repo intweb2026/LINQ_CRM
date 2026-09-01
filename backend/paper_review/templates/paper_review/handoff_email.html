@@ -1,0 +1,210 @@
+{% comment %}
+  PAPER REVIEW HANDOFF EMAIL
+  Fires on submission of the paper review form, to the sales executive who owns
+  the event. Cc: the submitting MRE and settings.PAPER_REVIEW_CC_EMAILS.
+
+  Skill:   email-html-render-v2, Theme 3 Editorial Broadsheet (light)
+  Subject: built by notifications.subject_for(), not here.
+  Context: built by notifications.template_context(). Every token below must
+           exist there, or it renders as the empty string and nobody notices.
+
+  THE SUPPLIED TEMPLATE MARKED ITS CONDITIONALS AS HTML COMMENTS
+  (<!-- IF cleared --> … <!-- ENDIF cleared -->). They are {% templatetag openblock %} if {% templatetag closeblock %} tags here
+  instead: Django's engine is already in the project, it evaluates and strips
+  them, and a hand-rolled marker parser would have been a second template engine
+  to maintain. Everything else is the supplied markup, unchanged.
+
+  ESCAPING IS THE ENGINE'S, NOT THE CALLER'S. Autoescape is on for this file, so
+  a speaker name containing "&" or "<" is safe without template_context() doing
+  anything. The two free-text blocks additionally run through |linebreaksbr,
+  which escapes first and then converts newlines to <br> — never |safe.
+{% endcomment %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f5f3ee;font-family:Segoe UI,Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f3ee;padding:40px 24px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+
+<!-- HEADER -->
+<tr><td style="border-top:1.5px solid #1a1a1a;background-color:#faf9f6;border-radius:0;padding:34px 44px 26px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <td valign="middle">
+      <h1 style="margin:0;font-family:Georgia,Times New Roman,serif;font-size:22px;font-weight:700;color:#1a1a1a;line-height:1.25;letter-spacing:-0.3px;">Paper review complete</h1>
+      <p style="margin:6px 0 0;font-size:13px;color:#666666;line-height:1.5;letter-spacing:0.2px;">{{ event_code }}, {{ speaker_name }}, {{ company_name }}, reviewed by {{ mre_name }}</p>
+    </td>
+    <td valign="middle" align="right">
+      <span style="display:inline-block;background-color:#f0ede4;color:#1a1a1a;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:6px 14px;border-radius:0;border:1px solid #1a1a1a;">Grade {{ grade }}</span>
+      {% if nos %}
+      <span style="display:inline-block;background-color:#faf9f6;color:#1a1a1a;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:6px 14px;border-radius:0;border:1px solid #1a1a1a;margin-left:6px;">NOS</span>
+      {% endif %}
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- DIVIDER -->
+<tr><td style="background-color:#faf9f6;padding:0 44px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1a1a1a;"></td></tr></table>
+</td></tr>
+
+<!-- BODY -->
+<tr><td style="background-color:#faf9f6;padding:26px 44px 4px;">
+
+  {% if cleared %}
+  <p style="margin:0 0 18px;font-size:14px;color:#333333;line-height:1.75;">The paper review for <strong style="color:#1a1a1a;">{{ speaker_name }} at {{ company_name }}</strong> is done. The proposal scored {{ score_total }} of 45 and grades {{ grade }}, so the session is cleared for the {{ event_code }} agenda.</p>
+  <p style="margin:0 0 24px;font-size:14px;color:#333333;line-height:1.75;">The agenda addition text sits below, exactly as it should appear. Send it to the speaker for confirmation, then the slot is yours to lock.</p>
+  {% endif %}
+
+  {% if not cleared %}
+  <p style="margin:0 0 18px;font-size:14px;color:#333333;line-height:1.75;">The paper review for <strong style="color:#1a1a1a;">{{ speaker_name }} at {{ company_name }}</strong> is done. The proposal scored {{ score_total }} of 45 and grades {{ grade }}, so it is not going on the {{ event_code }} agenda as written.</p>
+  <p style="margin:0 0 24px;font-size:14px;color:#333333;line-height:1.75;">The review note sits below. The slot stays open, so a revised proposal from this speaker can be scored again.</p>
+  {% endif %}
+
+  <!-- SUBMISSION TABLE -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #1a1a1a;border-radius:0;margin-bottom:26px;">
+    <tr>
+      <td style="background-color:#f0ede4;padding:10px 20px;font-size:10.5px;font-weight:700;color:#666666;text-transform:uppercase;letter-spacing:0.7px;border-bottom:1px solid #1a1a1a;">Submission</td>
+      <td style="background-color:#f0ede4;padding:10px 20px;font-size:10.5px;font-weight:700;color:#666666;text-transform:uppercase;letter-spacing:0.7px;border-bottom:1px solid #1a1a1a;text-align:right;">Detail</td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">Speaker</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;">{{ speaker_name }}, <a href="mailto:{{ speaker_email }}" style="color:#1a1a1a;text-decoration:underline;">{{ speaker_email }}</a></td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;background-color:#f5f3ee;">Company</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">{{ company_name }}</td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">LinkedIn reach</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;"><a href="{{ li_profile }}" style="color:#1a1a1a;text-decoration:underline;">{{ li_followers }} followers</a>{% if li_company %}, <a href="{{ li_company }}" style="color:#1a1a1a;text-decoration:underline;">company page</a>{% endif %}</td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;background-color:#f5f3ee;">Paper submitted</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">{{ paper_date }}</td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">Session or location</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;">{{ session }}</td>
+    </tr>
+    <tr>
+      <td style="padding:11px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;background-color:#f5f3ee;">Theme</td>
+      <td style="padding:11px 20px;font-size:13.5px;color:#333333;text-align:right;background-color:#f5f3ee;">{{ theme }}</td>
+    </tr>
+  </table>
+
+  <!-- SCORING TABLE -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #1a1a1a;border-radius:0;margin-bottom:26px;">
+    <tr>
+      <td style="background-color:#f0ede4;padding:10px 20px;font-size:10.5px;font-weight:700;color:#666666;text-transform:uppercase;letter-spacing:0.7px;border-bottom:1px solid #1a1a1a;">Scoring</td>
+      <td style="background-color:#f0ede4;padding:10px 20px;font-size:10.5px;font-weight:700;color:#666666;text-transform:uppercase;letter-spacing:0.7px;text-align:right;border-bottom:1px solid #1a1a1a;">Score</td>
+      <td style="background-color:#f0ede4;padding:10px 20px;font-size:10.5px;font-weight:700;color:#666666;text-transform:uppercase;letter-spacing:0.7px;text-align:right;border-bottom:1px solid #1a1a1a;">Max</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">Closeness to topic</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;">{{ score_topic }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;">10</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;background-color:#f5f3ee;">Closeness to region</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">{{ score_region }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">5</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">Clear solution to challenges</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;">{{ score_solution }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;">10</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;background-color:#f5f3ee;">Case study, results, examples</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">{{ score_case_study }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">5</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;">Not an obvious sales pitch</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;">{{ score_not_pitch }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;">5</td>
+    </tr>
+    <tr>
+      <td style="padding:10px 20px;font-size:13.5px;color:#1a1a1a;font-weight:600;border-bottom:1px solid #d6d3c8;background-color:#f5f3ee;">Company profile</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#333333;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">{{ score_company }}</td>
+      <td style="padding:10px 20px;font-size:13.5px;color:#666666;border-bottom:1px solid #d6d3c8;text-align:right;background-color:#f5f3ee;">10</td>
+    </tr>
+    <tr>
+      <td style="padding:12px 20px;font-size:14px;color:#1a1a1a;font-weight:700;background-color:#f0ede4;border-left:3px solid #1a1a1a;">Total, grade {{ grade }}</td>
+      <td style="padding:12px 20px;font-size:14px;color:#1a1a1a;font-weight:700;text-align:right;background-color:#f0ede4;">{{ score_total }}</td>
+      <td style="padding:12px 20px;font-size:14px;color:#1a1a1a;font-weight:700;text-align:right;background-color:#f0ede4;">45</td>
+    </tr>
+  </table>
+
+  {% if agenda_addition %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f3ee;border:1px solid #cccccc;border-radius:0;margin-bottom:22px;">
+  <tr><td style="padding:20px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td valign="top" width="32" style="padding-right:14px;padding-top:1px;">
+        <span style="display:inline-block;width:28px;height:28px;background-color:#1a1a1a;border-radius:50%;text-align:center;line-height:28px;font-size:14px;color:#faf9f6;">&#10003;</span>
+      </td>
+      <td>
+        <p style="margin:0 0 6px;font-size:12.5px;font-weight:700;color:#1a1a1a;text-transform:uppercase;letter-spacing:0.4px;">Agenda addition, use as written</p>
+        <p style="margin:0;font-size:14px;color:#333333;line-height:1.7;">{{ agenda_addition|linebreaksbr }}</p>
+      </td>
+    </tr>
+    </table>
+  </td></tr>
+  </table>
+  {% endif %}
+
+  {% if feedback %}
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f3ee;border:1px solid #cccccc;border-radius:0;margin-bottom:26px;">
+  <tr><td style="padding:20px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td valign="top" width="32" style="padding-right:14px;padding-top:1px;">
+        <span style="display:inline-block;width:28px;height:28px;background-color:#1a1a1a;border-radius:50%;text-align:center;line-height:28px;font-size:14px;color:#faf9f6;">i</span>
+      </td>
+      <td>
+        <p style="margin:0 0 6px;font-size:12.5px;font-weight:700;color:#1a1a1a;text-transform:uppercase;letter-spacing:0.4px;">To raise with the speaker</p>
+        <p style="margin:0;font-size:14px;color:#333333;line-height:1.7;">{{ feedback|linebreaksbr }}</p>
+      </td>
+    </tr>
+    </table>
+  </td></tr>
+  </table>
+  {% endif %}
+
+  <!-- BUTTON -->
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:26px;">
+  <tr><td style="border-radius:0;background:#1a1a1a;border:1.5px solid #1a1a1a;">
+    <a href="{{ record_url }}" target="_blank" style="display:inline-block;padding:10px 24px;font-size:13px;font-weight:600;color:#faf9f6;text-decoration:none;letter-spacing:0.2px;">Open the review record</a>
+  </td></tr>
+  </table>
+
+</td></tr>
+
+<!-- DIVIDER -->
+<tr><td style="background-color:#faf9f6;padding:0 44px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #1a1a1a;"></td></tr></table>
+</td></tr>
+
+<!-- SIGNATURE -->
+<tr><td style="background-color:#faf9f6;padding:22px 44px 26px;">
+  <p style="margin:0 0 1px;font-size:14px;color:#1a1a1a;font-weight:600;">{{ mre_name }}</p>
+  <p style="margin:0;font-size:13px;color:#666666;line-height:1.5;">{{ mre_role }}</p>
+  <p style="margin:0;font-size:13px;color:#999999;line-height:1.5;">IQ International Pte. Ltd.</p>
+</td></tr>
+
+<!-- FOOTER -->
+<tr><td style="background-color:#f0ede4;border-radius:0;border-top:1px solid #d6d3c8;padding:14px 44px;">
+  <p style="margin:0;font-size:11px;color:#999999;line-height:1.5;">Sent automatically on paper review submission, Automation &amp; Agent Development programme, IQ International Pte. Ltd.</p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>

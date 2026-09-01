@@ -89,11 +89,22 @@ const patchClientImport = (s) =>
 
 const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMod;
 // lib/filterSpec.js imports lib/dateFilter.js — the date vocabulary the
-// Advanced Filter's date columns speak. Loaded FIRST and its path substituted
-// in, the same redirection lib/liveData.js gets above, because everything here
-// is flattened into one temp directory and a bare './dateFilter' would resolve
-// to nothing once it lands there.
-const dateFilterMod = await load("lib/dateFilter.js");
+// Advanced Filter's date columns speak — and lib/dateFilter.js in turn imports
+// IST_OFFSET_MS from lib/helpers.js, the shift that decides which DAY a
+// timestamp belongs to. All three are loaded in dependency order and their
+// paths substituted in, the same redirection lib/liveData.js gets above,
+// because everything here is flattened into one temp directory and a bare
+// './dateFilter' or './helpers' would resolve to nothing once it lands there.
+//
+// THE CHAIN IS THE POINT, not an inconvenience. helpers.js is where a RENDERED
+// cell's day comes from and dateFilter.js is where a FILTERED row's day comes
+// from; they have to be the same number, which is why dateFilter.js imports the
+// offset rather than restating it. This probe is what would notice if that
+// import were quietly dropped to keep the harness simpler.
+const helpersMod = await load("lib/helpers.js");
+const helpersPath = join(dir, "lib_helpers.mjs").replace(/\\/g, "/");
+const dateFilterMod = await load("lib/dateFilter.js", (s) =>
+  s.replace(/from ['"]\.\/helpers['"]/g, `from "file://${helpersPath}"`));
 const dateFilterPath = join(dir, "lib_dateFilter.mjs").replace(/\\/g, "/");
 const spec = await load("lib/filterSpec.js", (s) =>
   s.replace(/from ['"]\.\/dateFilter['"]/g, `from "file://${dateFilterPath}"`));
@@ -216,13 +227,29 @@ check("a date window is sent as an inclusive two-value between",
 
 // The bug this one exists to prevent: a bare date against a DateTimeField is
 // compared with MIDNIGHT, so the whole of the day the user asked for is dropped.
-check("a datetime column gets instants at the edges of the day, not bare dates",
+//
+// THE OFFSET IS +05:30, AND THAT IS THE ASSERTION, not incidental formatting. It
+// was +00:00, which matched settings.TIME_ZONE and matched nothing the user could
+// see: the cell is rendered in IST (lib/helpers.js), so a UTC day edge put every
+// timestamp between 00:00 and 05:30 IST outside the day it DISPLAYED. Storage is
+// still UTC and the comparison is still against an absolute instant; which
+// instant bounds "the 25th" is what moved.
+check("a datetime column gets instants at the edges of the IST day, not bare dates",
   JSON.stringify(datePartition.criteria[1])
     === JSON.stringify({
       field: "received_at", op: "between",
-      values: ["2026-08-25T00:00:00+00:00", "2026-08-25T23:59:59.999999+00:00"],
+      values: ["2026-08-25T00:00:00+05:30", "2026-08-25T23:59:59.999999+05:30"],
     }),
   JSON.stringify(datePartition.criteria[1]));
+
+// A plain DateField is NOT given an offset, and this is the control for the one
+// above: a picked calendar date has no instant in it, so shifting it would move a
+// date the user typed. criteria[0] is the request_date window, asserted bare a
+// few lines up; this states the reason rather than leaving it to be inferred.
+check("a plain date column is still sent as a bare calendar date",
+  !JSON.stringify(datePartition.criteria[0]).includes("+05:30")
+    && !JSON.stringify(datePartition.criteria[0]).includes("T00:00:00"),
+  JSON.stringify(datePartition.criteria[0]));
 
 const notBetween = toCriterion(
   dateCond("request_date", "Is Not", { mode: "range", from: "2026-08-01", to: "2026-08-31" }),
@@ -569,17 +596,47 @@ const invBody = captured[captured.length - 1].body;
 const invDel = invBody.delegates[0];
 results.literals.invoice_patch_body = invBody;
 
+// request_date and invoice_date USED to be in this list. They were invoice
+// columns nobody could edit, and they are a per-delegate override pair now
+// (book_delegate/models.py delegate_request_date), so they travel exactly like
+// payment_status below: the delegates' agreed value goes on the invoice, and a
+// disagreement stays on the rows. The keys named here are the ones no delegate
+// row carries at all, which is what makes their absence the whole assertion.
 check("invoice PATCH omits invoice fields the caller never set",
   !["company_name", "contact_name", "contact_email", "contact_phone", "source",
-    "currency", "request_date", "invoice_date", "discount", "reference",
+    "currency", "discount", "reference",
    ].some((k) => k in invBody),
   Object.keys(invBody).join(","));
 check("invoice PATCH carries the delegates' agreed payment status, not 'Pending'",
   invBody.payment_status === "Paid", invBody.payment_status);
+check("invoice PATCH carries the delegates' agreed booking dates",
+  invBody.request_date === "2026-01-02" && invBody.invoice_date === "2026-01-03",
+  JSON.stringify({ r: invBody.request_date, i: invBody.invoice_date }));
 check("agreed person-level values clear the per-delegate override",
   invDel.delegate_payment_status === null && invDel.delegate_ticket_tier === null
-  && invDel.delegate_payment_date === null,
-  JSON.stringify({ s: invDel.delegate_payment_status, t: invDel.delegate_ticket_tier, d: invDel.delegate_payment_date }));
+  && invDel.delegate_payment_date === null
+  && invDel.delegate_request_date === null && invDel.delegate_invoice_date === null,
+  JSON.stringify({ s: invDel.delegate_payment_status, t: invDel.delegate_ticket_tier,
+                   d: invDel.delegate_payment_date, rd: invDel.delegate_request_date,
+                   id_: invDel.delegate_invoice_date }));
+
+// TWO DELEGATES, TWO DIFFERENT REQUEST DATES. The reason the override columns
+// were added: correcting one person's booking date used to move everybody on
+// the invoice with it, because the date was one shared invoice value. Each row
+// now carries its own, and the invoice's shared column is left alone rather
+// than being handed one of the two dates arbitrarily.
+captured.length = 0;
+await bookings.saveInvoiceDelegates("INV-9", EDIT_META, [
+  feDelegate({ request_date: "2026-01-02" }),
+  feDelegate({ id: 502, email: "grace@acme.test", request_date: "2026-04-20" }),
+], 77);
+const splitBody = captured[captured.length - 1].body;
+check("delegates that disagree each keep their own request date",
+  splitBody.delegates.map((d) => d.delegate_request_date)
+    .join("|") === "2026-01-02|2026-04-20",
+  JSON.stringify(splitBody.delegates.map((d) => d.delegate_request_date)));
+check("a disagreed request date is not written to the shared invoice",
+  !("request_date" in splitBody), Object.keys(splitBody).join(","));
 check("delegate payload carries booking_code", invDel.booking_code === "Speaker", invDel.booking_code);
 check("delegate payload carries delegate_number", invDel.delegate_number === 2, invDel.delegate_number);
 check("delegate payload carries the Attendance - IN? value",

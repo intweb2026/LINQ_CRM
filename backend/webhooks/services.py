@@ -13,6 +13,7 @@ NO company objects are created.
 import logging
 import time
 import traceback
+from collections import defaultdict, deque
 from datetime import datetime
 
 from django.db import transaction
@@ -38,6 +39,24 @@ class WebhookProcessor:
     def _note(self, msg: str):
         ts = datetime.utcnow().strftime("%H:%M:%S.%f")[:-3]
         self.notes.append(f"[{ts}] {msg}")
+
+    def _coerce_paid_or_free(self, raw, who):
+        """
+        Payable/Free from the payload, through the shared coercion table.
+
+        Returns "" for a blank field and for a value the column does not store,
+        and NOTES the second case. A delivery is never rejected over this one
+        field — the booking itself is real and the rest of the payload is fine —
+        but the value is not invented either, and the note is the record that the
+        website sent something this system does not recognise.
+        """
+        from accounts.booking_coercion import coerce
+
+        value, error = coerce("paid_or_free", raw)
+        if error:
+            self._note(f"Payable/Free on the {who} not recognised, stored blank: {error}")
+            return ""
+        return value or ""
 
     def process(self) -> tuple[bool, dict]:
         log = self.log
@@ -118,33 +137,45 @@ class WebhookProcessor:
         self._note(f"Payload validated. Invoice={invoice_number}  Event={event_code}")
 
         # ── 2. Field normalization ─────────────────────────────────────────────
+        # Payable/Free and Payment Status go through accounts/booking_coercion,
+        # the one typed table shared by every booking write path, so the website
+        # and the importer agree about what a value means.
         ps_map   = {v.lower(): v for v in BookEvent.PaymentStatus.values}
         tier_map = {v.lower(): v for v in BookEvent.TicketTier.values}
-        pof_map  = {v.lower(): v for v in BookEvent.PaidOrFree.values}
 
-        payment_status = ps_map.get(d.get("PaymentStatus", "").strip().lower(), BookEvent.PaymentStatus.PENDING)
-        
+        # Pending, not blank. A payment status is never empty in this CRM; a
+        # website booking that states none is waiting to be paid. Payment TYPE is
+        # the field that stays blank until somebody actually pays.
+        payment_status = ps_map.get(
+            d.get("PaymentStatus", "").strip().lower(), BookEvent.PaymentStatus.PENDING)
+
         # Resolve ticket tier from both TicketTier and Packages
         packages_val = d.get("Packages", "")
         if isinstance(packages_val, list):
-            packages_str = " ".join([str(p) for p in packages_val]).lower()
+            packages_str = " ".join([str(p) for p in packages_val])
         else:
-            packages_str = str(packages_val).lower()
-            
+            packages_str = str(packages_val)
+
         ticket_tier_raw = d.get("TicketTier", "").strip().lower()
-        
-        resolved_tier = ""
-        if "super early" in packages_str or "seb" in packages_str or "seb" in ticket_tier_raw or "super early" in ticket_tier_raw:
-            resolved_tier = "SEB"
-        elif "early" in packages_str or "eb" in packages_str or "eb" in ticket_tier_raw or "early" in ticket_tier_raw:
-            resolved_tier = "EB"
-        elif "regular" in packages_str or "standard" in packages_str or "regular" in ticket_tier_raw or "standard" in ticket_tier_raw:
-            resolved_tier = "Regular"
-        else:
-            resolved_tier = tier_map.get(ticket_tier_raw, "Regular")
-            
-        d["TicketTier"] = resolved_tier
-        d["PaidOrFree"] = pof_map.get(d.get("PaidOrFree", "").strip().lower(), "Paid")
+
+        d["TicketTier"] = self._resolve_ticket_tier(
+            (packages_str, ticket_tier_raw), tier_map, ticket_tier_raw, "Regular",
+        )
+        # PAYABLE/FREE IS NO LONGER DEFAULTED TO PAID.
+        #
+        # This line read `pof_map.get(..., "Paid")`, so a blank field — and any
+        # spelling the two-value map did not hold — was stored as CHARGED. It is
+        # also written as a per-delegate override, and an override takes
+        # precedence over the invoice at read time, so this defaulting overruled
+        # anything an import had written and would have undone the repair the
+        # next time the same booking was touched. It is why free bookings read as
+        # Payable even where the source file was correct.
+        #
+        # A blank now stays blank, an unrecognised value is REPORTED in the
+        # processing notes and stored as blank rather than as an assertion nobody
+        # made, and the vocabulary the CRM itself displays — Payable — is
+        # accepted, which it never was.
+        d["PaidOrFree"] = self._coerce_paid_or_free(d.get("PaidOrFree", ""), "invoice")
 
         # ── 3. Sales exec assignment ───────────────────────────────────────────
         sales_exec = BookEvent.auto_assign_sales(event_code)
@@ -166,7 +197,7 @@ class WebhookProcessor:
             # ── 5. Delegate processing ─────────────────────────────────────────
             delegates_payload = d.get("Delegates", [])
             inserted_delegates, skipped_delegates, failed_delegates = self._process_delegates(
-                invoice, event_code, d, delegates_payload, tier_map, pof_map,
+                invoice, event_code, d, delegates_payload, tier_map,
             )
 
             # ── 6. Update contact info ─────────────────────────────────────────
@@ -422,9 +453,75 @@ class WebhookProcessor:
 
         return invoice, WebhookLog.DbInsertStatus.UPDATED, note
 
-    def _process_delegates(self, invoice, event_code, d, delegates_payload, tier_map, pof_map):
+    # Ticket-tier words, in the order they must be tested: "super early" before
+    # "early", and both before "regular". Held as data because the identical
+    # four-clause if/elif chain was written out three times, once for the
+    # invoice and once in each delegate branch.
+    TIER_WORDS = (
+        ("SEB",     ("super early", "seb")),
+        ("EB",      ("early", "eb")),
+        ("Regular", ("regular", "standard")),
+    )
+
+    @classmethod
+    def _resolve_ticket_tier(cls, texts, tier_map, raw, default):
+        """
+        A ticket tier read out of whatever free text a booking form sent.
+
+        `texts` are searched for the words above; `raw` is the already-lowered
+        TicketTier value, looked up in `tier_map` only when no word matched, and
+        `default` is the answer when even that misses.
+
+        Substring matching, deliberately unchanged from the three chains this
+        replaces: "eb" matches anywhere, so a package named "September Special"
+        still resolves to EB. That is wrong and it is not new, and correcting it
+        here would change how live deliveries are classified under cover of a
+        refactor. Left as it was, on purpose.
+        """
+        blob = " ".join(t for t in texts if t).lower()
+        for tier, words in cls.TIER_WORDS:
+            if any(word in blob for word in words):
+                return tier
+        return tier_map.get(raw, default)
+
+    def _process_delegates(self, invoice, event_code, d, delegates_payload, tier_map):
+        """
+        Write the payload's delegates onto the invoice.
+
+        ONE EMAIL ADDRESS CAN CARRY SEVERAL PEOPLE, and that is ordinary: a ranch
+        office address booking two owners, a PA booking a team, an info@ address
+        on a group pass. This used to match an incoming delegate on
+        (invoice, email) alone, so the second person on a shared address never
+        got a row. The lookup found the row belonging to the FIRST person and
+        updated it, overwriting their name, position and phone number with the
+        second person's; the delivery then reported success with
+        delegates_created=1, and the first person was stored nowhere. The name is
+        now part of the key, matching the constraint the model declares.
+
+        MATCHED POSITIONALLY, per key, so the operation stays idempotent. Rows
+        already stored for a key are handed out oldest first, and each row goes
+        to the back of its queue once used, which means:
+
+          - two people on one address are two keys, so both are inserted;
+          - re-delivering that payload finds both rows and updates them, with
+            nothing inserted;
+          - two payload entries identical in BOTH email and name collapse onto
+            one row rather than colliding with the unique constraint, because
+            nothing in either entry distinguishes them.
+        """
         inserted = skipped = failed = 0
         company_name = d.get("DelegateCompanyName", "")
+
+        # Every row already on this invoice, grouped by person, oldest first.
+        # One query for the whole delivery; the loop below issues none of its own.
+        available = defaultdict(deque)
+        for row in BookDelegate.objects.filter(invoice=invoice).order_by("id"):
+            available[row.own_person_key].append(row)
+
+        # Row id -> the payload entry that claimed it, so an entry landing on a
+        # row this same delivery already wrote is reported as the duplicate it is
+        # rather than as a silent overwrite.
+        claimed_by = {}
 
         for i, dp in enumerate(delegates_payload):
             email = dp.get("Email", "").strip().lower()
@@ -432,74 +529,74 @@ class WebhookProcessor:
                 skipped += 1
                 self._note(f"Delegate #{i+1} skipped: no email")
                 continue
-            try:
-                existing = BookDelegate.objects.filter(invoice=invoice, email=email).first()
-                if existing:
-                    # Update existing delegate
-                    changed = []
-                    del_tier_raw = dp.get("TicketTier", "").strip().lower()
-                    del_package_raw = dp.get("TicketPackage", "").strip().lower()
-                    del_resolved_tier = ""
-                    if "super early" in del_package_raw or "seb" in del_package_raw or "seb" in del_tier_raw or "super early" in del_tier_raw:
-                        del_resolved_tier = "SEB"
-                    elif "early" in del_package_raw or "eb" in del_package_raw or "eb" in del_tier_raw or "early" in del_tier_raw:
-                        del_resolved_tier = "EB"
-                    elif "regular" in del_package_raw or "standard" in del_package_raw or "regular" in del_tier_raw or "standard" in del_tier_raw:
-                        del_resolved_tier = "Regular"
-                    else:
-                        del_resolved_tier = tier_map.get(del_tier_raw, invoice.ticket_tier or "Regular")
 
-                    upd = {
-                        "first_name":        dp.get("FirstName", "").strip(),
-                        "last_name":         dp.get("LastName", "").strip(),
-                        "phone_number":      dp.get("PhoneNumber", "").strip(),
-                        "position":          dp.get("Position", "").strip(),
-                        "ticket_package":    dp.get("TicketPackage", "").strip(),
-                        "sponsorship_level": dp.get("SponsorshipLevel", "").strip(),
-                        "company_name_raw":  company_name,
-                        "delegate_ticket_tier": del_resolved_tier,
-                        "delegate_paid_or_free": pof_map.get(dp.get("PaidOrFree", "").strip().lower(), "Paid"),
-                    }
-                    for attr, val in upd.items():
+            first_name = dp.get("FirstName", "").strip()
+            last_name  = dp.get("LastName", "").strip()
+            key        = BookDelegate.person_key(email, first_name, last_name)
+            who        = f"{email} ({first_name} {last_name})".replace(" )", ")")
+
+            fields = {
+                "first_name":            first_name,
+                "last_name":             last_name,
+                "phone_number":          dp.get("PhoneNumber", "").strip(),
+                "position":              dp.get("Position", "").strip(),
+                "ticket_package":        dp.get("TicketPackage", "").strip(),
+                "sponsorship_level":     dp.get("SponsorshipLevel", "").strip(),
+                "company_name_raw":      company_name,
+                "delegate_ticket_tier":  self._resolve_ticket_tier(
+                    (dp.get("TicketPackage", ""), dp.get("TicketTier", "")),
+                    tier_map,
+                    dp.get("TicketTier", "").strip().lower(),
+                    invoice.ticket_tier or "Regular",
+                ),
+                # The per-delegate override, and the more damaging of the two
+                # hard-coded Paid defaults: an override SHADOWS the invoice at
+                # read time, so this line decided what the Bookings table showed
+                # whatever the invoice held. `or None` because the override
+                # column is nullable and null is what "inherit the invoice"
+                # means — storing "" here would shadow the invoice with a blank.
+                "delegate_paid_or_free": self._coerce_paid_or_free(
+                    dp.get("PaidOrFree", ""), f"delegate {who}") or None,
+            }
+
+            try:
+                existing = available[key].popleft() if available[key] else None
+
+                if existing:
+                    duplicate_of = claimed_by.get(existing.id)
+                    changed = []
+                    for attr, val in fields.items():
                         if getattr(existing, attr, None) != val:
                             setattr(existing, attr, val)
                             changed.append(attr)
                     if changed:
                         existing.save(update_fields=changed)
-                        self._note(f"Delegate #{i+1} updated: {email}")
+                        self._note(f"Delegate #{i+1} updated: {who}")
                     else:
-                        self._note(f"Delegate #{i+1} unchanged: {email}")
+                        self._note(f"Delegate #{i+1} unchanged: {who}")
+                    if duplicate_of:
+                        self._note(
+                            f"Delegate #{i+1} repeats delegate #{duplicate_of}, same email "
+                            f"AND same name; merged onto one row"
+                        )
+                    row = existing
                     skipped += 1
                 else:
-                    del_tier_raw = dp.get("TicketTier", "").strip().lower()
-                    del_package_raw = dp.get("TicketPackage", "").strip().lower()
-                    del_resolved_tier = ""
-                    if "super early" in del_package_raw or "seb" in del_package_raw or "seb" in del_tier_raw or "super early" in del_tier_raw:
-                        del_resolved_tier = "SEB"
-                    elif "early" in del_package_raw or "eb" in del_package_raw or "eb" in del_tier_raw or "early" in del_tier_raw:
-                        del_resolved_tier = "EB"
-                    elif "regular" in del_package_raw or "standard" in del_package_raw or "regular" in del_tier_raw or "standard" in del_tier_raw:
-                        del_resolved_tier = "Regular"
-                    else:
-                        del_resolved_tier = tier_map.get(del_tier_raw, invoice.ticket_tier or "Regular")
-
-                    BookDelegate.objects.create(
-                        invoice           = invoice,
-                        event_code        = event_code,
-                        company           = None,
-                        company_name_raw  = company_name,
-                        first_name        = dp.get("FirstName", "").strip(),
-                        last_name         = dp.get("LastName", "").strip(),
-                        email             = email,
-                        phone_number      = dp.get("PhoneNumber", "").strip(),
-                        position          = dp.get("Position", "").strip(),
-                        ticket_package    = dp.get("TicketPackage", "").strip(),
-                        sponsorship_level = dp.get("SponsorshipLevel", "").strip(),
-                        delegate_ticket_tier = del_resolved_tier,
-                        delegate_paid_or_free = pof_map.get(dp.get("PaidOrFree", "").strip().lower(), "Paid"),
+                    row = BookDelegate.objects.create(
+                        invoice          = invoice,
+                        event_code       = event_code,
+                        company          = None,
+                        email            = email,
+                        **fields,
                     )
                     inserted += 1
-                    self._note(f"Delegate #{i+1} inserted: {email}")
+                    self._note(f"Delegate #{i+1} inserted: {who}")
+
+                # To the BACK of the queue, so a later entry for this key takes an
+                # unclaimed row first and only falls back to this one when there
+                # is none left.
+                available[key].append(row)
+                claimed_by.setdefault(row.id, i + 1)
             except Exception as exc:
                 failed += 1
                 self._note(f"Delegate #{i+1} FAILED ({email}): {exc}")

@@ -44,15 +44,37 @@ CRITERIA_FIELDS = tuple(name for name, _ in CRITERIA)
 CRITERIA_MAX = dict(CRITERIA)
 RUBRIC_TOTAL = sum(CRITERIA_MAX.values())      # 45
 
-# Confirmed grade bands, highest threshold first. Grade is DERIVED from the score
-# percentage — see PaperReview.computed_grade(). B+ and E existed in the Zoho data
-# but are unreachable for new records; existing imported values are overwritten on
-# the next save, which is the documented and intended consequence of Option B.
+# Confirmed grade bands, as ABSOLUTE SCORE FLOORS over the 45-point rubric,
+# highest floor first. Grade is DERIVED — see PaperReview.computed_grade().
+#
+#     A   36-45
+#     B+  31-35
+#     B   26-30
+#     C   21-25
+#     D   11-20
+#     E    0-10
+#
+# THESE WERE PERCENTAGE THRESHOLDS (80/60/40/0 → A/B/C/D) UNTIL THE BUSINESS GAVE
+# THE RANGES ABOVE. Two consequences follow, both intended:
+#
+#   B+ and E are reachable now. They existed in the Zoho export (355 of 3492 rows
+#   carried B+) and the old bands could never produce them, so an imported B+ was
+#   a value the CRM would overwrite on the next save. It is a real band again.
+#
+#   Every letter except A moved. 27/45 was B under both rules, but 35 was B and
+#   is now B+, 26 was C and is now B, 18 was C and is now D, and 8 was D and is
+#   now E. Migration 0007 recomputed every stored row so the table does not show
+#   two grading systems at once.
+#
+# The floors are exhaustive and contiguous over 0-45, so the loop in
+# computed_grade() always matches and no score falls through.
 GRADE_BANDS = (
-    (80, "A"),
-    (60, "B"),
-    (40, "C"),
-    (0,  "D"),
+    (36, "A"),
+    (31, "B+"),
+    (26, "B"),
+    (21, "C"),
+    (11, "D"),
+    (0,  "E"),
 )
 
 
@@ -236,14 +258,18 @@ class PaperReview(models.Model):
         grade, the same distinction computed_score() draws between "scored 0"
         and "not yet scored". Only reachable via direct ORM or import; the form
         requires all six criteria.
+
+        Compares the RAW SCORE, not a percentage. The bands are score ranges, and
+        rounding a score to a percentage first put boundary scores in the wrong
+        band: 31/45 is 68.9%, which no percentage floor in the old table could
+        distinguish from 30/45's 66.7%, yet those two are now B+ and B.
         """
         if self.proposal_score is None:
             return None
-        pct = round((self.proposal_score / RUBRIC_TOTAL) * 100)
-        for threshold, letter in GRADE_BANDS:
-            if pct >= threshold:
+        for floor, letter in GRADE_BANDS:
+            if self.proposal_score >= floor:
                 return letter
-        return "D"   # defensive — the 0 threshold already catches everything
+        return "E"   # defensive — the 0 floor already catches everything
 
     def save(self, *args, **kwargs):
         self.proposal_score = self.computed_score()

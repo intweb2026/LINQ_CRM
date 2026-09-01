@@ -1,6 +1,8 @@
 import logging
 
 from django.db import transaction
+from django.db.models import DecimalField, ExpressionWrapper, F, TextField, Value
+from django.db.models.functions import Coalesce, Concat, NullIf, Trim
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,7 +11,7 @@ from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
 from accounts.period_filter import PeriodFilterMixin
-from accounts.permissions import RBACMixin, IsAdminRole
+from accounts.permissions import RBACMixin
 from accounts.crm_permissions import crm_permission, has_module_action
 from book_event.models import BookEvent
 from .models import BookDelegate
@@ -66,9 +68,67 @@ def _append_reference(current, note):
     return f"{current} / {note}"
 
 
+# ── Computed filter expressions ──────────────────────────────────────────────
+# Three of the Bookings columns show a value no column holds: the delegate's
+# full name, the sales executive's display name, and the discount as a PERCENT.
+# The serializer builds each of them in Python, which is fine for rendering and
+# useless for filtering — a criterion the backend cannot express falls back to
+# filtering whichever page the browser has loaded, so "Name contains smith" over
+# 14,800 delegates answered from the 50 rows on screen and the footer counted
+# those. These re-state the same three definitions as SQL so the filter reaches
+# the whole table.
+#
+# Each must stay IDENTICAL to its serializer counterpart. Where they drift, the
+# rows that come back are not the rows the cells describe, which is worse than
+# the page-only filtering this replaces.
+
+
+def _display_name(first_path, last_path):
+    """`"first last".strip()` in SQL — BookDelegate.full_name, and User.get_full_name."""
+    return Trim(Concat(
+        Coalesce(F(first_path), Value("")),
+        Value(" "),
+        Coalesce(F(last_path), Value("")),
+        output_field=TextField(),
+    ))
+
+
+def _delegate_name():
+    """BookDelegate.full_name (models.py) — the value the Name column renders."""
+    return _display_name("first_name", "last_name")
+
+
+def _sales_executive_name():
+    """serializers.get_sales_executive_name: the full name, else the username."""
+    return Coalesce(
+        NullIf(_display_name("invoice__sales_executive__first_name",
+                             "invoice__sales_executive__last_name"), Value("")),
+        F("invoice__sales_executive__username"),
+        output_field=TextField(),
+    )
+
+
+def _discount_percent():
+    """
+    The stored FRACTION as the percent the table shows.
+
+    book_delegates.discount holds 0.20 for a 20% discount (api/bookings.js
+    fractionToPercent), so a filter sent straight at the column would compare
+    against a number the user has never seen — "Discount is 20" would match
+    nothing while looking like it worked. Multiplying here means the criterion
+    is written in the units of the cell.
+    """
+    return ExpressionWrapper(
+        F("discount") * Value(100),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
+
 class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                           RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+    # Whose "all" cell widens these rows to every booking. See RBACMixin.
+    rbac_module        = "bookings"
 
     # ?period= presets, over the same date the Dashboard's monthly chart is keyed
     # on: request_date, falling back to invoice_date. Coalesced rather than
@@ -105,8 +165,13 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     filter_spec_fields = {
         **build_filter_spec_fields(
             BookDelegate,
-            # invoice is the FK object itself; its columns are exposed by name below
-            exclude={"invoice", "delegate_number"},
+            # invoice is the FK object itself; its columns are exposed by name below.
+            # delegate_number USED to be excluded here as well. It is a column the
+            # table shows and people filter on, and excluding it did not make it
+            # unfilterable — it made it filterable in the browser over the loaded
+            # page only. It is registered now; the bulk-update exclusion is
+            # separate and stays, because save() rewrites it on Cancelled rows.
+            exclude={"invoice"},
             labels={"company_name_raw": "Company (raw)", "event_code": "Event Code"},
         ),
         # Person-level resolved fields
@@ -129,10 +194,18 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                            "source": "invoice__company_name"},
         "event_name":     {"type": "text", "label": "Event Name",
                            "source": "invoice__event_name"},
-        "request_date":   {"type": "date", "label": "Request Date",
-                           "source": "invoice__request_date", "nullable": True},
-        "invoice_date":   {"type": "date", "label": "Invoice Date",
-                           "source": "invoice__invoice_date", "nullable": True},
+        # RESOLVED, not invoice-sourced: both dates have a per-delegate
+        # override now, and filtering the invoice's column would miss every row
+        # carrying one while claiming to filter the column the table displays.
+        # Declared here rather than in _RESOLVED because that comprehension has
+        # no place to carry `nullable`, and a nullable date is what makes the
+        # is-empty operators available on these two.
+        "request_date":   {"type": "date", "label": "Request Date", "nullable": True,
+                           "resolved": {"override": "delegate_request_date",
+                                        "invoice": "invoice__request_date"}},
+        "invoice_date":   {"type": "date", "label": "Invoice Date", "nullable": True,
+                           "resolved": {"override": "delegate_invoice_date",
+                                        "invoice": "invoice__invoice_date"}},
         "total_amount":   {"type": "number", "label": "Total Amount",
                            "source": "invoice__total_amount", "nullable": True},
         "currency":       {"type": "choice", "label": "Currency",
@@ -141,6 +214,38 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "source":         {"type": "choice", "label": "Source",
                            "source": "invoice__source",
                            "choices": list(BookEvent.Source.values)},
+
+        # ── Columns the table shows that no column holds ──────────────────────
+        # See the expression helpers above the class. Each mirrors the serializer
+        # field of the same name, so the filter and the cell agree.
+        "name":  {"type": "text", "label": "Name", "expression": _delegate_name},
+        "owner": {"type": "text", "label": "Sales Executive",
+                  "expression": _sales_executive_name},
+        # The percent, not the stored fraction — filters are written in the units
+        # of the cell. `discount` itself stays registered by the builder above
+        # against the raw column, for any caller that means the fraction.
+        "discount_percent": {"type": "number", "label": "Discount (%)",
+                             "expression": _discount_percent},
+        # Accounts Contact falls back to the delegate's own email when the
+        # invoice's is blank (serializers.get_accounts_contact_email), which is
+        # exactly the resolved shape the person-level fields use — override
+        # first, then the other side — so it is declared the same way rather
+        # than as an expression.
+        "accounts_contact_email": {
+            "type": "text", "label": "Accounts Contact",
+            "resolved": {"override": "invoice__accounts_contact_email",
+                         "invoice": "email"},
+        },
+        # created_at / updated_at are in DEFAULT_EXCLUDES because on most models
+        # they carry no business meaning. On Bookings they are two visible
+        # columns — Added Time and Modified Time — so they are registered here
+        # under the names the table uses. has_time is what tells the client to
+        # send the END of a day as the upper bound rather than its midnight; see
+        # accounts/period_filter.day_bounds() for the trap it avoids.
+        "added_time":    {"type": "date", "label": "Added Time",
+                          "source": "created_at", "has_time": True},
+        "modified_time": {"type": "date", "label": "Modified Time",
+                          "source": "updated_at", "has_time": True},
     }
 
     # ── Mass update ───────────────────────────────────────────────────────────
@@ -167,7 +272,7 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         **build_bulk_update_fields(
             BookDelegate,
             exclude=(
-                # identity: email is half of unique_together (invoice, email),
+                # identity: email and name together ARE the key (Meta.constraints),
                 # and a name is not a batch property of anybody.
                 "email", "first_name", "last_name",
                 # derived in save() (models.py:88-97): event_code is re-parsed
@@ -201,6 +306,8 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 "delegate_ticket_tier":    "Ticket Tier (override)",
                 "delegate_paid_or_free":   "Payable / Free (override)",
                 "delegate_payment_date":   "Payment Date (override)",
+                "delegate_request_date":   "Request Date (override)",
+                "delegate_invoice_date":   "Invoice Date (override)",
                 "company_name_raw":        "Company (raw)",
                 "add_ons":                 "Add-ons",
             },
@@ -295,8 +402,19 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         # term it does not find here, so an unlisted default would degrade to the
         # pk tiebreak alone without any error.
         "booked_on",
+        # The Modified Time column, and the DEFAULT below. It was absent, which is
+        # why that column's header was dead: BookingsPage.jsx declares a
+        # serverOrdering only for terms listed here, and DataTable disables the
+        # header when there is none rather than sort one loaded page and imply it
+        # sorted the table.
+        "updated_at",
     ]
-    # DEFAULT ORDERING CHANGED AGAIN, from -booked_on to -created_at.
+    # HISTORY, kept because both columns below are still live sort terms and
+    # still carry indexes. This block explains the move from -booked_on to
+    # -created_at; the CURRENT default is -updated_at and its reasoning sits
+    # immediately above the `ordering` line at the end of this block.
+    #
+    # PREVIOUSLY: DEFAULT ORDERING CHANGED, from -booked_on to -created_at.
     #
     # WHAT THE USER ASKED FOR, AND WHY booked_on COULD NOT GIVE IT
     # The Bookings table must show the most RECENTLY ADDED rows first. booked_on
@@ -357,7 +475,55 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # ordering_fields: frontend/src/pages/BookingsPage.jsx sends it as the Request
     # Date column's serverOrdering, and dropping it would silently disable that
     # header. The same is true of created_at, which the Added Time column sends.
-    ordering        = ["-created_at", "-id"]
+    # DEFAULT ORDERING CHANGED AGAIN, from -created_at to -updated_at, BY REQUEST.
+    #
+    # WHAT WAS ASKED FOR. The table must lead with the row someone touched LAST,
+    # not the row entered last. Those are the same thing only until the first
+    # edit; -created_at pinned a booking to its entry position forever, so a
+    # correction made this morning to a row entered in July stayed in July and
+    # the person who made it had no way to see their own work.
+    #
+    # updated_at IS auto_now=True, so every full save() stamps it and the rows
+    # reorder themselves with no extra bookkeeping. The write paths that matter
+    # all take that route: BookDelegateListSerializer.update() calls a bare
+    # instance.save(), and accounts/bulk_update.py deliberately saves object by
+    # object rather than through queryset.update() (see its module docstring), so
+    # a mass edit stamps every row it touches.
+    #
+    # THE GAPS, BOTH NOW CLOSED, stated because neither is visible from here.
+    #
+    # A queryset .update() bypasses auto_now entirely, so every such path has to
+    # stamp updated_at itself. There are four: services.py
+    # clear_delegate_overrides() and sync_invoice_to_delegates(),
+    # book_event/serializers.py's invoice-number cascade, and — the one that
+    # mattered — the per-delegate branch of BookEventSerializer.update(), which
+    # is where EVERY delegate edit made in the Bookings modal lands.
+    #
+    # And an invoice-level edit used to bump BookEvent.updated_at and NOT the
+    # delegates', so a booking changed through the invoice panel did not rise.
+    # That was written down here as defensible, on the grounds that fixing it
+    # meant touching every delegate on an invoice on every invoice save. It was
+    # defensible for SORT ORDER and indefensible for the Data API's
+    # ?updated_since= delta feed, which reads this column and nothing else, so an
+    # invoice payment edit left an external consumer showing the old status for
+    # good. BookEvent.save() now stamps the delegates, but only when a column in
+    # BookEvent.DELEGATE_EXPORT_FIELDS actually moved, so an invoice save that
+    # touched none of them still writes nothing.
+    #
+    # A BULK EDIT MOVES EVERY ROW IT TOUCHED to the top of the table. That is
+    # inherent to the request, not a defect, and it is accepted knowingly.
+    #
+    # -id IS PART OF THE DEFAULT, NOT LEFT TO StableOrderingFilter, for exactly
+    # the reason spelled out for -created_at above: the filter would append `pk`
+    # ASCENDING, resolving ties oldest-first inside a tied microsecond.
+    #
+    # Served by book_delegates_updated_id_idx — (updated_at DESC, id DESC), added
+    # in backend/sql/2026_08_bookings_modified_order.sql. updated_at is NOT NULL,
+    # so there is no nulls_first hazard and no nulls_last spelling is needed.
+    #
+    # created_at stays in ordering_fields and keeps its index: it is still the
+    # Added Time column's serverOrdering and still a sort the user can pick.
+    ordering        = ["-updated_at", "-id"]
     # The date columns are all nullable, and Postgres orders NULLs FIRST on a
     # DESC sort: "newest first" on Date Paid came back led by every delegate
     # with no payment date at all. Undated rows now land at the END in both
@@ -377,8 +543,12 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             # Payment Status cell displays. Kept because existing callers pass it,
             # but the table should use _sort_effective_payment_status below.
             _sort_status=F("invoice__payment_status"),
-            _sort_date=F("invoice__invoice_date"),
-            _sort_request_date=F("invoice__request_date"),
+            # Both spelled as the RESOLVED value for the same reason as the
+            # effective_* terms below: a delegate can carry its own request or
+            # invoice date, and sorting the invoice's column would order the
+            # table by a value the cell is not showing.
+            _sort_date=Coalesce("delegate_invoice_date", "invoice__invoice_date"),
+            _sort_request_date=Coalesce("delegate_request_date", "invoice__request_date"),
             _sort_name=Concat(F("first_name"), Value(" "), F("last_name")),
             # ── Ordering over the RESOLVED person-level values ────────────────
             # Same expression as accounts/filter_spec.py _resolved_expression and
@@ -415,17 +585,30 @@ class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         qs = self.get_queryset().filter(invoice__invoice_number=invoice_number)
         return Response(BookDelegateListSerializer(qs, many=True).data)
 
-    @action(detail=False, methods=["post"], url_path="bulk_delete",
-            permission_classes=[IsAdminRole])
+    # NO permission_classes OVERRIDE — the viewset's crm_permission("bookings")
+    # gates this, and "bulk_delete" is in its _DELETE_ACTIONS set, so the caller
+    # needs the `delete` cell on Bookings and nothing more.
+    #
+    # It used to carry permission_classes=[IsAdminRole], which REPLACES the module
+    # gate rather than adding to it. IsAdminRole admits only HP, `role == "admin"`,
+    # or a team flagged is_all_access — so granting somebody Bookings → delete in
+    # the permission grid did not let them delete. The UI shows the Delete button on
+    # exactly that grant (BookingsPage.jsx), so the button appeared, the click 403'd,
+    # and the rows stayed: the reported "delete does nothing". The two gates have to
+    # read the same cell or the grid is not the answer to "who may delete a booking".
+    #
+    # This is not a widening past what the grid says: reach is still bounded by
+    # get_queryset() -> rbac_filter_invoice() below, so the delete cell buys the
+    # ACTION, never rows outside the caller's scope.
+    @action(detail=False, methods=["post"], url_path="bulk_delete")
     def bulk_delete(self, request):
         """
         Delete up to 1000 delegate records by ID, RBAC-SCOPED.
 
         Previously this ran `BookDelegate.objects.filter(id__in=ids)` — the default
-        manager, not the scoped queryset — so any caller who passed the IsAdminRole
-        gate could delete ANY delegate row by guessing its id, regardless of event
-        assignment. IsAdminRole admits HP, any `is_admin` user, and any custom role
-        with is_all_access, so that was wider than the role's read access.
+        manager, not the scoped queryset — so any caller past the permission gate
+        could delete ANY delegate row by guessing its id, regardless of event
+        assignment.
 
         Resolving through self.get_queryset() routes the deletion through
         rbac_filter_invoice(), so a caller can only ever delete rows already inside
@@ -703,11 +886,10 @@ def _perform_transfer(request, delegates, target_code, new_number):
         return Response(
             {"detail": f"This booking is already on {target_code}."}, status=400)
 
-    # No duplicate-email check over the selection itself. Every delegate here is on
-    # ONE invoice (the caller enforces that), and BookDelegate declares
-    # unique_together = [("invoice", "email")] — so two rows for the same person on
-    # one invoice cannot exist to be selected. The reuse check below is still needed:
-    # it compares against a DIFFERENT invoice's delegates.
+    # No duplicate check over the selection itself. Every delegate here is on ONE
+    # invoice (the caller enforces that), and BookDelegate's key refuses the same
+    # PERSON twice on one invoice — see Meta.constraints. The reuse check below is
+    # still needed: it compares against a DIFFERENT invoice's delegates.
 
     # An invoice number already in use may be REUSED, but only when it is the same
     # event — that is how a second delegate joins a transfer already made. Anywhere
@@ -720,13 +902,20 @@ def _perform_transfer(request, delegates, target_code, new_number):
                            f"{existing.event_code}. Use a different number."},
                 status=409,
             )
-        taken = set(
-            e.lower() for e in existing.delegates.values_list("email", flat=True) if e
-        )
-        clash = [d.email for d in delegates if (d.email or "").lower() in taken]
+        # Matched on the PERSON, not on the email alone. Two delegates on one
+        # invoice may share an email address — one office address covering two
+        # owners is ordinary — so an email-only test refused to transfer Emily
+        # onto an invoice already holding Brendon, and refused it by naming an
+        # address that belongs to somebody else as well as to her.
+        taken = {
+            BookDelegate.person_key(*row)
+            for row in existing.delegates.values_list("email", "first_name", "last_name")
+        }
+        clash = [d for d in delegates if d.own_person_key in taken]
         if clash:
             return Response(
-                {"detail": f"{clash[0]} is already on invoice {new_number}."
+                {"detail": f"{clash[0].full_name} <{clash[0].email}> is already on "
+                           f"invoice {new_number}."
                            + (f" ({len(clash) - 1} more of the selected bookings are "
                               "too.)" if len(clash) > 1 else "")},
                 status=409,

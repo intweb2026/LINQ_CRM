@@ -15,13 +15,27 @@ from django.test import TestCase, override_settings
 
 from paper_review.models import NotificationLog
 from paper_review.notifications import send_paper_review_notification
-from paper_review.tests import ALERT, _Base, make_event
+from paper_review.tests import ALERT, FIXED_CC, _Base, make_event
 
 
 class DefaultIsDisabledTests(TestCase):
     def test_the_flag_defaults_to_false(self):
+        """
+        settings.py's FALLBACK, not this checkout's live value.
+
+        .env is untracked, and a developer testing mail locally turns the flag ON
+        there — that is what PAPER_REVIEW_REDIRECT_ALL_EMAIL exists to make safe.
+        Asserting the live value would fail on their machine for a reason that has
+        nothing to do with the invariant, which is that a deployment setting
+        NOTHING still gets no mail.
+        """
+        from pathlib import Path
+
         from django.conf import settings
-        self.assertFalse(settings.PAPER_REVIEW_NOTIFICATIONS_ENABLED)
+        source = (Path(settings.BASE_DIR) / "config" / "settings.py").read_text(
+            encoding="utf-8")
+        self.assertIn('"PAPER_REVIEW_NOTIFICATIONS_ENABLED", "False"', source)
+        self.assertIn('"PAPER_REVIEW_REDIRECT_ALL_EMAIL", ""', source)
 
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
@@ -73,11 +87,17 @@ class SuppressedSendTests(_Base):
         log = NotificationLog.objects.get()
         self.assertEqual(log.status, NotificationLog.Status.SUPPRESSED)
         self.assertEqual(log.to_addresses, ["sales.exec@example.com"])
-        self.assertEqual(sorted(log.cc_addresses),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        self.assertEqual(log.cc_addresses, ["author@example.com"] + FIXED_CC)
         self.assertIn("AFS - JS", log.subject)
 
+    # The Cc is real people — the submitting MRE and the standing list — so an
+    # event with no sales executive DEGRADES to them rather than falling back.
+    # Emptying the standing list AND the submitter's address is what leaves the
+    # watchdog as the only remaining recipient, which is the path under test.
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
     def test_a_suppressed_fallback_still_carries_the_watchdog_address_and_step(self):
+        self.user.email = ""
+        self.user.save(update_fields=["email"])
         orphan = make_event("SUPP - FB")
         self.assign_events(orphan)
         self.create_review(event_code="SUPP - FB")

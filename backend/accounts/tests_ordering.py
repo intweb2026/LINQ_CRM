@@ -69,12 +69,20 @@ class PaginationStabilityTests(TestCase):
         cls.user.team = cls.role
         cls.user.save()
 
-        # One invoice AND one shared created_at, so all 37 rows tie on the sort
-        # key. The shared created_at is the load-bearing half now: the Bookings
-        # default moved to ["-created_at", "-id"], and created_at defaults to
-        # timezone.now(), so rows created in a loop would each get a distinct
-        # microsecond and this class would silently stop testing the tie it is
-        # named for. The single invoice is kept because request_date is still the
+        # One invoice AND one shared timestamp, so all 37 rows tie on the sort
+        # key. The tie is the whole point of this class: it is what makes
+        # LIMIT/OFFSET pagination free to return rows in a different order per
+        # query, which is the bug accounts/ordering.py exists to fix. Rows created
+        # in a loop each get a distinct microsecond, so without this the class
+        # would silently stop testing the tie it is named for.
+        #
+        # BOTH created_at AND updated_at are tied, because the Bookings default
+        # has now been both: it moved -booked_on → -created_at → -updated_at, and
+        # whichever column it names next, one of these two is it. created_at is
+        # passed to create(); updated_at CANNOT BE, because auto_now=True
+        # overwrites any assigned value in pre_save(), so it is forced afterwards
+        # with the one write that deliberately bypasses auto_now — a queryset
+        # .update(). The single invoice is kept because request_date is still the
         # key behind the Request Date column's own ordering term.
         inv = BookEvent.objects.create(
             invoice_number="ORD-1", event_code="ORD - AA",
@@ -88,6 +96,7 @@ class PaginationStabilityTests(TestCase):
                 first_name=f"D{i:02d}", email=f"ord{i:02d}@example.com",
                 created_at=tied,
             )
+        BookDelegate.objects.filter(invoice=inv).update(updated_at=tied)
 
     def _sweep(self, page_size, extra=""):
         factory = APIRequestFactory()

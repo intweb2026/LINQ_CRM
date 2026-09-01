@@ -201,6 +201,23 @@ class Ticket(models.Model):
                      name="tickets_assign_name_trgm_idx"),
         ]
 
+    def save(self, *args, **kwargs):
+        """
+        `purpose` is stored upper-case, never lower.
+
+        It is free text that keys the ticket-number counter, and webhook senders
+        push lower-case codes, so "ccu" arriving from a webhook would open a
+        second sequence beside "CCU" and restart it at 10001. Enforced here
+        because every write path except the Smart Import update branch goes
+        through save(): the API, the webhook (which reuses
+        TicketCreateSerializer), MR edits, bulk update (accounts/bulk_update.py
+        writes with obj.save() per row) and the admin. That one queryset.update()
+        path is normalised in utils._coerce_row instead.
+        """
+        from .utils import normalize_purpose  # local: utils imports this module
+        self.purpose = normalize_purpose(self.purpose)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.ticket_number or '(pending)'} — {self.purpose[:40]}"
 

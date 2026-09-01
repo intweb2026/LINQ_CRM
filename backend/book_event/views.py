@@ -60,21 +60,39 @@ logger = logging.getLogger(__name__)
 # a substring scan that takes the first hit in this order: accounts_contact_email
 # before contact_email (else "Accounts Email" matches contact_email first),
 # discount_code before discount, invoice_date before invoice_number.
+#
+# THE ALIASES OUR OWN EXPORTS USE
+# "Delegate Company" and "Delegate Email" are the spellings the Master Data sheet
+# carries, and neither resolved. autoMap matches on key, label or alias and then
+# falls back to a symmetric substring scan, which compares "delegatecompany"
+# against "companyname" and fails in both directions — so both columns mapped to
+# nothing and were skipped, and a skipped column is indistinguishable in the
+# wizard from a column the file never contained. Delegate Email is the delegate
+# IDENTITY key: without it the importer deduplicates on invoice number plus an
+# empty string, so every second row on an invoice collides and is given a
+# dup-xxxxxxxx@import.local placeholder. "Date Paid" and "Ref" failed the same
+# way. "Attendance - IN?" only ever mapped by luck, because "attendancein"
+# happens to contain "attendance"; it is declared now rather than left to the
+# substring scan.
+#
+# Any header that still fails to map is REPORTED BY NAME on the review step
+# before a single row is written — see ImportWizard.jsx. A column that maps to
+# nothing can no longer look like a clean import.
 BOOKING_IMPORT_FIELDS = (
     ("invoice_number", "Invoice Number", ("Invoice No", "Invoice #")),
     ("event_code", "Event Code", ()),
     ("event_name", "Event Name", ()),
     ("booking_code", "Booking Code", ()),
     ("edition", "Edition", ("Year",)),
-    ("company_name", "Company", ("Company Name", "Organisation")),
+    ("company_name", "Company", ("Company Name", "Organisation", "Delegate Company")),
     ("contact_name", "Delegate Name", ("Name", "Attendee", "Full Name")),
     ("position", "Job Title / Position", ("Designation", "Job Title")),
     ("accounts_contact_email", "Accounts Email", ("Accounts Contact Email",)),
-    ("contact_email", "Email", ("Email Address",)),
+    ("contact_email", "Email", ("Email Address", "Delegate Email")),
     ("contact_phone", "Direct Line", ("Phone", "Phone Number", "Mobile")),
     ("request_date", "Request Date", ()),
     ("invoice_date", "Invoice Date", ()),
-    ("payment_date", "Payment Date", ()),
+    ("payment_date", "Payment Date", ("Date Paid",)),
     ("payment_status", "Payment Status", ("Status",)),
     # "Paid / Free" is the OLD label, kept as an alias. autoMap resolves a
     # spreadsheet header by key, label or alias, and the loose fallback compares
@@ -87,9 +105,9 @@ BOOKING_IMPORT_FIELDS = (
     ("discount_code", "Discount Code", ()),
     ("discount", "Discount", ()),
     ("delegate_count", "Delegate Count", ("No of Delegates",)),
-    ("attendance", "Attendance", ("Attended", "Confirmed")),
+    ("attendance", "Attendance", ("Attended", "Confirmed", "Attendance - IN?", "Attendance IN")),
     ("add_ons", "Add-Ons", ("Addons",)),
-    ("reference", "Reference", ("Payment Reference",)),
+    ("reference", "Reference", ("Payment Reference", "Ref")),
     ("notes", "Notes", ("Comments", "Remarks")),
     ("sales_executive", "Sales Executive (username/email)", ("Sales Exec", "Sales Rep", "Sales Team")),
     ("created_at", "Added Time", ("Created At", "Created Time")),
@@ -98,6 +116,8 @@ BOOKING_IMPORT_FIELDS = (
 
 class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+    # Whose "all" cell widens these rows to every booking. See RBACMixin.
+    rbac_module        = "bookings"
     filterset_class = BookEventFilter
     search_fields   = [
         "invoice_number", "event_code", "contact_name",
@@ -577,12 +597,30 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             # Map PaymentStatus string from payload to choices
             payment_status_map = {v.lower(): v for v in BookEvent.PaymentStatus.values}
             incoming_ps = d.get("PaymentStatus", "").strip().lower()
-            payment_status = payment_status_map.get(incoming_ps, BookEvent.PaymentStatus.PENDING)
+            payment_status = payment_status_map.get(
+                incoming_ps, BookEvent.PaymentStatus.PENDING)
 
-            tier_map     = {v.lower(): v for v in BookEvent.TicketTier.values}
-            pof_map      = {v.lower(): v for v in BookEvent.PaidOrFree.values}
-            ticket_tier  = tier_map.get(d.get("TicketTier", "").strip().lower(), "")
-            paid_or_free = pof_map.get(d.get("PaidOrFree",  "").strip().lower(), "")
+            # Through the shared coercion table, so this intake path and the
+            # webhook service and the importer read the same payload the same
+            # way. An unrecognised value is stored blank rather than guessed at;
+            # a website delivery is not rejected over one display field.
+            from accounts.booking_coercion import coerce as _coerce_booking
+
+            ticket_tier  = _coerce_booking("ticket_tier", d.get("TicketTier", ""))[0] or ""
+            paid_or_free = _coerce_booking("paid_or_free", d.get("PaidOrFree", ""))[0] or ""
+
+            # Omitted from create() when the payload states no currency, so the
+            # model's own declared default applies rather than this endpoint
+            # asserting USD on the payload's behalf. `d.get("Currency", "USD")`
+            # also read an unrecognised spelling as USD.
+            from accounts.booking_coercion import UNSET as _UNSET
+            _currency, _currency_err = _coerce_booking("currency", d.get("Currency"))
+            currency_kwarg = (
+                {} if (_currency_err or _currency is _UNSET or not _currency)
+                else {"currency": _currency}
+            )
+            if _currency_err:
+                logger.warning("Website intake %s: %s", invoice_number, _currency_err)
 
             with transaction.atomic():
                 invoice = BookEvent.objects.create(
@@ -598,7 +636,7 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                     tax_amount             = d.get("TaxAmount"),
                     total_amount           = d.get("TotalAmount"),
                     add_ons_total_amount   = d.get("AddOnsTotalAmount"),
-                    currency               = d.get("Currency", "USD"),
+                    **currency_kwarg,
                     payment_status         = payment_status,
                     ticket_tier            = ticket_tier,
                     paid_or_free           = paid_or_free,
@@ -617,8 +655,11 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                     if BookDelegate.objects.filter(invoice=invoice, email=email).exists():
                         skipped += 1
                         continue
-                    d_tier = tier_map.get(dp.get("TicketTier", "").strip().lower(), "") or None
-                    d_pof  = pof_map.get(dp.get("PaidOrFree",  "").strip().lower(), "") or None
+                    # `or None` because both are nullable OVERRIDE columns and
+                    # null is what "inherit the invoice" means; "" would shadow
+                    # the invoice with a blank.
+                    d_tier = _coerce_booking("ticket_tier", dp.get("TicketTier", ""))[0] or None
+                    d_pof  = _coerce_booking("paid_or_free", dp.get("PaidOrFree", ""))[0] or None
                     delegate = BookDelegate.objects.create(
                         invoice              = invoice,
                         event_code           = event_code,
@@ -717,55 +758,134 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         """
         POST /api/invoices/bulk_import/
         Bulk-insert up to 500 BookEvent rows per call.
-        Body: { rows: [...], duplicate_strategy: "skip"|"upsert", batch_number: int }
+        Body: {
+            rows: [...],
+            duplicate_strategy: "skip"|"upsert",
+            batch_number: int,
+            dry_run: bool,               # count, report, write NOTHING
+            import_batch_id: uuid,       # one value for the whole import run
+        }
 
         Accepted columns are BOOKING_IMPORT_FIELDS, published by import_schema
         above. A test asserts the two agree — see tests_import_schema.py.
+
+        HOW VALUES ARE READ
+        Every constrained column goes through accounts/booking_coercion, the one
+        typed table shared by all six booking write paths. This endpoint used to
+        carry its own five lookups plus a bare `except Exception` per numeric
+        field, and coerced a value it did not recognise into a blank, a default,
+        or whatever was already stored. That is what lost seven columns of the
+        26 August master import without reporting a single error.
+
+        A cell that has content and cannot be read now FAILS ITS ROW, naming the
+        column and the value. Nothing partial is written for that row.
         """
         rows               = request.data.get("rows", [])
         strategy           = request.data.get("duplicate_strategy", "skip")
         batch_number       = request.data.get("batch_number", 1)
+        dry_run            = bool(request.data.get("dry_run"))
 
         if not rows:
             return Response({"success": False, "detail": "No rows provided."}, status=400)
 
-        # ── helpers ───────────────────────────────────────────────────────────
-        DATE_FMTS = ["%d %b %Y", "%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y",
-                     "%d-%b-%Y", "%d %B %Y"]
+        from accounts.booking_coercion import UNSET, coerce_row, column_report
 
-        def _parse_date(val):
-            if not val:
-                return None
-            s = str(val).strip()
-            for fmt in DATE_FMTS:
-                try:
-                    return datetime.strptime(s, fmt).date()
-                except ValueError:
-                    continue
-            return None
+        # ── Dry run ───────────────────────────────────────────────────────────
+        # Answered from the rows alone, before any of the machinery below is set
+        # up, so a preview cannot write and cannot need a transaction to prove it
+        # did not. On the 26 August file this would have read
+        #   Payable / Free — 11,210 of 15,180 values not recognised
+        # while the import could still be abandoned.
+        if dry_run:
+            per_row_errors = []
+            for i, row in enumerate(rows):
+                _, errs = coerce_row(row)
+                if errs:
+                    per_row_errors.append({
+                        "row_index":      i,
+                        "invoice_number": str(row.get("invoice_number") or "").strip(),
+                        "messages":       errs,
+                    })
+            return Response({
+                "success":      True,
+                "dry_run":      True,
+                "rows":         len(rows),
+                "columns":      column_report(rows),
+                "rows_with_errors": len(per_row_errors),
+                "errors":       per_row_errors[:50],
+            })
+
+        # ── Batch identifier ──────────────────────────────────────────────────
+        # WHY: the browser import stamped nothing and wrote no audit record,
+        # unlike load_zoho_export which does both. Nothing in the database marked
+        # a row as belonging to the 26 August import, and the invoice timestamps
+        # could not stand in for it because the importer BACKDATES them from an
+        # Added Time column. Scoping the repair was therefore guesswork over a
+        # table of 11,288 invoices.
+        #
+        # The client sends ONE id for the whole run so every chunk of a 20,000-row
+        # file shares it; a call that arrives without one gets its own, which is
+        # still better than nothing and is returned so the caller can reuse it.
+        import uuid as _uuid
+        raw_batch_id = str(request.data.get("import_batch_id") or "").strip()
+        try:
+            batch_id = _uuid.UUID(raw_batch_id) if raw_batch_id else _uuid.uuid4()
+        except ValueError:
+            return Response(
+                {"success": False, "detail": f"import_batch_id {raw_batch_id!r} is not a UUID."},
+                status=400,
+            )
+
+        # ── helpers ───────────────────────────────────────────────────────────
+        # Dates go through accounts/import_common.parse_import_date via the
+        # coercion table. The six-format _parse_date that used to live here
+        # returned None on failure, so a column of unreadable dates was
+        # indistinguishable from a column of blanks.
 
         def _clean(d, key, default=""):
             return str(d.get(key) or default).strip()
 
-        def _delegate_fields(row, ev_code):
+        # The six person-level columns, paired [row key, the column on the
+        # delegate that carries it]. Each one is stored BOTH on the invoice and
+        # as a per-delegate override that shadows it at read time; every
+        # serializer resolves them as `delegate_x or invoice.x`.
+        #
+        # WHY THIS PAIRING IS THE WHOLE FIX
+        # The import file is ONE ROW PER DELEGATE. These six values were written
+        # on the INVOICE only, and the importer never wrote the matching
+        # per-delegate column even though all six exist on the model. So wherever
+        # delegates on one invoice differed, a single row's value was applied to
+        # everybody — and which row won depended on the duplicate strategy and on
+        # the order the rows sat in the file, which is why the result read as
+        # random. On the 26 August file that flattened 903 invoices carrying a mix
+        # of Free and Payable, 868 carrying more than one Booking Code (which
+        # drives revenue classification), and 1,160 carrying two Payment Types.
+        #
+        # This mirrors what the booking modal already does in the browser — see
+        # OVERRIDE_FIELDS and splitPersonLevel in frontend/src/api/bookings.js.
+        # The value goes on the PERSON, and the invoice is kept in step by
+        # _reconcile_invoice below whenever every delegate on it agrees.
+        PERSON_LEVEL = (
+            ("paid_or_free",   "delegate_paid_or_free"),
+            ("payment_status", "delegate_payment_status"),
+            ("payment_type",   "delegate_payment_type"),
+            ("payment_date",   "delegate_payment_date"),
+            ("ticket_tier",    "delegate_ticket_tier"),
+            ("request_date",   "delegate_request_date"),
+            ("invoice_date",   "delegate_invoice_date"),
+        )
+
+        def _delegate_fields(row, ev_code, coerced):
+            """
+            The delegate row to write. `coerced` is this row's already-validated
+            values from the shared coercion table, so nothing is re-parsed here
+            and the delegate and the invoice cannot read the same cell two
+            different ways.
+            """
             name_raw = _clean(row, "contact_name")
             parts    = name_raw.split(" ", 1) if name_raw else []
-            
-            try:
-                d_discount = Decimal(str(row.get("discount") or "0.00").strip() or "0.00")
-            except Exception:
-                d_discount = Decimal("0.00")
 
-            attendance_raw = _clean(row, "attendance")
-            attendance_normalized = "Pending"
-            if attendance_raw.lower() in ("yes", "true", "1", "confirmed"):
-                attendance_normalized = "Confirmed"
-            elif attendance_raw.lower() in ("no-show", "noshow"):
-                attendance_normalized = "No-show"
-            elif attendance_raw.lower() == "cancelled":
-                attendance_normalized = "Cancelled"
-
-            return dict(
+            fields = dict(
                 event_code=ev_code,
                 first_name=parts[0] if parts else "",
                 last_name=parts[1] if len(parts) > 1 else "",
@@ -774,11 +894,27 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                 company_name_raw=_clean(row, "company_name"),
                 position=_clean(row, "position"),
                 notes=_clean(row, "notes"),
-                discount=d_discount,
                 add_ons=_clean(row, "add_ons"),
                 reference=_clean(row, "reference"),
-                attendance=attendance_normalized,
+                import_batch_id=batch_id,
             )
+            for key in ("discount", "attendance", "edition"):
+                if key in coerced:
+                    fields[key] = coerced[key]
+            # booking_code is per delegate on the model for exactly this reason:
+            # a Speaker and a Group Pass on one invoice is a real combination and
+            # BookEvent has one column to describe all of them.
+            if _clean(row, "booking_code"):
+                fields["booking_code"] = _clean(row, "booking_code")
+            # The file's Delegate Count is the per-person 0/1 flag the Bookings
+            # table shows, not the invoice's total; see the note in
+            # accounts/booking_coercion.py.
+            if "delegate_count" in coerced:
+                fields["delegate_count"] = coerced["delegate_count"]
+            for row_key, column in PERSON_LEVEL:
+                if row_key in coerced and coerced[row_key] not in ("", None):
+                    fields[column] = coerced[row_key]
+            return fields
 
         def _safe_create_delegate(book_event, fields):
             """
@@ -798,7 +934,7 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                 with transaction.atomic():
                     return BookDelegate.objects.create(invoice=book_event, **fields)
 
-        def _save_delegate(book_event, row, ev_code, nth=1):
+        def _save_delegate(book_event, row, ev_code, coerced, nth=1):
             """
             Save a delegate row.
             - nth=1 (first time this invoice+email appears in the batch):
@@ -809,7 +945,7 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                 or two TBA rows with tba@turboden.com).
             """
             from book_delegate.models import BookDelegate
-            fields = _delegate_fields(row, ev_code)
+            fields = _delegate_fields(row, ev_code, coerced)
             if nth > 1:
                 # Different person sharing an email — must use placeholder to satisfy
                 # the unique_together (invoice, email) constraint.
@@ -821,25 +957,124 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             email    = fields["email"]
             delegate = BookDelegate.objects.filter(invoice=book_event, email=email).first()
             if delegate:
+                # `not in ("", None)`, NOT a plain truth test. The old `if v:`
+                # dropped every falsey value on the update path, so a Delegate
+                # Count of 0 and a discount of 0 could not be imported onto an
+                # existing delegate at all — the same class of defect as the
+                # max(1, ...) floor, one layer down.
                 for k, v in fields.items():
-                    if v:
+                    if v not in ("", None):
                         setattr(delegate, k, v)
                 with transaction.atomic():
                     delegate.save()
             else:
                 _safe_create_delegate(book_event, fields)
 
-        ps_map   = {v.lower(): v for v in BookEvent.PaymentStatus.values}
-        tier_map = {v.lower(): v for v in BookEvent.TicketTier.values}
-        pof_map  = {v.lower(): v for v in BookEvent.PaidOrFree.values}
-        pt_map   = {v.lower(): v for v in BookEvent.PaymentType.values}
-        cur_map  = {v.lower(): v for v in BookEvent.Currency.values}
+        def _reconcile_invoice(invoice_number):
+            """
+            Push the delegates' AGREED person-level values back onto the invoice,
+            and set the invoice's delegate_count from the rows that exist.
+
+            WHY BOTH HALVES ARE NEEDED
+            The seven columns in PERSON_LEVEL are written on the person, which is
+            what the file actually states. But the invoice's own columns are what
+            the dashboards, the period window and sync/bookings_sync.py read, so
+            leaving them stale would make the same booking read two different ways
+            depending on which report you opened. Where every delegate on an
+            invoice agrees — the normal case — the value belongs on the invoice
+            and the overrides are cleared; an override is then only ever carrying
+            a genuine per-delegate difference, which is what makes the 903 mixed
+            invoices representable at all.
+
+            Reads EVERY delegate on the invoice from the database rather than only
+            this batch's rows, so an invoice whose rows straddle two 500-row
+            chunks still settles correctly once the last chunk lands. Idempotent:
+            running it again over unchanged rows changes nothing, which is the
+            test that the repair and the fix are both real.
+            """
+            from book_delegate.models import BookDelegate
+            invoice = BookEvent.objects.filter(invoice_number=invoice_number).first()
+            if invoice is None:
+                return
+            columns = [c for _, c in PERSON_LEVEL] + ["booking_code", "discount", "attendance"]
+            delegates = list(
+                BookDelegate.objects.filter(invoice=invoice)
+                .only("id", "first_name", "last_name", "email", "phone_number", *columns))
+            if not delegates:
+                return
+
+            invoice_updates = {}
+            clear_on = {}
+            for row_key, column in PERSON_LEVEL:
+                values = {getattr(d, column) for d in delegates}
+                if len(values) == 1:
+                    agreed = next(iter(values))
+                    if agreed not in ("", None):
+                        invoice_updates[row_key] = agreed
+                        clear_on[column] = None
+
+            # booking_code, discount and attendance are the three columns the
+            # delegate holds DIRECTLY rather than as a nullable override — the
+            # delegate's own column is the value every serializer reads, and the
+            # invoice carries a copy for the invoice-level reads. So they are
+            # pushed up when the delegates agree and NEVER cleared: clearing them
+            # would delete the authoritative value rather than an override.
+            #
+            # Booking Code earns the care. It drives revenue classification,
+            # Speaker against Delegate against SpEx (book_event/views.py:195,
+            # config/views.py:244), and 868 invoices in the 26 August file carry
+            # more than one code across their rows. Under the old invoice-only
+            # write, 978 rows had their code replaced by another row's.
+            for column in ("booking_code", "discount", "attendance"):
+                stated = {getattr(d, column) for d in delegates}
+                stated.discard(None)
+                stated.discard("")
+                if len(stated) == 1:
+                    invoice_updates[column] = next(iter(stated))
+
+            # The invoice's delegate_count means "how many delegates are on this
+            # invoice" and is derived, never imported; the file's Delegate Count
+            # column is the per-person 0/1 flag. This is the same rule the website
+            # intake has always applied (webhooks/services.py).
+            invoice_updates["delegate_count"] = len(delegates)
+
+            # The invoice's contact summary follows the FIRST delegate, which is
+            # what the website intake has always done. The upsert path used to
+            # assign it from every row in turn, so on an invoice with four
+            # delegates the invoice's Delegate Name was whichever row the file
+            # happened to list last — the same row-order dependency as the seven
+            # columns above, in the one place a single value is genuinely correct.
+            first = min(delegates, key=lambda d: d.id)
+            if first.full_name.strip():
+                invoice_updates["contact_name"] = first.full_name
+            if first.email:
+                invoice_updates["contact_email"] = first.email
+            if first.phone_number:
+                invoice_updates["contact_phone"] = first.phone_number
+
+            if clear_on:
+                # updated_at is stamped explicitly: a queryset .update() does not
+                # run save(), so an auto_now column does not move on its own, and
+                # dataapi's delta sync reads book_delegates.updated_at to decide
+                # what changed. Same rule as book_event/serializers.py.
+                from django.utils import timezone as _tz
+                BookDelegate.objects.filter(invoice=invoice).update(
+                    **clear_on, updated_at=_tz.now(),
+                )
+            for field_name, value in invoice_updates.items():
+                setattr(invoice, field_name, value)
+            invoice.save(update_fields=list(invoice_updates) + ["updated_at"])
 
         inserted       = 0
         skipped        = 0
         errors         = []
         skipped_rows   = []
         auto_inv_rows  = []
+        # Invoices this call touched, reconciled once at the end rather than per
+        # row: an invoice with four delegate rows would otherwise be read back and
+        # rewritten four times, and the answer is only correct once its last row
+        # has landed anyway.
+        touched_invoices = []
         # Tracks how many times each (invoice, email) pair appears in THIS batch.
         # nth > 1 means a different person sharing the same email on the same invoice.
         from collections import defaultdict
@@ -869,78 +1104,61 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
             # aborts the outer PostgreSQL transaction for subsequent rows.
             try:
                 with transaction.atomic():
-                    from decimal import Decimal
                     from django.utils import timezone
 
-                    # Parse new fields for the row.
-                    #
-                    # edition goes through parse_edition, which BOUNDS it to a
-                    # plausible year. Previously this was a bare int(), and since
-                    # `edition` is an IntegerField an Excel serial like 45678
-                    # raised nothing and was stored verbatim as a 45,678th
-                    # edition. Out-of-range now ERRORS the row rather than
-                    # writing nonsense — same rule the loader applies.
-                    from accounts.import_common import parse_edition
-
-                    edition_val, _edition_err = parse_edition(row.get("edition"))
-                    if _edition_err:
-                        raise ValueError(f"edition: {_edition_err}")
-
-                    try:
-                        discount_val = Decimal(str(row.get("discount") or "0.00").strip() or "0.00")
-                    except Exception:
-                        discount_val = Decimal("0.00")
-
-                    attendance_raw = _clean(row, "attendance")
-                    attendance_normalized = "Pending"
-                    if attendance_raw.lower() in ("yes", "true", "1", "confirmed"):
-                        attendance_normalized = "Confirmed"
-                    elif attendance_raw.lower() in ("no-show", "noshow"):
-                        attendance_normalized = "No-show"
-                    elif attendance_raw.lower() == "cancelled":
-                        attendance_normalized = "Cancelled"
+                    # ── Every constrained column, once, through the shared table ──
+                    # A cell with content that cannot be read raises here and the
+                    # row writes NOTHING. Previously each of these was its own
+                    # inline rule with its own silent fallback: a bare int() for
+                    # edition, a bare Decimal() in a bare except for discount, a
+                    # four-branch if/elif for attendance ending in Pending, and
+                    # five .get(..., default) lookups whose default was either a
+                    # blank or the stored value. Row order decided the outcome.
+                    coerced, row_errors = coerce_row(row)
+                    if row_errors:
+                        raise ValueError("; ".join(row_errors))
 
                     created_at_val = None
-                    if row.get("created_at"):
-                        parsed_dt = _parse_date(row.get("created_at"))
-                        if parsed_dt:
-                            created_at_val = timezone.make_aware(datetime.combine(parsed_dt, datetime.min.time()))
+                    if "created_at" in coerced and coerced["created_at"]:
+                        created_at_val = timezone.make_aware(
+                            datetime.combine(coerced["created_at"], datetime.min.time()))
 
                     existing = BookEvent.objects.filter(invoice_number=inv_no).first()
 
                     if existing:
-                        # Upsert: update BookEvent fields when strategy requests it
+                        # Upsert: update BookEvent fields when strategy requests it.
+                        #
+                        # The seven PERSON-LEVEL columns are deliberately ABSENT
+                        # from this block now. They are written on the delegate by
+                        # _save_delegate and reach the invoice through
+                        # _reconcile_invoice, which only puts a value there when
+                        # every delegate on the invoice agrees. Writing them here
+                        # is what applied one row's value to everybody, and doing
+                        # it on the UPSERT path is what made the outcome depend on
+                        # whether the invoice already existed.
                         if strategy == "upsert":
                             existing.event_code             = _clean(row, "event_code") or existing.event_code
                             existing.event_name             = _clean(row, "event_name") or existing.event_name
-                            existing.booking_code           = _clean(row, "booking_code") or existing.booking_code
                             existing.company_name           = _clean(row, "company_name") or existing.company_name
-                            existing.contact_name           = _clean(row, "contact_name") or existing.contact_name
-                            existing.contact_email          = _clean(row, "contact_email").lower() or existing.contact_email
-                            existing.contact_phone          = _clean(row, "contact_phone") or existing.contact_phone
+                            # contact_name / contact_email / contact_phone are
+                            # NOT assigned here. They are the invoice's summary of
+                            # its FIRST delegate and _reconcile_invoice sets them
+                            # from the rows; assigning them per row meant the last
+                            # row in the file won.
                             existing.accounts_contact_email = _clean(row, "accounts_contact_email") or existing.accounts_contact_email
-                            existing.payment_status         = ps_map.get(_clean(row, "payment_status").lower(), existing.payment_status)
-                            existing.paid_or_free           = pof_map.get(_clean(row, "paid_or_free").lower(), existing.paid_or_free)
-                            existing.payment_type           = pt_map.get(_clean(row, "payment_type").lower(), existing.payment_type)
-                            existing.ticket_tier            = tier_map.get(_clean(row, "ticket_tier").lower(), existing.ticket_tier)
                             existing.discount_code          = _clean(row, "discount_code") or existing.discount_code
                             existing.add_ons                = _clean(row, "add_ons") or existing.add_ons
                             existing.reference              = _clean(row, "reference") or existing.reference
-                            existing.edition                = edition_val or existing.edition
-                            existing.discount               = discount_val or existing.discount
-                            existing.attendance             = attendance_normalized or existing.attendance
+                            if "edition" in coerced:
+                                existing.edition = coerced["edition"]
                             if created_at_val:
                                 existing.created_at = created_at_val
-                            pd = _parse_date(row.get("payment_date"))
-                            if pd: existing.payment_date = pd
-                            rd = _parse_date(row.get("request_date"))
-                            if rd: existing.request_date = rd
-                            id_ = _parse_date(row.get("invoice_date"))
-                            if id_: existing.invoice_date = id_
+                            existing.import_batch_id = batch_id
                             existing.save()
 
                         # Always save delegate — never skip regardless of strategy
-                        _save_delegate(existing, row, event_code_val, nth=_nth)
+                        _save_delegate(existing, row, event_code_val, coerced, nth=_nth)
+                        touched_invoices.append(inv_no)
 
                     else:
                         # New BookEvent
@@ -956,41 +1174,41 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
                         # reported in the response, not left as a silent NULL.
                         se_name = _clean(row, "sales_executive")
                         sales_exec, _ = _resolver.resolve(se_name)
-                        try:
-                            dc = max(1, int(row.get("delegate_count") or 1))
-                        except (ValueError, TypeError):
-                            dc = 1
 
+                        # The person-level columns are NOT passed here, for the
+                        # reason given on the upsert path above; they are written
+                        # on the delegate and reach the invoice through
+                        # _reconcile_invoice. Nor is delegate_count: the file's
+                        # column is a per-person 0/1 flag and the invoice's is a
+                        # total, so the invoice's is derived from the rows. The old
+                        # max(1, int(...)) rewrote 4,636 zeros as ones.
+                        #
+                        # currency is omitted when the file did not state it, so
+                        # the model's own declared default applies rather than
+                        # this endpoint asserting USD on the file's behalf; a
+                        # currency the file DID state and we cannot read now
+                        # errors the row instead of being read as USD.
                         book_event = BookEvent.objects.create(
                             invoice_number         = inv_no,
                             event_code             = event_code_val,
                             event_name             = _clean(row, "event_name"),
-                            booking_code           = _clean(row, "booking_code"),
-                            request_date           = _parse_date(row.get("request_date")),
-                            invoice_date           = _parse_date(row.get("invoice_date")),
                             company_name           = _clean(row, "company_name"),
                             contact_name           = _clean(row, "contact_name"),
                             contact_email          = _clean(row, "contact_email").lower(),
                             contact_phone          = _clean(row, "contact_phone"),
                             accounts_contact_email = _clean(row, "accounts_contact_email"),
-                            payment_status         = ps_map.get(_clean(row, "payment_status").lower(), BookEvent.PaymentStatus.PENDING),
-                            paid_or_free           = pof_map.get(_clean(row, "paid_or_free").lower(), ""),
-                            payment_date           = _parse_date(row.get("payment_date")),
-                            payment_type           = pt_map.get(_clean(row, "payment_type").lower(), ""),
-                            ticket_tier            = tier_map.get(_clean(row, "ticket_tier").lower(), ""),
-                            currency               = cur_map.get(_clean(row, "currency").lower(), BookEvent.Currency.USD),
                             discount_code          = _clean(row, "discount_code"),
                             add_ons                = _clean(row, "add_ons"),
                             reference              = _clean(row, "reference"),
-                            delegate_count         = dc,
                             sales_executive        = sales_exec,
                             source                 = BookEvent.Source.MANUAL,
-                            edition                = edition_val,
-                            discount               = discount_val,
-                            attendance             = attendance_normalized,
+                            import_batch_id        = batch_id,
+                            **({"currency": coerced["currency"]} if "currency" in coerced else {}),
+                            **({"edition": coerced["edition"]} if "edition" in coerced else {}),
                             **(dict(created_at=created_at_val) if created_at_val else {}),
                         )
-                        _save_delegate(book_event, row, event_code_val, nth=_nth)
+                        _save_delegate(book_event, row, event_code_val, coerced, nth=_nth)
+                        touched_invoices.append(inv_no)
 
                         if auto_generated_inv:
                             se_display = _clean(row, "sales_executive") or (
@@ -1007,6 +1225,40 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
 
             except Exception as exc:
                 errors.append({"row_index": i, "invoice_number": inv_no, "message": str(exc)})
+
+        # ── Keep every touched invoice in step with its delegates ──────────────
+        # dict.fromkeys rather than set(): an invoice is reconciled once, in the
+        # order it first appeared, so a failure is reported against a predictable
+        # row rather than whichever one the hash order happened to reach first.
+        for _inv in dict.fromkeys(touched_invoices):
+            try:
+                with transaction.atomic():
+                    _reconcile_invoice(_inv)
+            except Exception as exc:
+                errors.append({
+                    "row_index": None, "invoice_number": _inv,
+                    "message": f"delegates saved, but the invoice could not be "
+                               f"brought into step with them: {exc}",
+                })
+
+        # ── One audit record per call ─────────────────────────────────────────
+        # WHY: this endpoint wrote none, so an import that lost seven columns left
+        # nothing behind saying who ran it, when, or over how many rows. The Zoho
+        # loader has always written one. Best-effort by design — a failure to log
+        # must not fail rows that are already committed — but the batch id is
+        # returned either way, so the rows remain findable.
+        try:
+            from accounts.audit import log_import_batch
+            log_import_batch(
+                user=request.user, module_label="BOOKINGS", batch_id=batch_id,
+                counts={
+                    "rows": len(rows), "inserted": inserted,
+                    "skipped_duplicates": skipped, "errors": len(errors),
+                },
+                detail=f"batch {batch_number}, duplicate strategy {strategy}",
+            )
+        except Exception:
+            logger.warning("bulk_import: audit record failed for batch %s", batch_id, exc_info=True)
 
         # Send alert email for any auto-generated invoice numbers.
         #
@@ -1050,6 +1302,11 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         return Response({
             "success":            len(errors) == 0,
             "batch_number":       batch_number,
+            # Returned so the caller can reuse it for the remaining chunks, and so
+            # every row this import wrote can be listed from the id alone:
+            #   BookEvent.objects.filter(import_batch_id=...)
+            #   BookDelegate.objects.filter(import_batch_id=...)
+            "import_batch_id":    str(batch_id),
             "inserted":           inserted,
             "skipped_duplicates": skipped,
             # Every name on a booking is expected to correspond to a real

@@ -66,11 +66,11 @@ export const BOOKING_CODES = [
 
 /**
  * Which delegate on the invoice this row is. Offered as a picker because the
- * column is an ordinal, not free text — every row in the database currently
- * holds 1. A stored value outside this range is appended to its own dropdown
- * rather than dropped, exactly as with BOOKING_CODES.
+ * column is an ordinal, not free text. The agreed set is 0 and 1 only; unlike
+ * BOOKING_CODES, a stored value outside it is NOT appended to the dropdown, so
+ * the picker can never offer a third option.
  */
-export const DELEGATE_NUMBERS = [1, 2, 3, 4];
+export const DELEGATE_NUMBERS = [0, 1];
 export const PAYMENT_TYPES = ['Stripe', 'Bank'];
 export const TICKET_TIERS = ['SEB', 'EB', 'Regular'];
 export const ATTENDANCE = ['Pending', 'Confirmed', 'No-show', 'Cancelled'];
@@ -124,8 +124,31 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // to tick, and saving any team's permissions deleted whatever google_sync row it
 // had, so the page was unreachable for everyone but the all-access Admin team and
 // no amount of clicking in the UI could change that.
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings' }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events' }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance' }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review' }, { k: 'proposal_submission', l: 'Proposal Submission' }];
-export const PERM_ACTIONS = ['view', 'create', 'update', 'delete'];
+//
+// `adminOnly` marks a row the grid must SHOW but must not let anyone tick. The
+// key has to stay here — the list mirrors the backend's CRM_MODULES and every
+// save rebuilds the team's rows from it, so dropping 'performance' would revoke
+// it everywhere on the next save of any team — while the thing it once gated,
+// Event Performance, is now admin-only on both sides (IsAdminRole in
+// backend/event_performance/views.py, `adminOnly` in lib/nav.js). Leaving the
+// row tickable would put a switch in front of an administrator that grants a
+// module no page reads any more, which is worse than showing it locked.
+//
+// `scoped` marks a module whose ROWS are filtered per person, and therefore the
+// only kind of module where the "All records" cell means anything. It mirrors
+// SCOPED_MODULES in backend/accounts/models.py. The grid greys the cell out on
+// every other module rather than offering a tick that saves fine and changes
+// nothing, which is the worse failure: an administrator would read it as
+// "shared" and never find out otherwise.
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }];
+// 'all' is the odd one and is deliberately last. The first four answer "does
+// this module open"; 'all' answers "whose rows are in it" — own rows, or every
+// row. It rides in the same list because every matrix helper, every delta and
+// the grid itself walk this array, so it reaches the whole stack without a
+// parallel code path. MUST stay in step with PERM_ACTIONS in
+// backend/accounts/models.py, which is what names the can_* columns.
+export const PERM_ACTIONS = ['view', 'create', 'update', 'delete', 'all'];
+export const PERM_ACTION_LABEL = { view: 'view', create: 'create', update: 'update', delete: 'delete', all: 'All records' };
 export const PAGE_SIZE = 1000;
 export const ALL_MODULES = CRM_MODULES.map((m) => m.k);
 

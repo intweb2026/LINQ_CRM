@@ -9,16 +9,18 @@ reaches exactly these four list/detail endpoints and nothing else.
 """
 import logging
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 
 from accounts.permissions import IsHPAccount
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
-from dataapi.models import DataApiKey
+from dataapi.models import DATA_API_SCOPES, DataApiKey, DeletedRecord
 from events.models import Event
 from ticket_central.models import Ticket
 
@@ -27,6 +29,7 @@ from .pagination import DataApiCursorPagination
 from .serializers import (
     DataApiBookingSerializer,
     DataApiDelegateSerializer,
+    DataApiDeletionSerializer,
     DataApiEventSerializer,
     DataApiKeyCreateSerializer,
     DataApiKeyListSerializer,
@@ -94,7 +97,17 @@ class DataApiBaseViewSet(viewsets.ReadOnlyModelViewSet):
         if not value:
             return qs
         self._applied_filters.append(f"{field}[{lookup}]={value!r}")
-        return qs.filter(**{f"{field}__{lookup}": value})
+        try:
+            return qs.filter(**{f"{field}__{lookup}": value})
+        except DjangoValidationError as exc:
+            # A malformed value reaches the ORM and Django raises its own
+            # ValidationError, which DRF does not recognise and answers 500.
+            # That matters most for the date params: `?updated_since=` carrying
+            # an unencoded `+00:00` arrives with the plus decoded to a space,
+            # which is precisely the shape that fails here. Re-raised as DRF's
+            # ValidationError it is a 400 naming the parameter, so the consumer
+            # sees a bad watermark instead of a server error.
+            raise ValidationError({param: exc.messages}) from exc
 
     def _log_request(self, request, rows):
         """
@@ -154,7 +167,15 @@ class DelegateDataViewSet(DataApiBaseViewSet):
     serializer_class = DataApiDelegateSerializer
 
     def _base_queryset(self):
-        qs = BookDelegate.objects.select_related("invoice", "company").order_by("pk")
+        # invoice__sales_executive is joined here and not left to the serializer:
+        # DataApiDelegateSerializer reports the invoice's sales executive by
+        # name, and without the join that is one extra query per delegate on a
+        # 500-row page. See test_delegate_page_query_count_is_independent_of_row_count.
+        qs = (
+            BookDelegate.objects
+            .select_related("invoice", "invoice__sales_executive", "company")
+            .order_by("pk")
+        )
         qs = self._apply_param_filter(qs, "event_code", "event_code")
         qs = self._apply_param_filter(qs, "updated_since", "updated_at", "gte")
         return qs
@@ -185,6 +206,56 @@ class TicketDataViewSet(DataApiBaseViewSet):
         # method. Nothing below it used the module, so it was harmless; routing
         # it through the helper removes the shadow as a side effect.
         qs = self._apply_param_filter(qs, "status", "status")
+        return qs
+
+
+class DeletionDataViewSet(DataApiBaseViewSet):
+    """
+    GET /api/data/deletions/?resource=delegates&deleted_since=<iso8601>
+
+    The other half of ?updated_since=. Those endpoints return rows that still
+    exist, so a consumer polling them cannot tell a deleted record from one
+    that simply has not changed; it keeps the copy it already wrote and its
+    row count drifts above the CRM's for good. This returns the records that
+    went, newest watermark onwards, so the same poll that upserts changes can
+    delete removals.
+
+    Pair the two watermarks: pass the SAME timestamp to ?updated_since= and
+    ?deleted_since=, and advance both only after the write succeeds.
+
+    SCOPED BY THE RESOURCE ASKED ABOUT, not by a scope of its own. "deletions"
+    is deliberately absent from DATA_API_SCOPES, so a key restricted to
+    ["delegates"] reads delegate tombstones and no others, and every key
+    already deployed keeps working without being re-issued.
+    """
+    resource_name = "deletions"
+    serializer_class = DataApiDeletionSerializer
+
+    def get_queryset(self):
+        self._applied_filters = []
+        resource = self.request.query_params.get("resource")
+
+        # An unrecognised resource is a 400, not an empty page. Zero rows here
+        # reads as "nothing was deleted", which is the one answer a typo must
+        # never be allowed to give a consumer that acts on it.
+        if resource and resource not in DATA_API_SCOPES:
+            raise ValidationError(
+                f"Unknown resource '{resource}'. One of: {', '.join(DATA_API_SCOPES)}."
+            )
+
+        api_key = getattr(self.request.user, "api_key", None)
+        # No `resource` means every tombstone, so it takes an unrestricted key.
+        # has_scope() is True for an empty scopes list and False for a
+        # restricted one that cannot name "deletions", which is exactly that.
+        if api_key and not api_key.has_scope(resource or self.resource_name):
+            raise PermissionDenied(
+                "This API key does not have access to deletions for "
+                f"'{resource or 'all resources'}'."
+            )
+
+        qs = DeletedRecord.objects.order_by("pk")
+        qs = self._apply_param_filter(qs, "resource", "resource")
+        qs = self._apply_param_filter(qs, "deleted_since", "deleted_at", "gte")
         return qs
 
 

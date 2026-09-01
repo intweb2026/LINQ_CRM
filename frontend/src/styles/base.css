@@ -1,3 +1,8 @@
+/* ═══════ THEME TOKENS ═══════  [theme_tokens]
+   Every custom property the app has. Change a colour, a radius, a shadow, a
+   font or anything about the dark theme here and nowhere else; the rest of
+   the CSS only ever reads var(--x). The dark overrides are the second :root
+   block further down, under html[data-theme=dark]. */
 :root{
   --t-50:#E9F6F9;--t-100:#C6E9F1;--t-200:#8FD6E4;--t-300:#54BFD4;
   --t-400:#1BA6C1;--t-500:#009CBC;--t-600:#00819D;--t-700:#00657C;
@@ -67,6 +72,9 @@ html[data-theme=dark]{
   --sh-lg:0 12px 28px -6px rgba(0,0,0,.5);
   --sh-xl:0 28px 56px -12px rgba(0,0,0,.6);
 }
+/* ═══════ RESET / SCROLLBARS / A11Y ═══════  [global_reset_scrollbar]
+   The reset, the base typography, the custom scrollbar, .sr for
+   screen-reader-only text, and .skip for the skip-to-content link. */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{font-size:14px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 body{font-family:var(--font);color:var(--text);background:var(--canvas);line-height:1.5;overflow-x:hidden;min-height:100vh;font-variant-numeric:tabular-nums;transition:background .2s,color .2s}
@@ -82,6 +90,7 @@ html[data-theme=dark] ::selection{color:#fff}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip{position:fixed;top:-60px;left:12px;z-index:200;background:var(--t-500);color:#fff;padding:9px 15px;border-radius:var(--r-md);font-size:12.5px;font-weight:650;transition:top .16s}
 .skip:focus{top:12px;text-decoration:none}
+/* ═══════ APP SHELL ═══════  [layout_app_shell] */
 /* #app's only in-flow child is #main (.rail and .top are position:fixed, out
    of flow) — a plain block #app has no border/padding between them, so
    #main's margin-top:56px (components.css) collapsed straight through #app
@@ -94,7 +103,10 @@ html[data-theme=dark] ::selection{color:#fff}
    spacing inside #app instead of leaking out of it. */
 #app{display:flex;flex-direction:column}
 
-/* ═══════ SIDE RAIL ═══════ */
+/* ═══════ SIDE RAIL ═══════  [sidebar_rail]
+   The fixed left sidebar; the logo head, the nav groups and their items, the
+   badge counts, and the user block pinned at the bottom. Its width is the
+   --rail-w token, which #main and .top both read. */
 .rail{position:fixed;top:0;left:0;bottom:0;width:var(--rail-w);background:var(--rail);border-right:1px solid var(--rail-bd);z-index:80;display:flex;flex-direction:column;transition:width .22s var(--ease),transform .22s var(--ease)}
 .rail-head{position:relative;display:flex;align-items:center;gap:8px;padding:13px 10px 13px 14px;height:var(--top-h);flex-shrink:0;background:var(--surface-2);border-bottom:1px solid var(--rail-bd)}
 .rail-mark{display:flex;align-items:center;flex-shrink:0;cursor:pointer}
@@ -130,7 +142,9 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 .rail-out{width:27px;height:27px;display:grid;place-items:center;border:none;background:none;color:var(--rail-dim);border-radius:var(--r-sm);cursor:pointer;flex-shrink:0}
 .rail-out:hover{background:var(--red-bg);color:var(--red)}
 .rail-out svg{width:15px;height:15px}
-/* collapsed rail */
+/* ── collapsed rail ──  [sidebar_rail_collapsed]
+   Driven entirely by body.rail-min, so nothing here fires unless that class
+   is on <body>; the rules below only override what has to change at 62px. */
 body.rail-min{--rail-w:62px}
 body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,
 body.rail-min .rail-utx,body.rail-min .rail-out{display:none}
@@ -146,13 +160,17 @@ body.rail-min .rail-group:first-child{border-top:none;padding-top:0}
 body.rail-min .rail-bdg{position:absolute;top:2px;right:4px;font-size:8.5px;padding:0 3.5px;min-width:14px;height:14px;display:grid;place-items:center;background:var(--t-500);color:#fff;box-shadow:0 0 0 1.5px var(--rail)}
 body.rail-min .rail-user{justify-content:center;padding:6px 0}
 body.rail-min .rail-tip{display:block}
+/* ── icon tooltip ──  [sidebar_rail_tooltip]
+   Only visible while the rail is collapsed, where the labels are hidden. */
 .rail-tip{display:none;position:absolute;left:calc(100% + 11px);top:50%;transform:translateY(-50%) translateX(-3px);padding:5px 9px;background:var(--n-800);color:var(--n-0);font-size:11px;font-weight:600;border-radius:var(--r-sm);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .13s,transform .13s var(--ease);z-index:95;box-shadow:var(--sh-md)}
 html[data-theme=dark] .rail-tip{background:var(--n-100);color:var(--text)}
 .rail-tip::before{content:'';position:absolute;right:100%;top:50%;transform:translateY(-50%);border:4px solid transparent;border-right-color:var(--n-800)}
 html[data-theme=dark] .rail-tip::before{border-right-color:var(--n-100)}
 .rail-item:hover .rail-tip{opacity:1;transform:translateY(-50%) translateX(0)}
 
-/* ═══════ TOPBAR ═══════ */
+/* ═══════ TOPBAR ═══════  [topbar]
+   The fixed bar across the top of every page; the burger, the breadcrumb,
+   and the icon buttons on the right. Height is the --top-h token. */
 .top{position:fixed;top:0;left:var(--rail-w);right:0;height:var(--top-h);background:var(--surface);border-bottom:1px solid var(--border);z-index:70;display:flex;align-items:center;padding:0 18px;gap:11px;transition:left .22s var(--ease)}
 .top-burger{display:none;width:33px;height:33px;place-items:center;border:none;background:none;border-radius:var(--r-sm);cursor:pointer;color:var(--text-3)}
 .top-burger svg{width:18px;height:18px}
@@ -163,6 +181,9 @@ html[data-theme=dark] .rail-tip::before{border-right-color:var(--n-100)}
    1.8:1, so the "›" between "Pipeline" and the page name was a smudge. */
 .top-crumb .sp{color:var(--text-4);font-size:11px}
 .top-sp{flex:1}
+/* ── search trigger ──  [topbar_search_trigger]
+   A button, not an input. It opens the command palette; the real search box
+   is in there. See [command_palette] in overlays.css. */
 .top-search{display:flex;align-items:center;gap:8px;height:33px;padding:0 11px;background:var(--n-50);border:1px solid transparent;border-radius:var(--r-md);cursor:pointer;transition:all .15s;width:min(330px,34vw)}
 .top-search:hover{background:var(--surface);border-color:var(--border-s);box-shadow:var(--sh-xs)}
 .top-search svg{width:14px;height:14px;color:var(--text-4);flex-shrink:0}

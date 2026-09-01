@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
+import IdleLogout from './IdleLogout';
 import { NAV, homeFor } from '../lib/nav';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
@@ -16,7 +17,7 @@ import { plur } from '../lib/helpers';
 const titleFromSegment = (s) => s.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 export default function AppShell() {
-  const { canView, user } = useSession();
+  const { canView, user, isAdmin } = useSession();
   const toast = useToast();
   const loc = useLocation();
   const [collapsedRail, setCollapsedRail] = useState(false);
@@ -58,7 +59,7 @@ export default function AppShell() {
 
   // "/" reads as the landing page for the one render before the index route
   // redirects, so the crumb and tab title never flash a page the user is not on.
-  const seg = loc.pathname.split('/')[1] || homeFor(canView, user?.username).path.slice(1);
+  const seg = loc.pathname.split('/')[1] || homeFor(canView, user?.username, isAdmin).path.slice(1);
   // Matched on `path`, not on `id`. The two are NOT interchangeable: 'paper_review'
   // is underscored where /paper-review is hyphenated, so an id comparison never
   // matched those entries and they fell through to the fallback below — which used
@@ -102,6 +103,9 @@ export default function AppShell() {
           every navigation reads as the app being slower than it is. */}
       <main id="main"><Suspense fallback={null}><Outlet /></Suspense></main>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {/* Six-hour inactivity sign-out. Mounted HERE rather than in App.jsx so
+          it only ever runs for an authenticated session. */}
+      <IdleLogout />
     </div>
   );
 }

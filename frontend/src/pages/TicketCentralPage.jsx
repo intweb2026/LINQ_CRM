@@ -4,13 +4,15 @@ import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { TkBadge, PriBadge, Who } from '../components/Badge';
-import { fdate, fmy, nf, plur } from '../lib/helpers';
+import { fdate, ftime, fmy, nf, plur } from '../lib/helpers';
 import { TK_STATUS, TK_PRIORITY, TK_TYPES, TK_TICKET_TYPES, TK_RELATIONSHIPS } from '../lib/constants';
 import * as ticketsApi from '../api/tickets';
 import { useFetch } from '../hooks/useFetch';
 import { useBulkUpdate } from '../hooks/useBulkUpdate';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { apiErrorMessage } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 import TicketFormModal from './tickets/TicketFormModal';
@@ -22,6 +24,8 @@ const dim = (v) => (v == null || v === '' || v === '—' ? <span className="dim"
 const person = (v) => dim(v) || <Who name={v} avatar={false} />;
 const num = (v) => dim(v) || nf(v);
 const day = (v) => dim(v) || fdate(v);
+/** Added Time / Modified Time — a timestamp, so it shows the time too. */
+const stamp = (v) => dim(v) || <span className="dim">{fdate(v)} {ftime(v)}</span>;
 
 /**
  * Columns in the order Ticket Central presents them, which is the order of the
@@ -40,7 +44,10 @@ const day = (v) => dim(v) || fdate(v);
  * already loaded and DataTable says so rather than implying a full-table result.
  */
 const tkCols = () => [
-  { key: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => fdate(v) },
+  // Date AND time, the way Bookings renders the same two columns. Date alone made
+  // an edit invisible for the rest of the day it was made on, which reads as
+  // "Modified Time is not updating".
+  { key: 'created_at', serverField: 'created_at', label: 'Added Time', type: 'date', group: 'rec', serverOrdering: 'created_at', cell: (v) => stamp(v) },
   { key: 'link_url', serverField: 'link_url', label: 'Link URL', group: 'mr', cell: (v) => <ExtLink value={v} /> },
   { key: 'linkedin_keywords', serverField: 'linkedin_keywords', label: 'LinkedIn Keywords', group: 'mr' },
   { key: 'duplicate_tickets', serverField: 'duplicate_tickets', label: 'Duplicate Tickets', group: 'mr', cell: (v) => dim(v) || <span className="mono" style={{ color: 'var(--amber)' }}>{v}</span> },
@@ -62,12 +69,12 @@ const tkCols = () => [
   { key: 'complete_date_lx2', serverField: 'complete_date_lx2', label: 'Complete Date (LX2)', type: 'date', group: 'lx', cell: day },
   { key: 'dm_comments', serverField: 'dm_comments', label: 'DM Comments', group: 'dm' },
   { key: 'dm_comments_lx2', serverField: 'dm_comments_lx2', label: 'DM Comments (LX-2)', group: 'lx' },
-  { key: 'source_spreadsheet_id', label: 'Source_Spreadsheet_ID', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
-  { key: 'source_tab', label: 'Source_Tab', group: 'dm' },
-  { key: 'source_row_number', label: 'Source_Row_Number', group: 'dm', num: true, cell: num },
-  { key: 'idempotency_key', label: 'Idempotency_Key', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
-  { key: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => fdate(v) },
-  { key: 'id', label: 'ID', group: 'rec', serverOrdering: 'id', num: true, cell: (v) => <span className="mono">{v}</span> },
+  { key: 'source_spreadsheet_id', serverField: 'source_spreadsheet_id', label: 'Source_Spreadsheet_ID', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
+  { key: 'source_tab', serverField: 'source_tab', label: 'Source_Tab', group: 'dm' },
+  { key: 'source_row_number', serverField: 'source_row_number', label: 'Source_Row_Number', group: 'dm', num: true, cell: num },
+  { key: 'idempotency_key', serverField: 'idempotency_key', label: 'Idempotency_Key', group: 'dm', cell: (v) => dim(v) || <span className="mono">{v}</span> },
+  { key: 'updated_at', serverField: 'updated_at', label: 'Modified Time', type: 'date', group: 'rec', serverOrdering: 'updated_at', cell: (v) => stamp(v) },
+  { key: 'id', serverField: 'id', label: 'ID', group: 'rec', serverOrdering: 'id', num: true, cell: (v) => <span className="mono">{v}</span> },
   { key: 'assigned_mr', serverField: 'assigned_mr', label: 'Assigned MR', group: 'mr', cell: person },
   { key: 'added_user_text', serverField: 'added_user_text', label: 'Added User', group: 'rec' },
   // Off the Zoho report, so hidden by default rather than dropped — they are real
@@ -120,6 +127,7 @@ export default function TicketCentralPage() {
     refreshStats();
   }, [tableRefetch, refreshStats]);
   const bulk = useBulkUpdate('tickets', refresh);
+  const confirm = useConfirm();
   // null = closed; a row = edit that ticket; NEW = the add form. Same component
   // either way, so the two layouts cannot drift apart.
   const [formTicket, setFormTicket] = useState(null);
@@ -169,7 +177,10 @@ export default function TicketCentralPage() {
         serverCriteria={serverCriteria}
         serverParams={{ period }}
         onServerReady={keepRefetch}
-        noun="tickets" select={can('update', 'ticket_central')} infinite pageSize={1000}
+        // Selection is what the Delete button reads, so a viewer who may delete
+        // but not update must still be able to select — otherwise the button is
+        // rendered on a table that hands it nothing.
+        noun="tickets" select={can('update', 'ticket_central') || can('delete', 'ticket_central')} infinite pageSize={1000}
         defaultSort={{ key: 'created_at', dir: 'desc' }} searchPlaceholder="Search ticket, organizer, keywords…"
         groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
         hiddenDefault={HIDDEN_DEFAULT}
@@ -197,6 +208,28 @@ export default function TicketCentralPage() {
             </button>
             <button className="btn btn-sm btn-s" onClick={async () => { const n = await ticketsApi.bulkSubmit(ids); clear(); refresh(); toast(n ? plur(n, 'ticket') + ' submitted to Data Mining' : 'Only draft tickets can be submitted', n ? 'ok' : 'wn'); }}><Icon name="send" size={13} />Submit to DMD</button>
             <button className="btn btn-sm btn-s" onClick={() => toast('Exporting ' + plur(ids.length, 'ticket') + '…', 'nf')}><Icon name="download" size={13} />Export</button>
+            {/* Select one row and this is a per-ticket delete; the endpoints have
+                existed on TicketViewSet all along (destroy + bulk_delete) with
+                nothing in the UI reaching either, so a wrongly-pushed ticket
+                could only be edited, never removed. Wrapped in try/catch for the
+                reason spelled out on the Bookings delete: the response
+                interceptor only acts on 401, so a 403 would otherwise close the
+                dialog and do nothing visible. */}
+            {can('delete', 'ticket_central') ? (
+              <button className="btn btn-sm btn-d" onClick={async () => {
+                const ok = await confirm({ title: 'Delete tickets?', sub: plur(ids.length, 'ticket') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. The ticket numbers are not reissued.</p> });
+                if (!ok) return;
+                try {
+                  // The toast reports what the SERVER deleted, not how many were
+                  // asked for — those differ whenever a row is out of scope.
+                  const res = await ticketsApi.bulkRemove(ids);
+                  clear(); refresh();
+                  toast(plur(res.deleted, 'ticket') + ' deleted', 'ok');
+                } catch (err) {
+                  toast(apiErrorMessage(err, 'Could not delete those tickets.'), 'er');
+                }
+              }}><Icon name="trash" size={13} />Delete</button>
+            ) : null}
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
           </div>
         )}

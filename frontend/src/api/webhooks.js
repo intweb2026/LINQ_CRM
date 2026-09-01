@@ -30,6 +30,16 @@ function keyToFrontend(k) {
     active: k.is_active,
     calls: k.usage_count || 0,
     last_used: k.last_used_at,
+    // Which ingest endpoint the key is scoped to, and the path it posts to.
+    // ingest_path is resolved server-side from webhooks/urls.py, so no webhook
+    // path is written anywhere in this app: a key made for tickets copies a
+    // ticket URL, and a route renamed in Django needs no change here.
+    target: k.target || '',
+    ingest_path: k.ingest_path || '/api/webhooks/ingest/',
+    // Paper review form links only: the reviewer whose public form this link
+    // opens. Null on every other key. See backend/paper_review/public_form.py.
+    mre: k.mre || null,
+    mre_name: k.mre_name || null,
   };
 }
 
@@ -55,11 +65,23 @@ export function getLog(id) {
 export function toggleKey(id) {
   return http.post(`webhooks/keys/${id}/toggle/`, {}).then((r) => r.data);
 }
-export async function generateKey(name, eventCode) {
+export async function generateKey(name, eventCode, target, mre) {
   // WebhookApiKeyCreateSerializer's fields don't include `id`, so the create
   // response can't tell us which row was just made — re-fetch the list
   // (default-ordered newest-first per the model's Meta.ordering) instead.
-  await http.post('webhooks/keys/', { name, event: eventCode === 'ALL' ? '' : eventCode });
+  //
+  // An empty `target` is meaningful and must be sent as '': it is what every
+  // key issued before the column existed holds, and it means "posts to every
+  // ingest endpoint". Only a key the operator deliberately scoped is narrowed.
+  await http.post('webhooks/keys/', {
+    name,
+    event: eventCode === 'ALL' ? '' : eventCode,
+    target: target && target !== 'ALL' ? target : '',
+    // Sent only when there is one: the serializer refuses a reviewer on any
+    // destination other than the paper review form, and refuses that
+    // destination without one.
+    ...(mre ? { mre } : {}),
+  });
   const { data } = await http.get('webhooks/keys/');
   const rows = data.results || data;
   return keyToFrontend(rows[0]);

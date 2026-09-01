@@ -16,6 +16,9 @@ import {
   dateForOp, dateValueLabel, fmtISO, fmtWindow, inMonth, isCompleteDate, iso,
   monthGrid, monthLabel, monthOf, parseISO, rowDateISO, shiftMonth,
 } from './dateFilter';
+// fdate is the RENDERER, imported so the "filters on the day it displays" test
+// can assert the two halves agree instead of restating the expected day twice.
+import { fdate } from './helpers';
 
 const cond = (op, date) => ({ key: 'd', op, values: [], date });
 const exact = (date) => ({ mode: 'exact', date });
@@ -61,11 +64,16 @@ describe('condition evaluation', () => {
     expect(dateCondPasses(row('2026-08-26'), c)).toBe(false);
   });
 
-  test('Is matches a timestamp anywhere in that day, not just midnight', () => {
+  test('Is matches a timestamp anywhere in that IST day, not just midnight', () => {
+    // "That day" is the IST day, which is the day the cell renders; see
+    // rowDateISO. So the 25th runs from 18:30Z on the 24th to 18:30Z on the
+    // 25th, and both ends are asserted to the minute.
     const c = cond('Is', exact('2026-08-25'));
-    expect(dateCondPasses(row('2026-08-25T00:00:00Z'), c)).toBe(true);
-    expect(dateCondPasses(row('2026-08-25T23:59:00Z'), c)).toBe(true);
-    expect(dateCondPasses(row('2026-08-26T00:00:00Z'), c)).toBe(false);
+    expect(dateCondPasses(row('2026-08-24T18:30:00Z'), c)).toBe(true);   // 00:00 IST
+    expect(dateCondPasses(row('2026-08-25T00:00:00Z'), c)).toBe(true);   // 05:30 IST
+    expect(dateCondPasses(row('2026-08-25T18:29:00Z'), c)).toBe(true);   // 23:59 IST
+    expect(dateCondPasses(row('2026-08-24T18:29:00Z'), c)).toBe(false);  // 23:59 IST, 24th
+    expect(dateCondPasses(row('2026-08-25T18:30:00Z'), c)).toBe(false);  // 00:00 IST, 26th
   });
 
   test('Before and After are strict, so the picked day is in neither', () => {
@@ -123,18 +131,50 @@ describe('condition evaluation', () => {
 
 describe('reading a row cell', () => {
   test('the shapes a date cell arrives in', () => {
+    // A DateField's plain date is untouched: it is a zone-free calendar date
+    // that never had an instant to convert.
     expect(rowDateISO('2026-08-25')).toBe('2026-08-25');
-    expect(rowDateISO('2026-08-25T18:30:00Z')).toBe('2026-08-25');
+    // A TIMESTAMP is reduced to its IST day. 18:30Z is 00:00 IST on the 26th,
+    // which is the boundary exactly, and it is the day the cell renders.
+    expect(rowDateISO('2026-08-25T18:30:00Z')).toBe('2026-08-26');
     expect(rowDateISO(null)).toBeNull();
     expect(rowDateISO('')).toBeNull();
     expect(rowDateISO('—')).toBeNull();
   });
 
-  test('a bare timestamp is read as UTC, not as browser-local time', () => {
-    // `new Date('2026-08-25T23:30:00')` is LOCAL by the language spec, and in
-    // any timezone east of UTC that lands the row on the 26th.
-    expect(rowDateISO('2026-08-25T23:30:00')).toBe('2026-08-25');
+  test('a bare timestamp is PARSED as UTC, not as browser-local time', () => {
+    // Two separate steps, and only the second one is IST. Parsing is UTC:
+    // `new Date('2026-08-25T23:30:00')` is LOCAL by the language spec, which
+    // would make the answer depend on the viewer's machine. The DAY it is then
+    // reduced to is IST, so 23:30Z is 05:00 on the 26th.
+    expect(rowDateISO('2026-08-25T23:30:00')).toBe('2026-08-26');
+    // 00:15Z is 05:45 IST the same day, so this one does not move. Kept as the
+    // control: if IST were applied twice, or applied to the parse as well, this
+    // assertion is what fails.
     expect(rowDateISO('2026-08-25 00:15:00')).toBe('2026-08-25');
+  });
+
+  test('the IST day boundary is 18:30Z, on both sides of it', () => {
+    // THE WINDOW THAT WAS WRONG. Everything between 00:00 and 05:30 IST is a
+    // UTC day behind, and that is the 5h30m in which a row rendered one day and
+    // was returned by a filter for the day before. One minute either side of
+    // the boundary, so this fails if the offset is ever rounded to whole hours.
+    expect(rowDateISO('2026-08-25T18:29:00Z')).toBe('2026-08-25');
+    expect(rowDateISO('2026-08-25T18:30:00Z')).toBe('2026-08-26');
+    expect(rowDateISO('2026-08-25T18:31:00Z')).toBe('2026-08-26');
+    // Midnight UTC is 05:30 IST the same day, the other end of that window.
+    expect(rowDateISO('2026-08-26T00:00:00Z')).toBe('2026-08-26');
+  });
+
+  test('a row filters on the day it displays', () => {
+    // The property all of this is for, asserted against the renderer rather
+    // than restated as another expected string. fdate and rowDateISO are the
+    // two halves that used to disagree; if either one moves alone, this fails.
+    const edited = '2026-08-27T20:15:00Z';   // 01:45 IST on the 28th
+    expect(fdate(edited)).toBe('28 Aug 2026');
+    expect(rowDateISO(edited)).toBe('2026-08-28');
+    expect(dateCondPasses(row(edited), cond('Is', exact('2026-08-28')))).toBe(true);
+    expect(dateCondPasses(row(edited), cond('Is', exact('2026-08-27')))).toBe(false);
   });
 
   test('parseISO and iso round-trip a picked date without leaving UTC', () => {

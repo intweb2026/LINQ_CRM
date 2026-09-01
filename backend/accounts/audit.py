@@ -98,3 +98,45 @@ def reclaim_after_wipe(*tables):
         except Exception as exc:  # noqa: BLE001
             logger.warning("reclaim_after_wipe: %s could not be vacuumed (%s)", table, exc)
     return done
+
+
+def log_import_batch(user, module_label, batch_id, counts, detail=""):
+    """
+    Record that `user` ran an import, and under which batch identifier.
+
+    WHY THIS EXISTS
+    `load_zoho_export` stamped an import_batch_id on every row it wrote and said
+    so in its output; the browser importer stamped nothing and wrote no audit
+    record at all. So when the 26 August master import lost or flattened seven
+    columns, nothing in the database marked a row as belonging to it. The invoice
+    timestamps could not stand in either, because the importer BACKDATES
+    created_at from the file wherever an Added Time column is mapped.
+
+    Scoping a repair then meant guessing across 11,288 invoices. With this, the
+    rows an import wrote can be listed from the identifier alone:
+
+        BookEvent.objects.filter(import_batch_id=batch_id)
+        BookDelegate.objects.filter(import_batch_id=batch_id)
+
+    `user` may be anonymous — the caller is an authenticated endpoint, but a
+    management command or a test client is not, and refusing to log is worse than
+    logging without a name, so the ActionLog row is skipped and the application
+    log still gets the line.
+    """
+    summary = ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+    logger.info(
+        "IMPORT BATCH: %s into %s by %s (%s)%s",
+        batch_id, module_label,
+        getattr(user, "username", None) or "unauthenticated",
+        summary, f" — {detail}" if detail else "",
+    )
+
+    if not getattr(user, "is_authenticated", False):
+        return None
+
+    from accounts.models import ActionLog
+    return ActionLog.objects.create(
+        user=user,
+        action=f"IMPORTED {module_label}",
+        details=f"batch_id={batch_id}; {summary}" + (f"; {detail}" if detail else ""),
+    )

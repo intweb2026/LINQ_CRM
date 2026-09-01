@@ -199,9 +199,9 @@ export default function WebhookLogs() {
           { key: 'error_message', label: 'Reason', serverField: 'error_message', cell: (v) => (v
             ? <span title={v} style={{ fontSize: 11, color: 'var(--red-tx)', display: 'block', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span>
             : <span className="dim" style={{ fontSize: 11 }}>—</span>) },
-          { key: 'api_key_name', label: 'API Key', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
-          { key: 'records', label: 'Records', num: true },
-          { key: 'duration_ms', label: 'Duration', num: true, cell: (v) => v + 'ms' },
+          { key: 'api_key_name', serverField: 'api_key_name', label: 'API Key', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
+          { key: 'records', serverField: 'records', label: 'Records', num: true },
+          { key: 'duration_ms', serverField: 'duration_ms', label: 'Duration', num: true, cell: (v) => v + 'ms' },
           { key: 'retries', label: 'Retries', serverField: 'retry_count', serverOrdering: 'retry_count', num: true, cell: (v) => (v ? <b style={{ color: 'var(--red)' }}>{v}</b> : '0') },
           // Displays received_at but ORDERS BY created_at. received_at is
           // nullable and Postgres sorts NULLs first under DESC, which pinned

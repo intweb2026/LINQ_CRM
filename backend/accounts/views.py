@@ -3,14 +3,17 @@ accounts/views.py
 ──────────────────
 User management — admin only.
 """
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, logout as django_logout
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import SAFE_METHODS, IsAuthenticated
 from rest_framework.response import Response
 
-from .permissions import IsAdminRole
+from .permissions import (
+    IsAdminRole, assert_can_manage_user, assert_can_place_in_team,
+    is_super_admin, managed_team_id,
+)
 from .serializers import (
     UserListSerializer, UserWriteSerializer, AssignEventsSerializer,
     UserPermissionSerializer, team_permission_matrix,
@@ -173,6 +176,46 @@ class CustomAuthToken(ObtainAuthToken):
         })
 
 
+class LogoutView(APIView):
+    """
+    POST /api/auth/logout/ — revoke the caller's token. 204 on success.
+
+    Logging out used to be purely client-side: the browser forgot the token and
+    the row stayed valid forever, because DRF tokens carry no expiry. Anything
+    that had read that string out of localStorage — a shared machine, a stale
+    backup, a browser extension — kept full API access after the user believed
+    they had signed out. Both sign-out paths now come through here: the Topbar
+    button, and the six-hour inactivity timer in
+    frontend/src/components/IdleLogout.jsx.
+
+    ONE TOKEN PER USER. rest_framework.authtoken's model is a OneToOne, and
+    login does Token.objects.get_or_create(user=user), so this signs the user
+    out of every browser they are signed into rather than just this one. That is
+    inherent to the token model, not a choice made here; per-device revocation
+    would mean a token table with a device column (or knox), which is a
+    migration, not a view. The next login simply mints a fresh key.
+
+    Idempotent from the caller's point of view: filter().delete() on an already
+    revoked token deletes nothing and still answers 204. A caller with no valid
+    credential never reaches the body — IsAuthenticated answers 401 first, which
+    is the same outcome the client wants.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        Token.objects.filter(user=request.user).delete()
+        # ...and any Django session belonging to the same browser.
+        # SessionAuthentication sits in DEFAULT_AUTHENTICATION_CLASSES next to
+        # TokenAuthentication, so a sessionid cookie authenticates the whole API
+        # on its own — and any staff member who has signed into /admin/ is
+        # carrying one. Revoking only the token would leave that cookie a live
+        # credential after the CRM had said goodbye, which is precisely the hole
+        # an inactivity logout exists to close. A token-only caller has no
+        # session to flush and this costs them nothing.
+        django_logout(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     """CRUD + event assignment. Write actions require users-module permission."""
     permission_classes = [crm_permission("users")]
@@ -196,7 +239,7 @@ class UserViewSet(viewsets.ModelViewSet):
     # every user dropdown in the app, so it is on the critical path of most pages.
     queryset = (
         User.objects
-        .select_related("team", "mapped_lead")
+        .select_related("team", "mapped_lead", "managed_team")
         .prefetch_related("assigned_events", "permission_overrides", "team__permissions")
         .order_by("-date_joined")
     )
@@ -208,12 +251,23 @@ class UserViewSet(viewsets.ModelViewSet):
         # These actions are accessible to any authenticated user:
         # - my_permissions: every user must be able to fetch their own permission matrix
         # - list / retrieve: needed for user dropdowns throughout the app (e.g. MR assignment)
-        # - role_stats / sync_roles / role_stats: informational
+        # - role_stats: informational
         if self.action in (
             "list", "retrieve",
-            "my_permissions", "role_stats", "sync_roles",
+            "my_permissions", "role_stats",
         ):
             return [IsAuthenticated()]
+        # sync_roles USED TO SIT IN THAT LIST, described as informational. It is
+        # not: it rewrites the `role` column of every user in the database in one
+        # POST, across every team, and User.save() turns role=admin into
+        # is_superuser. So any authenticated session could re-role the whole
+        # company, which is a direct-API route around the team-manager
+        # restriction and around the users module itself. Nothing in the frontend
+        # calls it; it is the escape hatch a super admin runs after RENAMING a
+        # team, so it now answers to the same rule the rest of the admin surface
+        # does.
+        if self.action == "sync_roles":
+            return [IsAdminRole()]
         # Deciding what someone MAY DO is gated on `roles`, the same right that
         # governs a team's grid — not on `users`, which is about their name and
         # their team. Set here rather than on the @action, because this override
@@ -226,6 +280,30 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action in ("create", "update", "partial_update"):
             return UserWriteSerializer
         return UserListSerializer
+
+    def get_object(self):
+        """
+        THE ONE CHOKE POINT for "may this caller write to this account".
+
+        Every mutating route on this viewset reaches its row through here —
+        update, partial_update, destroy, and all seven detail @actions
+        (assign_events, add_event, remove_event, move_team, toggle_status,
+        reset_password, set_permissions). Putting the team-manager check in each
+        of them instead would be nine copies of one rule, and the tenth action
+        added later would be the one that forgot it.
+
+        SAFE methods are deliberately not narrowed. /api/users/ has always been
+        readable by any authenticated session — it is the directory behind the
+        SCA picker, the ticket assignee list and the reporting-manager dropdown —
+        so scoping a manager's READS would make a manager see LESS of it than the
+        juniors they manage, while leaking nothing that was not already open. The
+        Users PAGE narrows its own rows for a manager instead; the restriction
+        that carries privilege is this one, and it is enforced here.
+        """
+        obj = super().get_object()
+        if self.request.method not in SAFE_METHODS:
+            assert_can_manage_user(self.request.user, obj)
+        return obj
 
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
@@ -320,6 +398,10 @@ class UserViewSet(viewsets.ModelViewSet):
         """PATCH /api/users/{id}/move-team/ — Move user to a new team."""
         user = self.get_object()
         team_id = request.data.get("team_id")
+        # Both ENDS of the move. get_object() has already established that this
+        # account is the caller's to touch; unassigning it, or sending it into
+        # another team, is a write to a team they do not manage.
+        assert_can_place_in_team(request.user, team_id)
         if team_id is None:
              user.team = None
              user.save()
@@ -434,9 +516,17 @@ class UserViewSet(viewsets.ModelViewSet):
         frontend's SessionContext keeps reading it as it did.
         """
         user = request.user
+        team = user.managed_team if user.managed_team_id else None
         return Response({
             "is_all_access": user.has_all_access,
             "modules": user.effective_permissions(),
+            # The team this session manages, or null. The frontend needs the id
+            # to narrow its Users page and to pin its Add-user form, and the name
+            # so it can say WHICH team without a second request. Null for a super
+            # admin even if they hold the column, matching managed_team_id() —
+            # a super admin is not restricted to one team.
+            "managed_team_id": None if is_super_admin(user) else user.managed_team_id,
+            "managed_team_name": None if is_super_admin(user) or not team else team.name,
         })
 
     @action(detail=True, methods=["get", "put"], url_path="permissions")

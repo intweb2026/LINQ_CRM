@@ -31,13 +31,13 @@ Usage:
 import csv
 from collections import Counter
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db.models import Q
 
 from events.models import Event
 from paper_review.models import PaperReview
 from paper_review.notifications import (
-    CC_ROLES, STEP_EVENT_NOT_FOUND, STEP_NO_EVENT_CODE, resolve_recipients,
+    STEP_EVENT_NOT_FOUND, STEP_NO_EVENT_CODE, resolve_recipients,
 )
 from proposal_submission.models import ProposalSubmission
 
@@ -92,29 +92,19 @@ def distinct_event_codes(scope="all"):
 
 def data_readiness():
     """
-    The two raw counts D1 asks for, straight off the Event catalogue — reported
-    separately from the resolution outcomes because they are the underlying cause:
-    an event with neither a sales_executive nor an assigned CC-role user cannot
-    resolve, and no amount of resolution logic will change that.
+    The raw count D1 asks for, straight off the Event catalogue — reported
+    separately from the resolution outcomes because it is the underlying cause.
+
+    Since the Cc became the submitter plus the standing settings list,
+    sales_executive is the ONLY per-EVENT input to resolution: an event without
+    one degrades to the Cc, and no amount of resolution logic will change that.
+    The old CC-role assignee counts are gone with the role walk they described.
     """
     total = Event.objects.count()
-    with_exec = Event.objects.filter(sales_executive__isnull=False).count()
-    with_cc = (
-        Event.objects.filter(assigned_users__role__in=CC_ROLES)
-        .distinct().count()
-    )
-    with_either = (
-        Event.objects.filter(
-            Q(sales_executive__isnull=False)
-            | Q(assigned_users__role__in=CC_ROLES)
-        ).distinct().count()
-    )
     return {
         "total": total,
-        "with_sales_executive": with_exec,
-        "with_cc_role_assignee": with_cc,
-        "with_either": with_either,
-        "with_neither": total - with_either,
+        "with_sales_executive":
+            Event.objects.filter(sales_executive__isnull=False).count(),
     }
 
 
@@ -198,16 +188,17 @@ class Command(BaseCommand):
                           f"{readiness['total']}")
         self.stdout.write(f"  with a sales_executive (the To:)         "
                           f"{readiness['with_sales_executive']}")
-        self.stdout.write(f"  with a speaker_sales/market_research     "
-                          f"{readiness['with_cc_role_assignee']}")
-        self.stdout.write(f"    assigned user (the Cc:)")
-        self.stdout.write(f"  with at least one of the two            "
-                          f"{readiness['with_either']}")
         # ASCII here deliberately: the Windows console this is run from renders an
         # em-dash as a replacement character, and a readiness report that looks
         # corrupted invites doubt about the numbers next to it.
-        self.stdout.write(f"  with NEITHER - cannot resolve at all     "
-                          f"{readiness['with_neither']}")
+        self.stdout.write(f"  without one - degrades to the Cc         "
+                          f"{readiness['total'] - readiness['with_sales_executive']}")
+        self.stdout.write(f"  standing Cc on every send                "
+                          f"{', '.join(settings.PAPER_REVIEW_CC_EMAILS) or '(none)'}")
+        # Not a catalogue number: it is the review's own created_by, so it varies
+        # per row and this command drives resolution with an unsaved review that
+        # has none. Stated so the report is not read as the whole Cc.
+        self.stdout.write("  plus the submitting MRE, per review")
 
         self.stdout.write("")
         self.stdout.write("Resolution outcomes:")
@@ -223,9 +214,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(
                     "VERDICT: NO event has a sales_executive. The agreed To: "
                     "recipient (the assigned sales rep) does not exist in this "
-                    "data at all — every notification would resolve via the Cc "
-                    "roles or fall back to the watchdog. The recipient design "
-                    "needs revisiting before the kill switch is flipped."
+                    "data at all — every notification would degrade to the fixed "
+                    "Cc, or fall back to the watchdog if that list is empty. The "
+                    "recipient design needs revisiting before the kill switch is "
+                    "flipped."
                 ))
             elif exec_pct < 50:
                 self.stdout.write(self.style.WARNING(

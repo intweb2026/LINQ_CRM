@@ -6,7 +6,9 @@ from django.urls import path, include, re_path
 from django.views.generic import TemplateView
 from rest_framework.routers import DefaultRouter
 
-from accounts.views import UserViewSet, GoogleTokenLoginView, CustomAuthToken
+from accounts.views import (
+    UserViewSet, GoogleTokenLoginView, CustomAuthToken, LogoutView,
+)
 from companies.views import CompanyViewSet
 from events.views import EventViewSet
 from book_event.views import BookEventViewSet
@@ -14,6 +16,9 @@ from book_delegate.views import BookDelegateViewSet
 from teams.views import TeamViewSet as TeamManagementViewSet
 from ticket_central.views import TicketViewSet
 from paper_review.views import PaperReviewViewSet
+from paper_review.public_form import (
+    PaperReviewFormConfigView, PaperReviewFormSubmitView,
+)
 from proposal_submission.views import ProposalSubmissionViewSet
 from config.views import GlobalSearchView, DashboardStatsView, DashboardAggregateView
 
@@ -37,6 +42,16 @@ urlpatterns = [
     path("admin/",               admin.site.urls),
     path("api/",                 include(router.urls)),
     path("api/webhooks/",        include("webhooks.urls")),
+    # The public MRE paper review form. UNAUTHENTICATED by design and kept off
+    # the router above for the same reason api/data/ is: it is a separate
+    # credential domain, a WebhookApiKey on the PAPER_REVIEW_FORM target rather
+    # than a session. See paper_review/public_form.py. The submit url name is the
+    # one WebhookApiKey.TARGET_URL_NAMES resolves for that target, so the keys
+    # page builds the link from urls.py and never from a typed path.
+    path("api/paper-review-form/config/", PaperReviewFormConfigView.as_view(),
+         name="paper-review-form-config"),
+    path("api/paper-review-form/submit/", PaperReviewFormSubmitView.as_view(),
+         name="paper-review-form-submit"),
     path("api/google-sync/",     include("google_sync.urls")),
     path("api/reports/",         include("reports.urls")),
     # Read-only export surface. Authenticated by X-DATA-API-KEY only — see
@@ -57,6 +72,10 @@ urlpatterns = [
     # Hidden break-glass fallback, reachable only via the /170405 front-end
     # gate. Unlike the Google path it does not check login_access.
     path("api/auth/fallback/", CustomAuthToken.as_view(),      name="fallback-login"),
+    # Revokes the caller's token. Called by the Topbar sign-out AND by the
+    # six-hour inactivity timer, so a forgotten session does not leave a
+    # never-expiring credential behind. See accounts.views.LogoutView.
+    path("api/auth/logout/",   LogoutView.as_view(),           name="logout"),
     path("api-auth/",            include("rest_framework.urls")),
     # Serve React frontend for all non-API routes
     re_path(r"^(?!api/|admin/|api-auth/|static/).*$",

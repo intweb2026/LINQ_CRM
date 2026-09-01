@@ -1,11 +1,16 @@
 
-/* ═══ DASHBOARD ═══ */
+/* ═══ DASHBOARD ═══
+   Everything from here to [overlay_scrim] belongs to DashboardPage and is
+   used nowhere else, so a change in this stretch cannot reach another page.
+   Each widget carries its own tag below. */
+/* ── tile grid ──  [dashboard_grid] */
 .dg{display:grid;gap:11px;margin-bottom:18px}
 .dg.c2{grid-template-columns:1fr 1fr}
 .dg.c3{grid-template-columns:repeat(3,1fr)}
 .dg.w21{grid-template-columns:2fr 1fr}
 .dg.w12{grid-template-columns:1fr 2fr}
 .dg .full{grid-column:1/-1}
+/* ── hero banner and quick actions ──  [dashboard_hero] */
 .hero{background:linear-gradient(135deg,var(--t-700),var(--t-900) 62%);border-radius:var(--r-xl);padding:20px 22px;color:#fff;margin-bottom:18px;position:relative;overflow:hidden}
 .hero::after{content:'';position:absolute;top:-58px;right:-58px;width:210px;height:210px;border-radius:50%;background:rgba(255,255,255,.06)}
 .hero-r{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;position:relative;z-index:1}
@@ -20,6 +25,7 @@
 .qa button{display:inline-flex;align-items:center;gap:6px;padding:0 12px;height:31px;font-size:11.5px;font-weight:650;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:var(--r-md);cursor:pointer;transition:all .14s;backdrop-filter:blur(4px)}
 .qa button:hover{background:rgba(255,255,255,.22);transform:translateY(-1px)}
 .qa button svg{width:14px;height:14px}
+/* ── date range filter ──  [dashboard_date_filter] */
 /* dashboard date-range filter — sits on the page ground rather than inside the
    dark .hero, so the shared .seg control keeps its light-surface styling */
 .dfl{display:flex;align-items:center;justify-content:space-between;gap:13px;flex-wrap:wrap;margin:-4px 0 13px}
@@ -27,7 +33,7 @@
 .dfl-t .n{font-size:12.5px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px}
 .dfl-t .s{font-size:10.5px;color:var(--text-4)}
 .dfl-r{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-/* action queue */
+/* ── action queue ──  [dashboard_action_queue] */
 .aq{display:flex;flex-direction:column;gap:1px}
 .aq-i{display:flex;align-items:center;gap:11px;padding:11px 4px;border-bottom:1px solid var(--n-50);cursor:pointer;transition:background .12s;border-radius:var(--r-sm)}
 .aq-i:last-child{border-bottom:none}
@@ -40,7 +46,7 @@
 .aq-n{font-size:17px;font-weight:800;letter-spacing:-.035em;flex-shrink:0}
 .aq-go{color:var(--text-4);flex-shrink:0}
 .aq-go svg{width:14px;height:14px}
-/* pipeline lines */
+/* ── pipeline bars ──  [dashboard_pipeline_bars] */
 .pl{display:flex;flex-direction:column;gap:13px}
 .pl-i .h{display:flex;align-items:center;justify-content:space-between;gap:9px;margin-bottom:6px}
 .pl-i .h .n{font-size:12.5px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:7px}
@@ -52,7 +58,7 @@
 .bar-lg{display:flex;gap:13px;margin-top:7px;font-size:10.5px;color:var(--text-4);flex-wrap:wrap}
 .bar-lg span{display:inline-flex;align-items:center;gap:5px}
 .bar-lg em{width:8px;height:8px;border-radius:2.5px;flex-shrink:0}
-/* donut */
+/* ── donut chart ──  [dashboard_donut] */
 .dn{display:flex;align-items:center;gap:20px}
 .dn-c{position:relative;width:118px;height:118px;flex-shrink:0}
 .dn-c svg{transform:rotate(-90deg)}
@@ -64,7 +70,7 @@
 .dn-l .r em{width:9px;height:9px;border-radius:3px;flex-shrink:0}
 .dn-l .r .n{flex:1;color:var(--text-3);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dn-l .r .v{font-weight:700;color:var(--text)}
-/* bars chart */
+/* ── bar chart and sparklines ──  [dashboard_bar_chart] */
 .bc{display:flex;align-items:flex-end;gap:5px;height:150px;padding-top:16px}
 .bc-g{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;min-width:0}
 .bc-s{display:flex;flex-direction:column-reverse;width:100%;max-width:30px;border-radius:3px 3px 0 0;overflow:visible;cursor:pointer;position:relative}
@@ -77,7 +83,7 @@ html[data-theme=dark] .bc-t{background:var(--n-100);color:var(--text)}
 .spk{width:62px;height:21px;flex-shrink:0}
 .spk path{fill:none;stroke:var(--t-500);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .spk .f{fill:var(--t-50);stroke:none}
-/* accordion */
+/* ── accordion ──  [dashboard_accordion] */
 .ac{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:8px;box-shadow:var(--sh-xs)}
 .ac-h{padding:12px 15px;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
 .ac-i{width:32px;height:32px;border-radius:var(--r-md);display:grid;place-items:center;flex-shrink:0}
@@ -105,7 +111,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .shr .t{flex:1;height:7px;background:var(--n-75);border-radius:4px;overflow:hidden}
 .shr .t i{display:block;height:7px;border-radius:4px;background:var(--t-500);transition:width .7s var(--ease)}
 .shr .p{font-size:11.5px;font-weight:700;color:var(--text);width:32px;text-align:right}
-/* event strip */
+/* ── event strip and small meters ──  [dashboard_event_strip] */
 .ev-s{display:flex;flex-direction:column;gap:1px}
 .ev-r{display:flex;align-items:center;gap:11px;padding:10px 4px;border-bottom:1px solid var(--n-50);cursor:pointer;border-radius:var(--r-sm);transition:background .12s}
 .ev-r:last-child{border-bottom:none}
@@ -116,7 +122,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .ev-b{flex:1;min-width:0}
 .ev-b .n{font-size:12px;font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev-b .s{font-size:10.5px;color:var(--text-4);margin-top:1px;display:flex;align-items:center;gap:6px}
-/* activity feed */
+/* ── activity feed ──  [dashboard_activity_feed] */
 .af{display:flex;flex-direction:column}
 .af-i{display:flex;gap:10px;padding-bottom:14px;position:relative}
 .af-i::before{content:'';position:absolute;left:10px;top:22px;bottom:0;width:1.5px;background:var(--border)}
@@ -129,13 +135,19 @@ table.gt th.num,table.gt td.num{text-align:right}
 .af-b .t b{color:var(--text);font-weight:700}
 .af-b .m{font-size:10px;color:var(--text-4);display:block}
 
-/* ═══ SCRIM / DRAWER / MODAL ═══ */
+/* ═══ SCRIM / DRAWER / MODAL ═══
+   The floating layer. Tagged in four parts below; the backdrops, the drawer
+   and its contents, the modal, then the form system both of them render. */
+/* ── backdrops ──  [overlay_scrim]
+   .scrim clears the sidebar, .modal-scrim dims the whole viewport. */
 .scrim{position:fixed;top:0;right:0;bottom:0;left:var(--rail-w);background:rgba(19,26,35,.44);z-index:90;opacity:0;transition:opacity .25s var(--ease);backdrop-filter:blur(3px)}
 .scrim.show{opacity:1}
 /* modal overlay must dim the ENTIRE viewport, incl. the sidebar/header, unlike .scrim
    (used by drawers) which intentionally leaves the rail undimmed */
 .modal-scrim{position:fixed;inset:0;background:rgba(19,26,35,.44);z-index:90;opacity:0;transition:opacity .25s var(--ease);backdrop-filter:blur(3px)}
 .modal-scrim.show{opacity:1}
+/* ── drawer ──  [drawer]
+   The panel that slides in from the right; header, tab strip, body, footer. */
 .dr{position:fixed;top:0;right:0;bottom:0;width:min(520px,100%);background:var(--surface);z-index:100;box-shadow:var(--sh-xl);transform:translateX(100%);transition:transform .33s var(--ease);display:flex;flex-direction:column}
 .dr.show{transform:translateX(0)}
 .dr.wide{width:min(720px,100%)}
@@ -150,17 +162,56 @@ table.gt th.num,table.gt td.num{text-align:right}
 .dr-tabs::-webkit-scrollbar{display:none}
 .dr-b{flex:1;overflow-y:auto;padding:17px 20px 22px}
 .dr-f{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:7px;flex-shrink:0;background:var(--surface-2);flex-wrap:wrap}
+/* Ticket Central's form is three `.fcol` stacks inside a `.fg.c3` — three columns
+   side by side, which is what a full-width modal had room for and a drawer has
+   not. Two things happen to it in here.
+
+   `display:contents` dissolves the stacks so their fields become direct grid
+   items. The sequence is untouched — stack one's fields, then stack two's, then
+   stack three's — but it packs evenly instead of leaving a hole under whichever
+   stack is shortest, and it is read across the rows rather than down them.
+
+   The label moves ABOVE the field. `.fd-h`'s 128px right-aligned gutter is most
+   of a drawer column, and the mobile breakpoint below already drops it for the
+   same reason: one column of narrow fields has no room for it. With the gutter
+   gone the section fits three real columns instead of one, which takes a 17-field
+   block from seventeen rows to six.
+
+   auto-fit rather than a fixed count, so the section keeps the three columns
+   `.fg.c3` always had while the drawer is wide, and falls to two and then one as
+   it narrows — no media query to keep in step with the `.dr` width. */
+.dr-b .fcol{display:contents}
+.dr-b .fg,.dr-b .fg.c3,.dr-b .fg.c4{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:9px 13px}
+/* ── form layout inside a drawer ──  [drawer_form_layout]
+   A drawer is roughly half a modal's width, so the shared .fg/.fd-h rules
+   from [form_sections_grid] are re-flowed here rather than duplicated. */
+/* Two corrections that come with turning `.fd-h` from a row into a column.
+   `.fd-h>:not(.fd-l){flex:1}` meant "take the rest of the ROW" and now reads as
+   "take the rest of the COLUMN", so a control sharing a grid row with a label
+   that wraps to two lines grew taller than its neighbours — 35px boxes in some
+   cells and 50px boxes in others. `flex:none` hands the control back to `.in`'s
+   own height, so every field is the same box wherever it sits.
+
+   `justify-content:flex-end` then pins each label+control pair to the bottom of
+   its cell, so the boxes line up across a row instead of stepping down wherever a
+   label needed a second line. A wrapped label grows upward into the slack. */
+.dr-b .fd-h{flex-direction:column;align-items:stretch;justify-content:flex-end;gap:3px;min-width:0}
+.dr-b .fd-h>.fd-l{flex:none;text-align:left;line-height:1.35}
+.dr-b .fd-h>:not(.fd-l){flex:none}
+/* ── read-out pairs ──  [drawer_readout_pairs] */
 .ro{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border-radius:var(--r-md);overflow:hidden;margin-bottom:18px;border:1px solid var(--border)}
 .ro-c{background:var(--surface);padding:10px 12px;min-width:0}
 .ro-c.f{grid-column:1/-1}
 .ro-l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);margin-bottom:2px}
 .ro-v{font-size:12.5px;font-weight:650;color:var(--text);word-break:break-word}
 .ro-v.mono{color:var(--t-600)}
+/* ── mini stats ──  [drawer_mini_stats] */
 .ms{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px}
 .ms>div{text-align:center;padding:11px 5px;background:var(--surface-2);border-radius:var(--r-md);border:1px solid var(--border)}
 .ms .l{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);margin-bottom:2px}
 .ms .v{font-size:18px;font-weight:800;letter-spacing:-.035em;color:var(--text)}
 .ms .v.g{color:var(--green)}.ms .v.a{color:var(--amber)}.ms .v.r{color:var(--red)}
+/* ── timeline ──  [drawer_timeline] */
 .tl{display:flex;flex-direction:column}
 .tl-i{display:flex;gap:10px;padding-bottom:16px;position:relative}
 .tl-i::before{content:'';position:absolute;left:10px;top:22px;bottom:1px;width:1.5px;background:var(--border)}
@@ -175,18 +226,23 @@ table.gt th.num,table.gt td.num{text-align:right}
 .tl-t{font-size:12.5px;font-weight:650;color:var(--text)}
 .tl-s{font-size:11px;color:var(--text-4)}
 .tl-m{font-size:10px;color:var(--text-4);margin-top:1px}
+/* ── notes ──  [drawer_notes] */
 .nt{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 12px;margin-bottom:8px}
 .nt-h{display:flex;align-items:center;gap:7px;margin-bottom:5px}
 .nt-h .w{font-size:11.5px;font-weight:650;color:var(--text)}
 .nt-h .d{font-size:10px;color:var(--text-4);margin-left:auto}
 .nt-x{font-size:12px;color:var(--text-2);line-height:1.5}
 
+/* ── JSON block ──  [drawer_json_block] */
 /* Raw JSON / stack traces in a drawer. Wide content scrolls inside the block
    rather than stretching the drawer, and long lines wrap instead of clipping. */
 .jsn{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 11px;margin:0 0 18px;
   font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--text-2);
   max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 
+/* ── modal ──  [modal]
+   .mw the centring wrapper, .md the dialog, then its header, body and footer.
+   Width comes from one of .sm/.mdw/.lg/.xl/.full on .md. */
 .mw{position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;padding:22px}
 .md{background:var(--surface);border-radius:var(--r-xl);box-shadow:var(--sh-xl);width:100%;max-height:calc(100vh - 44px);display:flex;flex-direction:column;animation:mIn .2s var(--ease)}
 .md.sm{max-width:410px}.md.mdw{max-width:560px}.md.lg{max-width:700px}.md.xl{max-width:900px}.md.full{max-width:min(96vw,1560px);width:96vw}
@@ -195,6 +251,8 @@ table.gt th.num,table.gt td.num{text-align:right}
 .md-h-b h2{font-size:17.5px;font-weight:750;color:var(--text);letter-spacing:-.028em}
 .md-h-b p{font-size:11.5px;color:var(--text-4);margin-top:3px}
 .md-b{flex:1;overflow-y:auto;padding:18px 22px}
+/* ── body that fills ──  [modal_body_fill]
+   Modal.jsx bodyFill, for a dialog whose body is itself a scrolling grid. */
 /* Modal.jsx `bodyFill`. The delegate grid inside the booking modals is itself a
    scroll container, so leaving `.md-b` scrollable put one scrollbox inside
    another: the outer one appeared on any window under roughly 780px tall, and
@@ -226,6 +284,11 @@ table.gt th.num,table.gt td.num{text-align:right}
 .md-b.fill>.fs-fill>.tw>.tsc{flex:0 1 auto;min-height:76px;max-height:none}
 .md-f{padding:13px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:7px;flex-shrink:0;background:var(--surface-2);border-radius:0 0 var(--r-xl) var(--r-xl);flex-wrap:wrap}
 @keyframes mIn{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
+/* ── form sections and grids ──  [form_sections_grid]
+   The layout system every form in the app uses; .fs a titled section, .fg its
+   grid in 2/3/4 columns, .fcol a column that reads top-to-bottom, .fd-h a
+   field with its label beside it instead of above. The FIELDS themselves are
+   [form_inputs] in components.css. */
 .fs{margin-bottom:18px}.fs:last-child{margin-bottom:0}
 .fs-t{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.075em;color:var(--text-4);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px}
 .fg{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -243,12 +306,51 @@ table.gt th.num,table.gt td.num{text-align:right}
 .fd-h{flex-direction:row;align-items:center;gap:10px}
 .fd-h>.fd-l{flex:0 0 128px;text-align:right;line-height:1.35}
 .fd-h>:not(.fd-l){flex:1;min-width:0}
+/* ── locked and read-only fields ──  [form_locked_fields]
+   .in-ro stands in for the input a locked field would have had; .fs-ro is a
+   whole section rendered as a read-out. */
 /* Fields the current role/status may not write. Greyed and inert, but still
    present and readable: which fields exist is part of what the form communicates,
    and a missing field reads as missing data. */
 .in:disabled,.in[readonly]{background:var(--surface-2);color:var(--text-3);cursor:not-allowed;box-shadow:none}
 .in:disabled:hover,.in[readonly]:hover{border-color:var(--border-s)}
+/* The value of a locked field, standing in for the input that would have held it.
+   `pre-wrap` because MR Comments is prose and any line breaks in it are the
+   author's; `break-word` because it has to wrap rather than clip, which is the
+   whole reason this is a div and not a disabled <input>. `.brk` breaks mid-token
+   for the one value that has no spaces to break on, the link. */
+.in-ro{font-size:12.5px;font-weight:650;color:var(--text);line-height:1.45;min-height:19px;white-space:pre-wrap;word-break:break-word}
+.in-ro.brk{word-break:break-all}
+.fd-lnk .in-ro{flex:1;min-width:0}
+/* A form section nobody in this seat may write to, rendered as a read-out rather
+   than as a wall of dead input boxes.
+
+   The fields do not move: same order, same labels, same markup, same disabled
+   attributes. The inputs simply drop their chrome and read as plain values, which
+   is what they already were. It matters most for Data Mining — a miner opening an
+   MR Submitted ticket cannot write a single Ticket Hub field, and fourteen 35px
+   boxes of brief pushed Assign Name and Mined Count, the fields they are actually
+   here to fill, below the fold of the drawer. Compacted, the whole brief reads in
+   roughly the space six inputs used to take. It cuts the other way too: an MR user
+   looking at a completed ticket gets the same treatment over the DMD section.
+
+   Presentation only. The serializer guards in ticket_central/serializers.py and
+   the mrOpen / dmdOpen booleans that mirror them are untouched.
+
+   Set on its own tinted panel, the way the DMD queue prototype frames the MR
+   brief — so "context I read" is distinguishable at a glance from "fields I
+   fill", rather than the two differing only by the absence of a border. */
+.dr-b .fs-ro .fg{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 12px}
+/* A read-out carries no 35px boxes, so it packs tighter than the writable grid
+   above: narrower minimum column, no gap between a label and its value, and the
+   9px uppercase key `.ro` and the prototype's context box both use. */
+.dr-b .fs-ro .fg,.dr-b .fs-ro .fg.c3,.dr-b .fs-ro .fg.c4{grid-template-columns:repeat(auto-fit,minmax(186px,1fr));gap:7px 14px}
+.dr-b .fs-ro .fd-h{gap:0;justify-content:flex-start}
+.dr-b .fs-ro .fd-h>.fd-l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);line-height:1.5}
+.fs-ro .fd-lnk{gap:6px;align-items:flex-start}
+.fs-ro .fd-lnk-go{width:20px;height:20px;border-color:transparent;background:none;box-shadow:none}
 /* Link field + its open-in-new-tab button, sharing one row. */
+/* ── link field ──  [form_link_field] */
 .fd-lnk{display:flex;gap:6px;align-items:center}
 .fd-lnk .in{flex:1;min-width:0}
 .fd-lnk-go{flex-shrink:0;display:grid;place-items:center;width:35px;height:35px;border:1px solid var(--border-s);border-radius:var(--r-md);background:var(--surface);color:var(--t-600);box-shadow:var(--sh-xs)}
@@ -256,6 +358,9 @@ table.gt th.num,table.gt td.num{text-align:right}
 .fd-lnk-go[aria-disabled=true]{color:var(--text-4);pointer-events:none;background:var(--surface-2)}
 /* Rich text field, for the values Zoho exports as HTML; see lib/richText.js.
    Header row carries the note and the Formatted / HTML switch. */
+/* ── rich text editor ──  [richtext_editor]
+   .rt-e is both the editor and the renderer, so the element rules below
+   (p, ul, h1-h6, table) style saved content as well as typing. */
 .rt{display:flex;flex-direction:column;gap:6px}
 .rt-b{display:flex;align-items:center;gap:8px}
 .rt-n{flex:1;min-width:0;font-size:10.5px;color:var(--text-4)}
@@ -289,6 +394,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .rt-s{height:auto;padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.5;resize:vertical}
 
 /* wizard */
+/* ── import wizard steps ──  [import_wizard_steps] */
 .wz{display:flex;align-items:center;padding:14px 22px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;scrollbar-width:none}
 .wz::-webkit-scrollbar{display:none}
 .wz-s{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:650;color:var(--text-4);white-space:nowrap}
@@ -298,6 +404,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .wz-s.cu .wz-n{background:var(--t-500);color:#fff;border-color:var(--t-500);box-shadow:0 0 0 3px var(--t-100)}
 .wz-ln{flex:1;height:1.5px;background:var(--border);margin:0 8px;min-width:13px}
 .wz-ln.dn{background:var(--green)}
+/* ── file drop zone ──  [import_dropzone] */
 .dz{border:1.5px dashed var(--border-s);border-radius:var(--r-lg);padding:36px 20px;text-align:center;cursor:pointer;transition:all .17s;background:var(--surface-2)}
 .dz:hover,.dz:focus-visible{border-color:var(--t-400);background:var(--t-50)}
 /* Dragging a file over the zone. Stronger than :hover because a drag has no
@@ -316,6 +423,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .dz-i svg{width:20px;height:20px}
 .dz h3{font-size:13.5px;font-weight:700;color:var(--text);margin-bottom:4px}
 .dz p{font-size:11.5px;color:var(--text-4)}
+/* ── column mapping, results, progress ──  [import_column_mapping] */
 .mp{display:grid;grid-template-columns:1fr 20px 1fr;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--n-50)}
 .mp:last-child{border-bottom:none}
 .mp-s{font-family:var(--mono);font-size:10.5px;padding:6px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -328,7 +436,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .pt{height:7px;background:var(--n-75);border-radius:4px;overflow:hidden;margin:15px 0 7px}
 .pt i{display:block;height:7px;background:linear-gradient(90deg,var(--t-500),var(--t-400));border-radius:4px;transition:width .33s var(--ease)}
 
-/* kanban */
+/* ── kanban board ──  [kanban_board] */
 .kb{display:flex;gap:11px;overflow-x:auto;padding-bottom:11px;align-items:flex-start}
 .kc{width:246px;flex-shrink:0;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);display:flex;flex-direction:column;max-height:calc(100vh - 258px);min-height:140px;overflow:hidden}
 .kc.ov{background:var(--t-50);border-color:var(--t-300)}
@@ -351,7 +459,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .kk-ld svg{width:9px;height:9px}
 .kc-e{padding:16px 8px;font-size:10.5px;color:var(--text-4);text-align:center;border:1.5px dashed var(--border);border-radius:var(--r-sm)}
 
-/* permission matrix */
+/* ── permission matrix ──  [permission_matrix] */
 .pm{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
 .pm th{background:var(--surface-2);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);padding:9px 11px;border-bottom:1px solid var(--border);text-align:center;white-space:nowrap}
 .pm th:first-child{text-align:left}
@@ -371,6 +479,10 @@ table.gt th.num,table.gt td.num{text-align:right}
 .pm-c.pm-granted,.pm-sw.pm-granted{background:color-mix(in srgb,var(--green) 16%,transparent)}
 .pm-c.pm-revoked,.pm-sw.pm-revoked{background:color-mix(in srgb,var(--red) 16%,transparent)}
 .pm-grid td.pm-c{position:relative}
+/* Row scope is a different question from the four action columns, so it is ruled off from them rather than reading as a fifth verb. */
+.pm th.pm-scope,.pm td.pm-scope{border-left:1px solid var(--border)}
+.pm td.pm-scope.dim{color:var(--text-4)}
+/* ── role cards ──  [role_cards] */
 .rcd{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;transition:all .15s var(--ease);position:relative;overflow:hidden;cursor:pointer;box-shadow:var(--sh-xs)}
 .rcd:hover{box-shadow:var(--sh-md);transform:translateY(-1px)}
 .rcd-b{position:absolute;top:0;left:0;right:0;height:3px}
@@ -382,7 +494,8 @@ table.gt th.num,table.gt td.num{text-align:right}
 .rcd-f .c{font-size:11px;color:var(--text-4);display:flex;align-items:baseline;gap:4px}
 .rcd-f .c b{font-size:18px;font-weight:800;color:var(--text);letter-spacing:-.035em}
 
-/* ═══ PALETTE ═══ */
+/* ═══ COMMAND PALETTE ═══  [command_palette]
+   The overlay Ctrl+K opens, and what the topbar search button opens too. */
 .plw{position:fixed;inset:0;z-index:130;display:flex;align-items:flex-start;justify-content:center;padding:min(13vh,100px) 20px 20px;pointer-events:none}
 .plw.show{pointer-events:auto}
 .pl-m{width:100%;max-width:540px;background:var(--surface);border-radius:var(--r-xl);box-shadow:var(--sh-xl);border:1px solid var(--border);overflow:hidden;transform:scale(.97) translateY(-6px);opacity:0;transition:all .19s var(--ease)}
@@ -404,7 +517,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .pl-f{padding:7px 12px;border-top:1px solid var(--border);display:flex;gap:13px;font-size:10px;color:var(--text-4);background:var(--surface-2);align-items:center;flex-wrap:wrap}
 .pl-f kbd{font-family:var(--font);font-size:9px;font-weight:600;padding:2px 5px;border:1px solid var(--border);border-radius:var(--r-xs);background:var(--surface);color:var(--text-4);margin-right:3px}
 
-/* ═══ TOASTS ═══ */
+/* ═══ TOASTS ═══  [toasts] */
 .tst{position:fixed;bottom:16px;right:16px;z-index:125;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;max-width:min(350px,calc(100vw - 32px))}
 .ts{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-lg);font-size:12.5px;font-weight:550;color:var(--text);pointer-events:auto;animation:tIn .27s var(--ease);transition:opacity .24s,transform .24s var(--ease)}
 .ts-i{width:25px;height:25px;border-radius:var(--r-sm);display:grid;place-items:center;flex-shrink:0}
@@ -419,7 +532,8 @@ table.gt th.num,table.gt td.num{text-align:right}
 .ts-x svg{width:12px;height:12px}
 @keyframes tIn{from{transform:translateX(17px) scale(.97);opacity:0}to{transform:translateX(0) scale(1);opacity:1}}
 
-/* ═══ LOGIN ═══ */
+/* ═══ LOGIN ═══  [login_page]
+   Its own full-viewport layout; none of the app chrome renders behind it. */
 .lgn{min-height:100vh;display:grid;grid-template-columns:1fr 1fr;background:var(--surface)}
 .lg-l{display:flex;flex-direction:column;justify-content:center;padding:48px 8vw}
 .lg-mk{display:flex;align-items:center;gap:11px;margin-bottom:38px}
@@ -446,7 +560,9 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
 .hint{font-size:11px;color:var(--text-4);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;line-height:1.5}
 .hint b{color:var(--text-2)}
 
-/* ═══ RESPONSIVE ═══ */
+/* ═══ RESPONSIVE ═══  [responsive_breakpoints]
+   Every media query in the app. Keep this last; these rules override by
+   source order, so anything added below them would win over them. */
 @media(max-width:1180px){.dg.c3{grid-template-columns:1fr 1fr}}
 @media(max-width:1040px){.dg.c2,.dg.c3,.dg.w21,.dg.w12{grid-template-columns:1fr}.lgn{grid-template-columns:1fr}.lg-r{display:none}}
 @media(max-width:880px){

@@ -11,6 +11,8 @@ delegates that haven't been individually overridden.
 from __future__ import annotations
 from typing import Any
 
+from django.utils import timezone
+
 
 class DelegatePaymentOverrideResolver:
     """
@@ -124,6 +126,15 @@ class DelegatePaymentOverrideResolver:
                     pass  # Already inherits from invoice — no action needed
                 # If delegate HAD an override and invoice changed, preserve delegate override
             if update_kwargs:
+                # updated_at IS SET BY HAND, for the reason spelled out in
+                # clear_delegate_overrides() below: a queryset .update() does not
+                # fire auto_now, so the row would keep its old watermark and the
+                # Data API's ?updated_since= delta feed would never offer it
+                # again. Written here rather than only in the sibling method
+                # because update_kwargs is currently always empty — the loop
+                # above resolves to "no action needed" on every branch — and a
+                # future body for it must not have to rediscover this.
+                update_kwargs["updated_at"] = timezone.now()
                 BookDelegate.objects.filter(id=delegate.id).update(**update_kwargs)
                 updated += 1
 
@@ -141,4 +152,20 @@ class DelegatePaymentOverrideResolver:
             self.DELEGATE_FIELD_MAP[f][0]: None
             for f in target_fields
         }
+        # updated_at IS SET BY HAND because a queryset .update() does NOT fire
+        # auto_now — the ORM never instantiates the rows, so no field's pre_save()
+        # runs and the column keeps whatever it held. That was invisible until the
+        # Bookings table's default sort became ["-updated_at", "-id"]
+        # (BookDelegateViewSet.ordering): clearing a delegate's payment overrides
+        # is a real edit, made deliberately, that visibly changes five cells, and
+        # it left the row exactly where it was while every lesser edit floated to
+        # the top. timezone.now() rather than a literal, so it is tz-aware under
+        # USE_TZ and stored as UTC like every other timestamp; IST is applied when
+        # the cell is rendered, not when it is written.
+        #
+        # STILL ONE STATEMENT. The alternative — load each row and save() it — is
+        # what accounts/bulk_update.py does, and correctly so, because BookDelegate
+        # .save() derives edition and event_code there. Nothing derived depends on
+        # these five override columns going NULL, so the set-based write stays.
+        update_kwargs["updated_at"] = timezone.now()
         return BookDelegate.objects.filter(id__in=delegate_ids).update(**update_kwargs)

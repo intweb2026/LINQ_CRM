@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from accounts.audit import log_module_wipe, reclaim_after_wipe
 from accounts.permissions import RBACMixin, IsAdminRole, IsSalesOrAdmin, IsHPAccount
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
-from accounts.crm_permissions import crm_permission
+from accounts.crm_permissions import crm_permission, has_all_records
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from .models import Event
 from .serializers import EventListSerializer, EventDetailSerializer, EventWriteSerializer
@@ -162,8 +162,19 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
     def get_queryset(self):
         user = self.request.user
         qs = Event.objects.select_related("sales_executive").prefetch_related("assigned_users")
-        if not user.is_admin:
-            qs = qs.filter(Q(assigned_users=user) | Q(sales_executive=user)).distinct()
+        # has_all_records is the permission grid's row-scope cell:
+        # every event, without the blanket widening that is_admin or an
+        # is_all_access team would also apply to every other module.
+        if not user.is_admin and not has_all_records(user, "events"):
+            # `__in` over the caller's data scope, not `= user`. That scope is
+            # just the caller for everybody except a lead, who also carries the
+            # active accounts naming them as reporting manager, so this stays
+            # byte-for-byte the old query for anyone nobody reports to. See
+            # accounts.models.User.data_scope_user_ids.
+            scope_ids = user.data_scope_user_ids() or [user.pk]
+            qs = qs.filter(
+                Q(assigned_users__in=scope_ids) | Q(sales_executive__in=scope_ids)
+            ).distinct()
         return qs
 
     def get_serializer_class(self):

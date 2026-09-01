@@ -37,18 +37,51 @@ function PerfDrawer({ row, onClose }) {
   );
 }
 
+/**
+ * Admin-only, and gated BEFORE anything fetches.
+ *
+ * The gate used to be `canView('performance')`, which the Permissions grid can
+ * grant to any team — while /api/event-performance/ has always been
+ * IsAdminRole (backend/event_performance/views.py). Two different questions
+ * about one surface, and the looser one was the one the UI asked: a team ticked
+ * into the Performance module got the rail entry, the table and this drawer,
+ * all showing per-event revenue and paid/unpaid delegate counts across the
+ * whole catalogue. `isAdmin` asks exactly what the server asks, so the page and
+ * the endpoint can no longer disagree about who this is for.
+ *
+ * The hooks below still run unconditionally — the early return sits after them
+ * — but they must not FETCH for a denied session, or a non-admin opening
+ * /performance directly would fire two 403s on the way to the No Access screen.
+ * `useFetch` is therefore handed a no-op for anyone who fails the gate.
+ *
+ * The route stays ungated in App.jsx like every other page; this is the guard.
+ * `reason` overrides the default "ask an administrator under Roles" copy, which
+ * would be a lie here: no grant under Roles opens this page.
+ */
 export default function EventPerformancePage() {
-  const { canView } = useSession();
+  const { isAdmin } = useSession();
   const toast = useToast();
   const [drawerRow, setDrawerRow] = useState(null);
-  const { data: perfRows } = useFetch(perfApi.list, [], { initialData: [] });
+  const { data: perfRows } = useFetch(
+    isAdmin ? perfApi.list : () => Promise.resolve([]),
+    [isAdmin],
+    { initialData: [] },
+  );
 
   const rows = useMemo(() => (perfRows || []).map((e, i) => ({
     id: e.event_code, event_code: e.event_code, name: e.event_name, status: e.status,
     reps: 0, followups: 0, mailshots: 0, notes: 0, bookings: e.total_delegates, offset: i,
   })), [perfRows]);
 
-  if (!canView('performance')) return <NoAccessPage module="Event Performance" />;
+  if (!isAdmin) {
+    return (
+      <NoAccessPage
+        module="Event Performance"
+        reason="Event performance figures are restricted to administrators. This page is not part of the module permissions, so it cannot be granted under Roles."
+      />
+    );
+  }
+
 
   return (
     <>

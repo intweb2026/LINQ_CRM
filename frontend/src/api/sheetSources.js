@@ -1,7 +1,7 @@
 // Google Sheet sources — /api/reports/sources/ (backend/reports/views.py
 // GoogleSheetSourceViewSet).
 //
-// The only caller is AddSheetModal, reached from the Google Sync page.
+// The only caller is AddSheetSourceModal, reached from the Google Sync page.
 // These two calls are all that is left of the old api/reports.js: the Reports
 // page that listed, synced and previewed these sources is gone, so a source
 // registered here is a stored connection and nothing reads its rows.

@@ -1,3 +1,195 @@
 @import './styles/base.css';
 @import './styles/components.css';
 @import './styles/overlays.css';
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   CSS MAP — where to find the rule you want to change
+   ═════════════════════════════════════════════════════════════════════════════
+
+   HOW TO USE THIS FILE
+   Find the thing you want to restyle in the tables below, take its tag, and
+   search the whole styles/ folder for that tag in square brackets.
+
+       search:  [table_column_header]
+       lands:   styles/components.css, the section holding .th-sort, .th-flt,
+                .th-flt-btn, .th-w, .th-sp, .th-nosort
+
+   Exactly one hit per tag is the section that OWNS those rules, and it is
+   always the hit sitting on a ruled header line, one starting with ═══ or ──.
+   A handful of tags also turn up inside ordinary rule comments; those are
+   cross-references pointing at the owning section, not a second home, and
+   they are there because the two blocks have to be read together.
+
+   Three rules keep this map honest, and breaking any of them makes the map
+   worse than having none.
+     1. Adding a section means adding its tag here. A tag that is only in the
+        stylesheet is invisible; a tag that is only here is a dead end.
+     2. Tags never move between files. If a block is relocated, move its row
+        to the right table below at the same time.
+     3. A tag names WHERE rules live, not what they do. The reasoning is in
+        the comments on the rules themselves; do not restate it here, because
+        two copies of an explanation is one copy that goes stale.
+
+   THE THREE FILES, AND WHY THE SPLIT IS WHERE IT IS
+   base.css       the ground everything else stands on; the theme tokens, the
+                  reset, and the two pieces of chrome that are always on
+                  screen and are always position:fixed, the rail and the
+                  topbar. Nothing here belongs to one page.
+   components.css everything that lives INSIDE #main; the parts a page is
+                  assembled out of, from a button up to the whole data table.
+   overlays.css   the dashboard, and everything that floats ABOVE a page;
+                  scrims, drawers, modals, the command palette, toasts, plus
+                  the login screen, which is its own full-viewport layout, and
+                  the media queries, which have to come last.
+
+   ─────────────────────────────────────────────────────────────────────────────
+   START HERE — the question you are most likely arriving with
+   ─────────────────────────────────────────────────────────────────────────────
+   "I want to change ..."                      search for
+   the left sidebar, its icons or its widths   [sidebar_rail]
+   the sidebar when it is collapsed            [sidebar_rail_collapsed]
+   the bar across the top of every page        [topbar]
+   the search box in that top bar              [topbar_search_trigger]
+   the search overlay that box opens           [command_palette]
+   a colour, a radius, a shadow, dark mode     [theme_tokens]
+   any button, anywhere                        [buttons]
+   any text box, dropdown, checkbox, toggle    [form_inputs]
+   the list table on Bookings, Events, etc     [table_shell]
+   how wide the table columns are              [table_grid_widths]
+   the clickable column headings and funnels   [table_column_header]
+   a cell you can click and edit in place      [table_cell_editable]
+   the row of page numbers under a table       [table_footer_pagination]
+   the black bar shown when rows are ticked    [table_bulk_selection_bar]
+   the row of controls above a table           [table_toolbar]
+   the little blue "filter applied" chips      [table_toolbar_filter_chips]
+   the Filters panel those chips open          [filter_panel_search]
+   the same panel in its full-height form      [filter_panel_large]
+   the calendar that opens on a date field     [datepicker_calendar]
+   any dialog box, and its header or footer    [modal]
+   the panel that slides in from the right     [drawer]
+   how form fields are laid out in a dialog    [form_sections_grid]
+   a field greyed out because of permissions   [form_locked_fields]
+   the Import wizard's steps or drop area      [import_wizard_steps]
+                                               [import_dropzone]
+   the pop-up messages in the bottom corner    [toasts]
+   the login screen                            [login_page]
+   what happens on a narrow screen or phone    [responsive_breakpoints]
+
+   ─────────────────────────────────────────────────────────────────────────────
+   BY PAGE — every page, and the tags that dress it
+   ─────────────────────────────────────────────────────────────────────────────
+   Every page also carries [sidebar_rail], [topbar] and [layout_main], so those
+   are not repeated on each line below.
+
+   Dashboard              [dashboard_grid] [dashboard_hero]
+                          [dashboard_date_filter] [dashboard_action_queue]
+                          [dashboard_pipeline_bars] [dashboard_donut]
+                          [dashboard_bar_chart] [dashboard_accordion]
+                          [dashboard_event_strip] [dashboard_activity_feed]
+                          [kpi_cards]
+   Bookings               [table_shell] [table_toolbar] [table_column_header]
+                          [table_cell_editable] [table_footer_pagination]
+                          [table_bulk_selection_bar] [modal]
+                          [form_sections_grid] [table_cells] for the pinned
+                          delegate columns in the booking dialogs
+   Events                 as Bookings, plus [drawer] for the event drawer and
+                          [cards_empty_state] for the card view
+   Ticket Central         as Bookings, plus [kanban_board] for the board view
+                          and [richtext_editor] in the ticket dialog
+   Paper Review           as Bookings, plus [import_wizard_steps]
+                          [import_dropzone] [import_column_mapping]
+   Proposal Submission    same set as Paper Review
+   Event Performance      [table_shell] [kpi_cards] [tabs]
+   Google Sync            [table_shell] [modal] [form_sections_grid]
+   Users                  [table_shell] [table_cells] [drawer] [modal]
+                          [avatars_identity]
+   Teams Management       [cards_empty_state] [modal] [drawer]
+   Team Permissions       [permission_matrix] [role_cards]
+   Webhook Logs           [table_shell] [drawer] [drawer_json_block]
+   Data API Keys          [table_shell] [modal]
+   Login                  [login_page]
+   Public paper form      [form_sections_grid] [form_inputs] [buttons]
+
+   ─────────────────────────────────────────────────────────────────────────────
+   styles/base.css — tokens, reset, and the always-on chrome
+   ─────────────────────────────────────────────────────────────────────────────
+   [theme_tokens]              every custom property; the neutral and teal
+                               ramps, status colours, radii, shadows, the two
+                               fonts, and the dark-theme overrides
+   [global_reset_scrollbar]    the reset, ::selection, the custom scrollbars,
+                               .sr for screen-reader-only text, .skip
+   [layout_app_shell]          #app
+   [sidebar_rail]              .rail and every .rail- part of it
+   [sidebar_rail_collapsed]    what changes when the rail is narrowed
+   [sidebar_rail_tooltip]      the label that appears beside a collapsed icon
+   [topbar]                    .top, the breadcrumb, the icon buttons
+   [topbar_search_trigger]     .top-search, the button that opens the palette
+
+   ─────────────────────────────────────────────────────────────────────────────
+   styles/components.css — the parts a page is built from
+   ─────────────────────────────────────────────────────────────────────────────
+   [layout_main]               #main, the scrolling area every page renders in
+   [page_head_actions]         .ph, the action row at the top of a page
+   [buttons]                   .btn and all its variants
+   [form_inputs]               .fd .fd-l .in .ck .sw .sel-trigger .req
+   [avatars_identity]          .av sizes and stacks, .who name-plus-subtitle
+   [kpi_cards]                 .kpi, and the .pill- colours it uses
+   [tabs]                      .tabs .tab
+   [badges_pills]              .bg .tg .mono .lnk .dim
+   [table_toolbar]             .tb .seg .chip, the controls above a table
+   [table_toolbar_filter_chips].fch .fc, one chip per active filter, .dt-busy
+   [popover_menu]              .pop, the floating menu every dropdown sits in
+   [select_dropdown]           .sel-search .sel-o .sel-none, searchable Select
+   [filter_advanced_rows]      .flt-row .vti-, one built condition
+   [filter_date_condition]     .dflt, a date condition and its Between pair
+   [datepicker_calendar]       .dpk, the hand-built calendar
+   [filter_panel_search]       .pop-hd .flt-search .flt-pill .flt-op
+   [filter_panel_large]        .pop-lg, the same panel at full height
+   [table_shell]               .tw .tsc .dt-tw, the table box and its scroller
+   [table_grid_widths]         .dt-grid .dt-form and the column alignment rule
+   [table_column_header]       .th-sort .th-flt .th-flt-btn .th-w .th-sp
+   [table_cells]               row, cell, .num, identity and sticky cells
+   [table_cell_editable]       .ec, a cell that opens an editor when clicked
+   [table_footer_pagination]   .tf .pgr .pgb .pge .more .spin
+   [table_bulk_selection_bar]  .bulk, the floating bar for ticked rows
+   [cards_empty_state]         .cg .rc .card .sl .mt
+   [bulk_update_modal]         .bu-, the Mass Update dialog
+
+   ─────────────────────────────────────────────────────────────────────────────
+   styles/overlays.css — the dashboard, and everything floating above a page
+   ─────────────────────────────────────────────────────────────────────────────
+   [dashboard_grid]            .dg, the responsive tile grid
+   [dashboard_hero]            .hero and .qa, the banner and its quick actions
+   [dashboard_date_filter]     .dfl, the range control on the page ground
+   [dashboard_action_queue]    .aq
+   [dashboard_pipeline_bars]   .pl .bar .bar-lg
+   [dashboard_donut]           .dn
+   [dashboard_bar_chart]       .bc, and .spk for the sparklines
+   [dashboard_accordion]       .ac
+   [dashboard_event_strip]     .ev-, plus .cv and .shr, the small meters
+   [dashboard_activity_feed]   .af
+   [overlay_scrim]             .scrim and .modal-scrim, the dimmed backdrops
+   [drawer]                    .dr, the panel that slides in from the right
+   [drawer_form_layout]        how .fg and .fd-h re-flow inside a drawer
+   [drawer_readout_pairs]      .ro, label-over-value pairs
+   [drawer_mini_stats]         .ms
+   [drawer_timeline]           .tl
+   [drawer_notes]              .nt
+   [drawer_json_block]         .jsn, raw JSON and stack traces
+   [modal]                     .mw .md .md-h .md-b .md-f, and the size classes
+   [modal_body_fill]           .md-b.fill, a modal whose body is itself a grid
+   [form_sections_grid]        .fs .fg .fcol .fd-h, the form layout system
+   [form_locked_fields]        disabled and read-only fields, .in-ro, .fs-ro
+   [form_link_field]           .fd-lnk, a URL field with an open button
+   [richtext_editor]           .rt-, the editor and its rendered output
+   [import_wizard_steps]       .wz, the numbered step rail
+   [import_dropzone]           .dz, the file drop area
+   [import_column_mapping]     .mp .vr .pt, mapping rows, results, progress
+   [kanban_board]              .kb .kc .kk, Ticket Central's board view
+   [permission_matrix]         .pm, the tick grid and its inherited tints
+   [role_cards]                .rcd .prm
+   [command_palette]           .plw .pl-, the overlay Ctrl+K opens
+   [toasts]                    .tst .ts
+   [login_page]                .lgn .lg-
+   [responsive_breakpoints]    every @media query; keep it last in the file
+   ═════════════════════════════════════════════════════════════════════════ */

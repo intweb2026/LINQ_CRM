@@ -85,6 +85,59 @@ BUSINESS_FIELDS = [
 ]
 
 
+def create_review_with_workflows(serializer, request):
+    """
+    Save one paper review and run both Zoho ADD workflows. Returns
+    (review, proposal, created, peers).
+
+    A5. ATOMIC — the review and its proposal are one write or neither.
+
+    If the proposal cannot be created the ValidationError propagates out of the
+    atomic block, the review is rolled back with it, and the 400 names the
+    reason. Per-object save() throughout; never bulk_create.
+
+    The Part B send is registered with transaction.on_commit INSIDE the block, so
+    a rollback discards the callback and no email goes out for a review that does
+    not exist (B6, and the other half of A5).
+
+    `request` supplies the author: request.user is stamped on created_by, is
+    handed to the proposal bridge, and names the ActionLog entry. The public MRE
+    form passes a request whose user is the reviewer the form link belongs to, so
+    an externally submitted review is attributed to that person and not to
+    nobody. See paper_review/public_form.py.
+    """
+    from accounts.models import ActionLog
+
+    with transaction.atomic():
+        review = serializer.save(created_by=request.user)
+
+        try:
+            proposal, created, peers = create_proposal_for_review(review, request)
+        except ProposalBridgeError as exc:
+            detail = {"detail": exc.message}
+            if exc.errors:
+                detail["proposal_submission"] = exc.errors
+            raise ValidationError(detail) from exc
+
+        # A10. ONE entry, naming both ids.
+        ActionLog.objects.create(
+            user=request.user,
+            action=f"Created paper review #{review.id} → proposal "
+                   f"submission #{proposal.id}",
+            details=f"Speaker: {review.speaker_name}, "
+                    f"Event: {review.event_code}, "
+                    f"Score: {review.proposal_score}/{RUBRIC_TOTAL}, "
+                    f"Grade: {review.grade or '—'}, "
+                    f"Proposal: {'created' if created else 'already existed'}",
+        )
+
+        transaction.on_commit(
+            lambda: send_paper_review_notification(review)
+        )
+
+    return review, proposal, created, peers
+
+
 class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                          viewsets.ModelViewSet):
     """
@@ -218,29 +271,39 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # had to be found in both.
 
     # ── Compound filter engine ────────────────────────────────────────────────
-    filter_spec_fields = build_filter_spec_fields(
-        PaperReview,
-        # Provenance and audit columns: import_batch_id has its own purpose-built
-        # filter in filters.py, and filtering on who last touched a row is not a
-        # use case anyone has asked for.
-        exclude=("created_by", "updated_by", "import_batch_id"),
-        labels={
-            "event_code": "Event Code",
-            "paper_submission_date": "Paper Submission Date",
-            "email": "Email Address of the Speaker",
-            "linkedin_speaker": "LinkedIn — Speaker",
-            "linkedin_company": "LinkedIn — Company",
-            "linkedin_followers": "LinkedIn Followers",
-            "nos": "NOS?",
-            "proposal_score": "Proposal Score",
-            "session_location_on_agenda": "Session or Location on Agenda",
-            "internal_footnotes": "Internal Footnotes",
-            "feedback_to_speaker": "Feedback to Speaker",
-            "speaker_email_ref": "Speaker Email Ref",
-            "research_email_ref": "Research Email Ref",
-            **{f: FIELD_TO_LABEL[f] for f in CRITERIA_FIELDS},
-        },
-    )
+    filter_spec_fields = {
+        # duplicate_count is the correlated Subquery get_queryset() attaches, not
+        # a column, so build_filter_spec_fields cannot find it — and the grid's
+        # "Duplicate?" marker was therefore filtered in the browser over the
+        # loaded rows alone. filter_spec runs AFTER get_queryset(), so the
+        # annotation is on the queryset by the time a criterion names it and the
+        # count is evaluated per row by the database.
+        "duplicate_count": {"type": "number", "label": "Duplicate?",
+                            "source": "duplicate_count"},
+        **build_filter_spec_fields(
+            PaperReview,
+            # Provenance and audit columns: import_batch_id has its own purpose-built
+            # filter in filters.py, and filtering on who last touched a row is not a
+            # use case anyone has asked for.
+            exclude=("created_by", "updated_by", "import_batch_id"),
+            labels={
+                "event_code": "Event Code",
+                "paper_submission_date": "Paper Submission Date",
+                "email": "Email Address of the Speaker",
+                "linkedin_speaker": "LinkedIn — Speaker",
+                "linkedin_company": "LinkedIn — Company",
+                "linkedin_followers": "LinkedIn Followers",
+                "nos": "NOS?",
+                "proposal_score": "Proposal Score",
+                "session_location_on_agenda": "Session or Location on Agenda",
+                "internal_footnotes": "Internal Footnotes",
+                "feedback_to_speaker": "Feedback to Speaker",
+                "speaker_email_ref": "Speaker Email Ref",
+                "research_email_ref": "Research Email Ref",
+                **{f: FIELD_TO_LABEL[f] for f in CRITERIA_FIELDS},
+            },
+        ),
+    }
 
     def get_filter_spec_fields(self):
         """
@@ -366,48 +429,16 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
 
     def perform_create(self, serializer):
         """
-        A5. ATOMIC — the review and its proposal are one write or neither.
+        A5 and B6, both of them, live in create_review_with_workflows below.
 
-        If the proposal cannot be created the ValidationError propagates out of
-        the atomic block, the review is rolled back with it, and the 400 names the
-        reason. Per-object save() throughout; never bulk_create.
-
-        The Part B send is registered with transaction.on_commit INSIDE the block,
-        so a rollback discards the callback and no email goes out for a review that
-        does not exist (B6, and the other half of A5).
+        This is a two-line method on purpose: the public MRE form
+        (paper_review/public_form.py) has to run the SAME two workflows, and a
+        second copy of them is how a form submission quietly becomes an import —
+        a review with no proposal and no email.
         """
-        from accounts.models import ActionLog
-
-        with transaction.atomic():
-            review = serializer.save(created_by=self.request.user)
-
-            try:
-                proposal, created, peers = create_proposal_for_review(
-                    review, self.request)
-            except ProposalBridgeError as exc:
-                detail = {"detail": exc.message}
-                if exc.errors:
-                    detail["proposal_submission"] = exc.errors
-                raise ValidationError(detail) from exc
-
-            # A10. ONE entry, naming both ids.
-            ActionLog.objects.create(
-                user=self.request.user,
-                action=f"Created paper review #{review.id} → proposal "
-                       f"submission #{proposal.id}",
-                details=f"Speaker: {review.speaker_name}, "
-                        f"Event: {review.event_code}, "
-                        f"Score: {review.proposal_score}/{RUBRIC_TOTAL}, "
-                        f"Grade: {review.grade or '—'}, "
-                        f"Proposal: {'created' if created else 'already existed'}",
-            )
-
-            transaction.on_commit(
-                lambda: send_paper_review_notification(review)
-            )
-
+        review, *result = create_review_with_workflows(serializer, self.request)
         # Read by create() to build the response envelope.
-        self._proposal_result = (proposal, created, peers)
+        self._proposal_result = tuple(result)
 
     def create(self, request, *args, **kwargs):
         """

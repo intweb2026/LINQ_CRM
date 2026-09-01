@@ -45,38 +45,49 @@ const proseCell = (v) => {
 };
 
 const PROPOSAL_COLS = [
+  /* EVERY column declares `serverField`. It is what routes a filter condition to
+     Django; without it DataTable re-applies the condition in the BROWSER, over
+     the rows already fetched. Not one column here carried it, so the comment
+     below — that a text condition on these is "evaluated by the database over
+     every row" — described an intention rather than the behaviour: every filter
+     on this table narrowed the loaded page and the footer counted that page. The
+     names match backend/proposal_submission/views.py filter_spec_fields exactly, which is the
+     registry the schema endpoint advertises and the only thing a criterion is
+     allowed to name. A new column needs its entry there before it can have one
+     here; deny-by-default means an unregistered name is dropped back to the
+     browser rather than 400ing the list. */
   /* event_code and company_name carry NO `opts`. Those dropdowns were
      built by scanning the loaded rows, which under server paging means
      the fifty on screen. Both are registered filter_spec fields, so a
      text condition on either is still evaluated by the database over
      every row. The status columns keep theirs; those lists are constants
      rather than a scan of the data. */
-  { key: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-  { key: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
-  { key: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
+  { key: 'event_code', serverField: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
+  { key: 'submission_date', serverField: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'participation_type', serverField: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
   // Name only — Company Name has its own column; see PaperReviewPage.
-  { key: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
-  { key: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
-  { key: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
+  { key: 'speaker_name', serverField: 'speaker_name', serverOrdering: 'speaker_name', label: 'Speaker Name', group: 'sp', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
+  { key: 'email', serverField: 'email', serverOrdering: 'email', label: 'Email Address', group: 'sp', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
+  { key: 'company_name', serverField: 'company_name', serverOrdering: 'company_name', label: 'Company Name', group: 'sp' },
   /* ExtLink rather than a hand-rolled <a>: it resolves the href (an anchor-wrapped
      or scheme-less cell is otherwise a link to nowhere), refuses to linkify text
      that is not an address, opens in its own tab with no handle back to this one,
      and stops the click reaching the row's own open-the-record handler. */
-  { key: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
-  { key: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
-  { key: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-  { key: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
-  { key: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
-  { key: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
-  { key: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
-  { key: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
-  { key: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: proseCell },
-  { key: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
-  { key: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
-  { key: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
-  { key: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
-  { key: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
-  { key: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
+  { key: 'linkedin_speaker', serverField: 'linkedin_speaker', serverOrdering: 'linkedin_speaker', label: 'LinkedIn (Speaker)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
+  { key: 'linkedin_company', serverField: 'linkedin_company', serverOrdering: 'linkedin_company', label: 'LinkedIn (Company)', group: 'sp', cell: (v) => <ExtLink value={v} className="mono lnk" style={{ fontSize: 11 }} /> },
+  { key: 'linkedin_followers', serverField: 'linkedin_followers', serverOrdering: 'linkedin_followers', label: 'LinkedIn Followers', group: 'sp', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+  { key: 'qc_grade', serverField: 'qc_grade', serverOrdering: 'qc_grade', label: 'QC Grade', group: 'qc', cell: (v) => (v ? <Dot tone={QC_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => QC_GRADES },
+  { key: 'qc_score', serverField: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
+  { key: 'presentation_theme', serverField: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
+  { key: 'sales_pitch_factor', serverField: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
+  { key: 'agenda_slot', serverField: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
+  { key: 'agenda_addition', serverField: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: proseCell },
+  { key: 'speaker_slot_status', serverField: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
+  { key: 'sponsorship_status', serverField: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
+  { key: 'revenue_possibility', serverField: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
+  { key: 'spex_remarks', serverField: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
+  { key: 'internal_footnotes_mr', serverField: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
+  { key: 'slot_recommendation_mr', serverField: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
 ];
 
 const PROPOSAL_GROUPS = [

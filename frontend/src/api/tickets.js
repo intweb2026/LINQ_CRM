@@ -3,7 +3,7 @@
 // per the caller's role automatically, so `update()` just PATCHes whatever fields
 // are given, and it refuses a patch that mixes the MR and DMD sections (the ticket
 // form sends only the fields that actually changed, for that reason).
-import { assertIdArray, http, fetchAllPages, fetchPage, mapLimit } from './client';
+import { assertIdArray, chunk, http, fetchAllPages, fetchPage, mapLimit } from './client';
 
 /**
  * submit_dmd requests in flight at once.
@@ -57,6 +57,42 @@ export function create(payload) {
   const { ticket_number, ...body } = payload;
   return http.post('tickets/', body).then((r) => toFrontend(r.data));
 }
+/** Matches the cap in ticket_central/views.py bulk_delete; past it, a 400. */
+const BULK_DELETE_MAX = 1000;
+
+/** Delete one ticket. TicketViewSet.perform_destroy writes the ActionLog row. */
+export function remove(id) {
+  return http.delete(`tickets/${id}/`).then(() => true);
+}
+
+/**
+ * Delete tickets, in batches the endpoint will accept.
+ *
+ * A single row goes through DELETE /tickets/{id}/ rather than bulk_delete, and
+ * that is not a micro-optimisation: bulk_delete is IsAdminRole, while the
+ * per-row destroy is gated by crm_permission('ticket_central') — so routing one
+ * row through the batch endpoint would 403 an MR deleting a ticket they are
+ * allowed to delete. Batches are sequential, so the totals returned describe
+ * what actually happened up to any failure rather than a half-known state.
+ */
+export async function bulkRemove(ids) {
+  assertIdArray(ids, 'tickets.bulkRemove');
+  if (ids.length === 1) {
+    await remove(ids[0]);
+    return { deleted: 1, requested: 1, permitted: 1, out_of_scope: 0 };
+  }
+  const totals = { deleted: 0, requested: 0, permitted: 0, out_of_scope: 0 };
+  for (const batch of chunk(ids, BULK_DELETE_MAX)) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await http.post('tickets/bulk_delete/', { ids: batch }).then((r) => r.data);
+    totals.deleted += res.deleted || 0;
+    totals.requested += res.requested || 0;
+    totals.permitted += res.permitted || 0;
+    totals.out_of_scope += res.out_of_scope || 0;
+  }
+  return totals;
+}
+
 export function bulkSubmit(ids) {
   assertIdArray(ids, 'tickets.bulkSubmit');
   return mapLimit(ids, SUBMIT_CONCURRENCY, (id) => submitToDMD(id).then(() => 1).catch(() => 0))

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import Modal from '../../components/Modal';
+import Drawer from '../../components/Drawer';
 import Select from '../../components/Select';
 import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
@@ -16,12 +17,26 @@ import { apiErrorMessage } from '../../api/client';
 /**
  * Ticket Central's one form, used for both New and Edit.
  *
+ * Presented as a right-hand DRAWER rather than the full-screen modal it used to
+ * be. Nothing about the form itself changed with that move: the same sections,
+ * the same fields, the same order, the same permission gating. The drawer simply
+ * leaves the table on screen behind it, so closing a ticket returns the reader to
+ * the row they opened rather than to wherever the virtualiser rebuilds.
+ *
  * Layout mirrors the Zoho Creator form this module replaces, field for field and
  * column for column: a "Ticket Hub" section (what MR raises) then a "For DMD"
  * section (what Data Mining fills in). Both are three COLUMNS read top to bottom,
  * which is why each is a .fcol stack inside the grid rather than the row-major .fg
- * the other modals use — .fg alone would deal the fields across the rows and the
- * order would no longer match the form people already know.
+ * the other overlays use — .fg alone would deal the fields across the rows and the
+ * order would no longer match the form people already know. Inside .dr-b that grid
+ * collapses to ONE column (see overlays.css), so the three stacks run on end to
+ * end and the field order survives the narrower frame intact.
+ *
+ * The Return-to-MR dialog below stays a Modal, and stays a SIBLING of the drawer
+ * rather than a child: .dr slides in on a transform, which makes it a containing
+ * block for position:fixed, so a modal nested inside it would be laid out within
+ * the drawer and clipped by .dr-b's overflow. .mw sits at z-index 110 against the
+ * drawer's 100, so as a sibling it lands on top.
  *
  * Add and Edit are the same component on purpose. The two drifted apart in the
  * Zoho app and users learned two different layouts for one record; here a field
@@ -79,12 +94,47 @@ function outValue(key, raw) {
 const errText = apiErrorMessage;
 
 // .fd-h puts the label beside the field, right-aligned against it, the way the
-// Zoho form does — see overlays.css. Collapses to label-above on a narrow screen.
-function Field({ label, req, children }) {
+// Zoho form does — see overlays.css. Collapses to label-above in a drawer and on
+// a narrow screen.
+
+// Past this many characters a read-out value takes the whole grid row instead of
+// one narrow column of it. Roughly a column's worth at the drawer's width, so a
+// comment or a keyword list gets the space to wrap and a date or a count does not
+// waste it.
+const WIDE_AT = 40;
+
+/**
+ * A labelled field — and, where the control is locked, the VALUE of that field
+ * rather than an inert box around it.
+ *
+ * An <input> cannot wrap. So a locked field showed one line and silently clipped
+ * the rest, which is fine for a date or a count and wrong for MR Comments, the
+ * LinkedIn keywords and the link itself: those are prose the DMD team is being
+ * asked to work FROM, and Data Mining sees every MR field locked. Rendered as
+ * text the value wraps in full, keeps any line breaks it was typed with, and
+ * claims the full row once it is longer than a column.
+ *
+ * The control element already carries both facts — `disabled` says the section is
+ * locked for this viewer, `value` is what it holds — so they are read off it here
+ * rather than passed again at all thirty-odd call sites. `full` is for the one
+ * field whose control is wrapped in a layout div, so those props are not on the
+ * child element to be read.
+ */
+export function readOut(props, full) {
+  const p = props || {};
+  const ro = p.disabled === true && p.value !== undefined;
+  const v = ro ? p.value : null;
+  return { ro, v, wide: Boolean(full) || (ro && typeof v === 'string' && v.length > WIDE_AT) };
+}
+
+function Field({ label, req, full, children }) {
+  const { ro, v, wide } = readOut(children && children.props, full);
   return (
-    <div className="fd fd-h">
+    <div className={'fd fd-h' + (wide ? ' f' : '')}>
       <label className="fd-l">{label}{req ? <span className="req">*</span> : null}</label>
-      {children}
+      {ro
+        ? <div className="in-ro">{v === '' || v == null ? <span className="dim">—</span> : v}</div>
+        : children}
     </div>
   );
 }
@@ -236,18 +286,22 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
 
   return (
     <>
-      <Modal size="full" onClose={onClose}
-        title="Ticket Central"
-        sub={isNew ? 'New ticket — Market Research raises it, Data Mining works the queue.'
-          : [ticket.ticket_number, ticket.purpose, ticket.type_of_ticket].filter(Boolean).join(' · ')}
-        footJustify={isNew ? undefined : 'space-between'}
-        footer={isNew ? (
+      <Drawer wide onClose={onClose}
+        head={<>
+          <h2>Ticket Central</h2>
+          <p>{isNew ? 'New ticket — Market Research raises it, Data Mining works the queue.'
+            : [ticket.ticket_number, ticket.purpose, ticket.type_of_ticket].filter(Boolean).join(' · ')}</p>
+        </>}
+        foot={isNew ? (
           <>
             <button className="btn btn-s" onClick={onClose}>Cancel</button>
             <button className="btn btn-p" disabled={saving || !mrOpen} onClick={create}><Icon name="check" size={15} />Create Ticket</button>
           </>
         ) : (
-          <>
+          /* .dr-f is justify-content:flex-end, so the two groups are held apart by
+             a flex:1 row of their own rather than by the footJustify the Modal
+             took — the transitions stay away from Save the way they did before. */
+          <div style={{ display: 'flex', flex: 1, gap: 7, flexWrap: 'wrap', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
               {canAct && (status === 'draft' || status === 'returned')
                 ? <button className="btn btn-s" disabled={saving} onClick={submit}><Icon name="send" size={15} />{status === 'returned' ? 'Resubmit' : 'Submit to DMD'}</button> : null}
@@ -260,10 +314,13 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
               <button className="btn btn-s" onClick={onClose}>Close</button>
               <button className="btn btn-p" disabled={saving || !dirty} onClick={save}><Icon name="check" size={15} />Save changes</button>
             </div>
-          </>
+          </div>
         )}>
 
-        <div className="fs">
+        {/* Locked for this viewer, so the section renders as a read-out — the
+            fields stay put and the brief stops costing a screen of dead boxes.
+            See .fs-ro in overlays.css. */}
+        <div className={'fs' + (mrOpen ? '' : ' fs-ro')}>
           <div className="fs-t"><Icon name="target" size={13} />Ticket Hub</div>
           {mrLock ? <div className="hint" style={{ marginBottom: 10 }}>{mrLock}</div> : null}
           <div className="fg c3">
@@ -271,9 +328,14 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
               <Field label="Purpose" req>
                 <input className="in" placeholder="e.g. CCU" value={form.purpose} onChange={set('purpose')} disabled={!mrOpen} />
               </Field>
-              <Field label="Link URL" req>
+              <Field label="Link URL" req full={!mrOpen}>
                 <div className="fd-lnk">
-                  <input className="in" placeholder="https://…" value={form.link_url} onChange={set('link_url')} disabled={!mrOpen} />
+                  {/* Read-only, this is a URL a miner has to be able to read in
+                      full — so text that wraps, not an input that clips it. The
+                      open-in-a-tab arrow stays either way. */}
+                  {mrOpen
+                    ? <input className="in" placeholder="https://…" value={form.link_url} onChange={set('link_url')} disabled={!mrOpen} />
+                    : <div className="in-ro brk">{form.link_url || <span className="dim">—</span>}</div>}
                   {/* Opens what the field currently holds, resolved the same way the
                       table's link column resolves it — so a value with no scheme
                       goes to the site rather than back to the CRM. */}
@@ -327,7 +389,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
           </div>
         </div>
 
-        <div className="fs">
+        <div className={'fs' + (dmdOpen ? '' : ' fs-ro')}>
           <div className="fs-t"><Icon name="sheet" size={13} />For DMD</div>
           {dmdLock ? <div className="hint" style={{ marginBottom: 10 }}>{dmdLock}</div> : null}
           <div className="fg c3">
@@ -450,7 +512,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
             </div>
           </div>
         )}
-      </Modal>
+      </Drawer>
 
       {returning ? (
         <Modal size="sm" title="Return to Market Research" sub={ticket.ticket_number} onClose={() => setReturning(false)}

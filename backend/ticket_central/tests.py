@@ -313,11 +313,16 @@ class CoerceRowTests(TestCase):
         result = _coerce_row(row)
         self.assertEqual(result["status"], "mr_submitted")
 
-    def test_internal_keys_stripped_from_output(self):
-        row = {"purpose": "CEU", "created_at": "2024-01-01T00:00:00Z"}
+    def test_timestamps_come_back_under_their_internal_keys(self):
+        row = {"purpose": "CEU", "created_at": "2024-01-01T00:00:00Z",
+               "Modified Time": "2024-02-02 10:00:00"}
         result = _coerce_row(row)
-        # _modified_time is always stripped; _preserved_created_at is kept
-        self.assertNotIn("_modified_time", result)
+        # Both are auto fields, so neither may reach Ticket.objects.create();
+        # the importer writes them with a queryset update afterwards.
+        self.assertIn("_preserved_created_at", result)
+        self.assertIn("_modified_time", result)
+        self.assertNotIn("created_at", result)
+        self.assertNotIn("updated_at", result)
 
     def test_external_id_in_writable_fields(self):
         """TC-IMPORT-11 dependency: external_id must not be filtered out."""
@@ -563,9 +568,10 @@ class CRUDTests(APITestCase):
     def test_create_assigns_ticket_number_when_purpose_present(self):
         """
         ticket_number is assigned AT CREATE, not overnight — supersedes D9.
-        Format is '{type}-{purpose} {n}' (utils.build_ticket_number), and
-        extract_purpose_code only strips whitespace, so the purpose text is
-        embedded verbatim.
+        Format is '{type}-{purpose} {n}' (utils.build_ticket_number). The
+        purpose is upper-cased, not embedded verbatim: extract_purpose_code
+        normalises it so that case variants of one code cannot open separate
+        counters.
         """
         auth(self.client, self.mr)
         resp = self.client.post("/api/tickets/", {
@@ -574,7 +580,7 @@ class CRUDTests(APITestCase):
         self.assertEqual(resp.status_code, 201)
         ticket = Ticket.objects.get(pk=resp.data["id"])
         self.assertNotEqual(ticket.ticket_number, "")
-        self.assertTrue(ticket.ticket_number.startswith("BX-Numbered "))
+        self.assertTrue(ticket.ticket_number.startswith("BX-NUMBERED "))
 
     def test_create_without_purpose_is_rejected(self):
         """
@@ -602,7 +608,8 @@ class CRUDTests(APITestCase):
         resp = self.client.get(f"/api/tickets/{t.id}/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["id"], t.id)
-        self.assertEqual(resp.data["purpose"], "Retrieve Me")
+        # purpose is stored upper-case, so the API echoes the stored form.
+        self.assertEqual(resp.data["purpose"], "RETRIEVE ME")
 
     def test_mr_can_update_mr_fields_in_draft(self):
         auth(self.client, self.mr)
@@ -611,7 +618,7 @@ class CRUDTests(APITestCase):
                                  {"purpose": "Updated", "type_of_ticket": "BX"}, format="json")
         self.assertEqual(resp.status_code, 200)
         t.refresh_from_db()
-        self.assertEqual(t.purpose, "Updated")
+        self.assertEqual(t.purpose, "UPDATED")
 
     def test_mr_cannot_update_after_submitted(self):
         auth(self.client, self.mr)
@@ -860,7 +867,7 @@ class BulkImportTests(APITestCase):
         ], mode="upsert_by_external_id")
         self.assertEqual(resp.data["updated"], 1)
         t = Ticket.objects.get(external_id="ZHO-UPD-001")
-        self.assertEqual(t.purpose, "Updated Purpose")
+        self.assertEqual(t.purpose, "UPDATED PURPOSE")
 
     def test_in_batch_duplicate_create_skipped(self):
         """F3 create path: second occurrence of same external_id in one batch is skipped."""
@@ -885,7 +892,7 @@ class BulkImportTests(APITestCase):
         # Only one update should happen; second should be caught by seen_in_batch
         self.assertEqual(resp.data["updated"], 1)
         t = Ticket.objects.get(external_id="ZHO-DUPU-001")
-        self.assertEqual(t.purpose, "First Update")
+        self.assertEqual(t.purpose, "FIRST UPDATE")
 
     def test_cross_batch_skip_works(self):
         """F2: external_id inserted in batch 1 should be skipped in batch 2."""

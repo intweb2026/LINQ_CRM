@@ -18,9 +18,13 @@ import TeamActivityDrawer from './teams/TeamActivityDrawer';
 import TeamFormModal from './teams/TeamFormModal';
 import { apiErrorMessage } from '../api/client';
 
-function Card({ u, metric, onDragStart, onDragEnd }) {
+function Card({ u, metric, canEdit, onDragStart, onDragEnd }) {
   return (
-    <div className="kk" draggable="true" onDragStart={() => onDragStart(u.name)} onDragEnd={onDragEnd}>
+    // Dragging a card REASSIGNS the person, so it is a write and belongs behind
+    // the same right as the menu below. A view-only caller could drag one across
+    // the board, watch it snap back and collect "Could not move Ada" — the board
+    // offering a move the server was always going to refuse.
+    <div className="kk" draggable={canEdit ? 'true' : 'false'} onDragStart={() => canEdit && onDragStart(u.name)} onDragEnd={onDragEnd}>
       <div className="kk-r"><Av name={u.name} size="sm" /><span className="kk-i"><span className="kk-n">{u.name}</span><span className="kk-r2">{ROLE_FULL[u.role]}</span></span></div>
       <div className="kk-f">
         <span><Icon name="calendar" size={10} />{u.events_count} events</span>
@@ -31,7 +35,7 @@ function Card({ u, metric, onDragStart, onDragEnd }) {
   );
 }
 
-function Column({ id, name, color, members, isOver, match, secondMetric, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onEdit, onAssignLead, onViewActivity, onArchive }) {
+function Column({ id, name, color, members, isOver, canEdit, match, secondMetric, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onEdit, onAssignLead, onViewActivity, onArchive }) {
   const vis = members.filter(match);
   return (
     <div className={'kc' + (isOver ? ' ov' : '')} onDragOver={(e) => { e.preventDefault(); onDragOver(id); }} onDragLeave={() => onDragLeave(id)} onDrop={(e) => { e.preventDefault(); onDrop(id); }}>
@@ -42,17 +46,24 @@ function Column({ id, name, color, members, isOver, match, secondMetric, onDragS
             {({ close }) => (
               <>
                 <div className="pop-t">{name}</div>
-                <button className="pop-i" onClick={() => { close(); onEdit(id); }}><Icon name="edit" size={15} />Edit team</button>
-                <button className="pop-i" onClick={() => { close(); onAssignLead(id); }}><Icon name="star" size={15} />Assign leads</button>
+                {/* Three writes and one read. A caller holding `teams` view but
+                    not update — which is every team manager, and was already
+                    possible from the permission grid — was offered all four and
+                    got a 403 from three of them. View activity is a GET and
+                    stays. */}
+                {canEdit ? <>
+                  <button className="pop-i" onClick={() => { close(); onEdit(id); }}><Icon name="edit" size={15} />Edit team</button>
+                  <button className="pop-i" onClick={() => { close(); onAssignLead(id); }}><Icon name="star" size={15} />Assign leads</button>
+                </> : null}
                 <button className="pop-i" onClick={() => { close(); onViewActivity(id); }}><Icon name="chart" size={15} />View activity</button>
-                <button className="pop-i del" onClick={() => { close(); onArchive(id, name, members.length); }}><Icon name="trash" size={15} />Archive team</button>
+                {canEdit ? <button className="pop-i del" onClick={() => { close(); onArchive(id, name, members.length); }}><Icon name="trash" size={15} />Archive team</button> : null}
               </>
             )}
           </Popover>
         ) : null}
       </div>
       <div className="kc-b">
-        {vis.length ? vis.map((u) => <Card key={u.id} u={u} metric={secondMetric(u)} onDragStart={onDragStart} onDragEnd={onDragEnd} />) : <div className="kc-e">{members.length ? 'No match in this column' : 'No members yet'}</div>}
+        {vis.length ? vis.map((u) => <Card key={u.id} u={u} metric={secondMetric(u)} canEdit={canEdit} onDragStart={onDragStart} onDragEnd={onDragEnd} />) : <div className="kc-e">{members.length ? 'No match in this column' : 'No members yet'}</div>}
       </div>
     </div>
   );
@@ -147,7 +158,7 @@ export default function TeamsManagementPage() {
   }
 
   const columnProps = {
-    match, secondMetric,
+    match, secondMetric, canEdit: can('update', 'teams'),
     onDragStart: setDragName, onDragEnd: () => setDragName(null),
     onDragOver: setDragOverId, onDragLeave: (id) => setDragOverId((cur) => (cur === id ? null : cur)), onDrop: drop,
     onEdit: (id) => setFormTeam(TEAMS.find((t) => t.id === id)),

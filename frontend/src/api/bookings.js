@@ -82,7 +82,34 @@ const OVERRIDE_FIELDS = [
   ['payment_date', 'delegate_payment_date'],
   ['paid_or_free', 'delegate_paid_or_free'],
   ['ticket_tier', 'delegate_ticket_tier'],
+  // Request Date and Invoice Date, which became a pair like the five above when
+  // BookDelegate gained delegate_request_date and delegate_invoice_date. They
+  // were invoice columns and nothing else, so the two cells the modal shows on
+  // every delegate row were ONE shared value; setting one person's request date
+  // set it for everybody on the invoice, and before that the typed value reached
+  // nothing at all. Delegates on one invoice are usually booked on the same day,
+  // which is why the invoice column carries it whenever they agree, but they are
+  // not required to be, and a correction to one row must leave the others alone.
+  ['request_date', 'delegate_request_date'],
+  ['invoice_date', 'delegate_invoice_date'],
 ];
+
+/**
+ * The person-level fields a CLEARED value has to reach the invoice for.
+ *
+ * effective_payment_date is `delegate_payment_date or invoice.payment_date`
+ * (book_delegate/serializers.py), so emptying Date Paid in the modal could not
+ * stick: the override was written as NULL, the invoice kept the old date, and the
+ * resolved value the table reads fell straight back onto it. The cell blanked,
+ * the save returned 200, and the date was back on the next refetch, which is
+ * what made the Booking Code to SPP rule look like it did nothing.
+ *
+ * The three DATE fields are listed and the rest are not. They are the nullable
+ * columns; the others are non-null CharFields whose empty value is '' and whose
+ * blank simply means "nothing to push up", so clearing them on the invoice is
+ * neither expressible nor asked for.
+ */
+const CLEARABLE_ON_INVOICE = ['payment_date', 'request_date', 'invoice_date'];
 
 /** The value every delegate shares for `key`, or undefined if they differ. */
 function agreedValue(delegates, key) {
@@ -103,9 +130,24 @@ function splitPersonLevel(delegates) {
   const inherited = {};
   OVERRIDE_FIELDS.forEach(([uiKey, overrideKey]) => {
     const agreed = agreedValue(delegates, uiKey);
+    const clearable = CLEARABLE_ON_INVOICE.includes(uiKey);
     if (agreed !== undefined && agreed !== '' && agreed !== null) {
       invoiceFields[uiKey] = agreed;
       inherited[overrideKey] = true;
+      return;
+    }
+    // Nothing shared, or shared and empty. A clearable column is NULLed on the
+    // invoice as soon as ANY delegate holds no value, because that row's blank
+    // is otherwise not expressible: it resolves through the invoice and shows
+    // the invoice's date. `inherited` stays unset, so the rows that DO have a
+    // date keep it as an override, which is what an override is for.
+    //
+    // Delegates that merely differ, all of them non-empty, leave the column
+    // alone: each already carries its own override, and blanking the invoice
+    // would take the booking out of the invoice-level Date Paid filters
+    // (book_delegate/filters.py payment_date_from/to) for no gain.
+    if (clearable && delegates.some((d) => !String(d[uiKey] ?? '').trim())) {
+      invoiceFields[uiKey] = null;
     }
   });
   // booking_code is per delegate now (book_delegate/models.py), but revenue
@@ -139,8 +181,13 @@ function toFrontend(d) {
     payment_status: d.effective_payment_status,
     event_code: d.event_code,
     booking_code: d.booking_code || '',
-    request_date: d.request_date,
-    invoice_date: d.invoice_date,
+    // The RESOLVED dates, delegate override first and the invoice's own column
+    // behind it, exactly as payment_status reads effective_payment_status above.
+    // `d.request_date` is still the INVOICE's raw value and is deliberately not
+    // used here; showing it would hide the override the row actually carries.
+    // The `??` chain keeps a payload that predates the override fields working.
+    request_date: d.effective_request_date ?? d.request_date,
+    invoice_date: d.effective_invoice_date ?? d.invoice_date,
     invoice_number: d.invoice_number,
     name: d.full_name,
     company_name: d.company_display || '',
@@ -280,6 +327,8 @@ function delegateToBackend(d, inherited = {}) {
     delegate_payment_date: override('delegate_payment_date', d.payment_date),
     delegate_paid_or_free: override('delegate_paid_or_free', d.paid_or_free),
     delegate_ticket_tier: override('delegate_ticket_tier', d.ticket_tier),
+    delegate_request_date: override('delegate_request_date', d.request_date),
+    delegate_invoice_date: override('delegate_invoice_date', d.invoice_date),
   };
   Object.keys(out).forEach((k) => { if (out[k] === undefined) delete out[k]; });
   return out;

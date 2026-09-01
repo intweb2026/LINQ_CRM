@@ -137,7 +137,9 @@ class EventsFilterSpecTests(TestCase):
         self.assertEqual(s["match_modes"], ["all"])
         wb = s["fields"]["web_bookings"]
         self.assertEqual(wb["type"], "boolean")
-        self.assertEqual(wb["operators"], ["is"])       # not nullable -> no is_empty
+        # not nullable -> no is_empty. is_not is present: it is the backend form
+        # of the table's "Is Not", which had none and fell back to the browser.
+        self.assertEqual(wb["operators"], ["is", "is_not"])
         self.assertNotIn("group", wb)
 
     # ── composition with an existing column filter ────────────────────────────

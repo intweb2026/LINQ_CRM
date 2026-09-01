@@ -25,7 +25,7 @@ from paper_review.notifications import (
     STEP_EVENT_NOT_FOUND, STEP_NO_EVENT_CODE, STEP_NO_SALES_EXECUTIVE,
     resolve_recipients, send_paper_review_notification, subject_for,
 )
-from paper_review.tests import ALERT, _Base, make_event
+from paper_review.tests import ALERT, FIXED_CC, _Base, make_event
 from proposal_submission.models import ProposalSubmission
 
 
@@ -59,19 +59,61 @@ def _review(event_code, **over):
 
 
 class RecipientResolutionTests(_Base):
-    """B2 — the two relations that genuinely carry addresses."""
+    """B2 — the event's sales executive, plus the fixed Cc."""
 
-    def test_sales_executive_is_the_to_and_the_two_roles_are_the_cc(self):
+    def test_sales_executive_is_the_to_and_the_fixed_list_is_the_cc(self):
         got = resolve_recipients(_review(self.event.event_code))
         self.assertFalse(got.is_fallback)
         self.assertEqual(got.to, ["sales.exec@example.com"])
-        self.assertEqual(sorted(got.cc),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        self.assertEqual(got.cc, FIXED_CC)
 
-    def test_assigned_users_outside_the_two_roles_are_not_copied(self):
-        # cls.user is assigned to the event with role "sales".
+    def test_no_assigned_user_is_copied_whatever_their_role(self):
+        """
+        The Cc no longer walks Event.assigned_users. cls.cc_speaker_sales and
+        cls.cc_market_research ARE assigned to this event and carry exactly the
+        two roles the old rule copied; cls.user is assigned with role "sales".
+        None of them may appear.
+        """
         got = resolve_recipients(_review(self.event.event_code))
-        self.assertNotIn("author@example.com", got.to + got.cc)
+        for address in ("speaker.sales@example.com", "market.research@example.com",
+                        "author@example.com"):
+            with self.subTest(address=address):
+                self.assertNotIn(address, got.to + got.cc)
+
+    def test_the_standing_cc_is_the_same_for_an_event_with_nobody_assigned(self):
+        """The point of a standing list: staffing cannot make it shorter."""
+        bare = make_event("BARE - NB")
+        bare.sales_executive = self.sales_exec
+        bare.save()
+        got = resolve_recipients(_review("BARE - NB"))
+        self.assertEqual(got.cc, FIXED_CC)
+
+    def test_the_submitting_mre_is_copied_on_their_own_review(self):
+        got = resolve_recipients(
+            _review(self.event.event_code, created_by=self.user))
+        self.assertEqual(got.to, ["sales.exec@example.com"])
+        self.assertEqual(got.cc, ["author@example.com"] + FIXED_CC)
+
+    def test_a_submitter_who_is_also_the_sales_executive_is_not_duplicated(self):
+        got = resolve_recipients(
+            _review(self.event.event_code, created_by=self.sales_exec))
+        self.assertEqual(got.to, ["sales.exec@example.com"])
+        self.assertEqual(got.cc, FIXED_CC)
+
+    def test_a_review_with_no_submitter_still_resolves(self):
+        """
+        created_by is null on importer and webhook rows. Neither notifies today,
+        but resolution must not depend on that staying true.
+        """
+        got = resolve_recipients(_review(self.event.event_code))
+        self.assertEqual(got.cc, FIXED_CC)
+
+    def test_a_submitter_with_no_address_is_skipped_not_blank_copied(self):
+        self.user.email = "   "
+        self.user.save(update_fields=["email"])
+        got = resolve_recipients(
+            _review(self.event.event_code, created_by=self.user))
+        self.assertEqual(got.cc, FIXED_CC)
 
     def test_the_free_text_event_columns_are_never_consulted(self):
         """
@@ -84,16 +126,14 @@ class RecipientResolutionTests(_Base):
         self.event.save()
         got = resolve_recipients(_review(self.event.event_code))
         self.assertEqual(got.to, ["sales.exec@example.com"])
-        self.assertEqual(sorted(got.cc),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        self.assertEqual(got.cc, FIXED_CC)
 
-    def test_a_sales_executive_who_is_also_assigned_is_not_duplicated(self):
-        self.sales_exec.role = "speaker_sales"
-        self.sales_exec.save()
-        self.sales_exec.assigned_events.add(self.event)
+    @override_settings(PAPER_REVIEW_CC_EMAILS=["Sales.Exec@example.com"] + FIXED_CC)
+    def test_a_sales_executive_who_is_also_on_the_fixed_list_is_not_duplicated(self):
+        """Case-insensitively, since an address list is hand-maintained."""
         got = resolve_recipients(_review(self.event.event_code))
         self.assertEqual(got.to, ["sales.exec@example.com"])
-        self.assertNotIn("sales.exec@example.com", got.cc)
+        self.assertEqual(got.cc, FIXED_CC)
 
 
 class PrecedenceBugTests(_Base):
@@ -113,6 +153,7 @@ class PrecedenceBugTests(_Base):
         self.assertTrue(got.is_fallback)
         self.assertEqual(got.failure_step, STEP_EVENT_NOT_FOUND)
 
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
     def test_an_empty_string_sales_email_does_not_resolve_as_a_recipient(self):
         """The '' case Zoho's precedence let through — guarded explicitly."""
         self.sales_exec.email = ""
@@ -129,11 +170,19 @@ class PrecedenceBugTests(_Base):
         self.sales_exec.email = "   "
         self.sales_exec.save()
         got = resolve_recipients(_review(self.event.event_code))
-        # Cc still resolves, so this degrades rather than falling back.
+        # The fixed Cc still resolves, so this degrades rather than falling back.
         self.assertFalse(got.is_fallback)
         self.assertEqual(got.failure_step, "sales_executive_has_no_email")
-        self.assertEqual(sorted(got.to),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        self.assertEqual(got.to, FIXED_CC)
+        self.assertEqual(got.cc, [])
+
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
+    def test_with_no_fixed_cc_a_missing_sales_email_falls_all_the_way_back(self):
+        self.sales_exec.email = ""
+        self.sales_exec.save()
+        got = resolve_recipients(_review(self.event.event_code))
+        self.assertTrue(got.is_fallback)
+        self.assertEqual(got.to, [ALERT])
 
 
 class EmailFieldOrderTests(_Base):
@@ -164,11 +213,229 @@ class EmailFieldOrderTests(_Base):
         self.assertEqual(by_field["feedback_to_speaker"],
                          "Feedback to speaker or request information")
 
-    def test_body_renders_fields_in_that_exact_order(self):
+    def test_the_text_part_renders_fields_in_that_exact_order(self):
+        """
+        Asserted on the TEXT part: the HTML is the editorial handoff template,
+        which has its own layout and carries no field table at all.
+        """
         review = _review(self.event.event_code)
-        _, html = notifications.render_body(review, include_internal_footnotes=True)
-        positions = [html.index(label) for _, label in notifications.EMAIL_FIELDS]
+        text, _ = notifications.render_body(review, include_internal_footnotes=True)
+        positions = [text.index(label) for _, label in notifications.EMAIL_FIELDS]
         self.assertEqual(positions, sorted(positions))
+
+
+class RedirectAllEmailTests(_Base):
+    """
+    The testing redirect. It exists so a UAT box can have the notification ON
+    without mailing a real sales executive, so what is pinned is that it catches
+    EVERYTHING and that it does not quietly rewrite the record of who the mail
+    was for.
+    """
+
+    REDIRECT = "ops@example.invalid"
+
+    def setUp(self):
+        self.client.force_authenticate(user=self.user)
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL=REDIRECT)
+    def test_the_notification_goes_to_the_redirect_alone(self):
+        self.create_review()
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, [self.REDIRECT])
+        self.assertEqual(sent.cc, [])
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL=REDIRECT)
+    def test_the_real_recipient_rides_in_the_subject(self):
+        self.create_review()
+        self.assertTrue(mail.outbox[0].subject.startswith(
+            "[TEST, for sales.exec@example.com] New Paper Review:"))
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL=REDIRECT)
+    def test_the_log_still_records_who_it_was_addressed_to(self):
+        """
+        Redirecting the send must not corrupt the record. resolve_recipients runs
+        untouched, so the log and the readiness report keep telling the truth
+        about the assignment data.
+        """
+        self.create_review()
+        log = NotificationLog.objects.get()
+        self.assertEqual(log.to_addresses, ["sales.exec@example.com"])
+        self.assertEqual(log.cc_addresses, ["author@example.com"] + FIXED_CC)
+        self.assertNotIn(self.REDIRECT, log.to_addresses + log.cc_addresses)
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL=REDIRECT,
+                       PAPER_REVIEW_CC_EMAILS=[])
+    def test_the_watchdog_alerts_are_caught_too(self):
+        """
+        The alerts are the easy thing to forget: they address
+        PAPER_REVIEW_ALERT_EMAIL directly rather than going through
+        resolve_recipients, so a redirect applied anywhere but _send would leak
+        them. Both messages of a fallback are checked, not just the first.
+        """
+        self.user.email = ""
+        self.user.save(update_fields=["email"])
+        orphan = make_event("REDIR - FB")
+        self.assign_events(orphan)
+        self.create_review(event_code="REDIR - FB")
+
+        self.assertEqual(len(mail.outbox), 2)
+        for sent in mail.outbox:
+            with self.subTest(subject=sent.subject):
+                self.assertEqual(sent.to, [self.REDIRECT])
+                self.assertNotIn(ALERT, sent.to + sent.cc)
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL="")
+    def test_an_empty_setting_changes_nothing(self):
+        """Production is the empty case, so it is the one that must be default."""
+        self.create_review()
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, ["sales.exec@example.com"])
+        self.assertEqual(sent.cc, ["author@example.com"] + FIXED_CC)
+        self.assertFalse(sent.subject.startswith("[TEST"))
+
+    @override_settings(PAPER_REVIEW_REDIRECT_ALL_EMAIL=REDIRECT,
+                       PAPER_REVIEW_NOTIFICATIONS_ENABLED=False)
+    def test_the_kill_switch_still_wins(self):
+        """A redirect is about WHERE, never about WHETHER."""
+        self.create_review()
+        self.assertEqual(len(mail.outbox), 0)
+
+
+class HandoffTemplateTests(_Base):
+    """
+    The supplied handoff HTML. What is pinned: every token substitutes, each
+    conditional block keys off the right field, the scoring table agrees with
+    models.CRITERIA, and free text is escaped rather than injected.
+    """
+
+    def html(self, **over):
+        _, html = notifications.render_body(
+            _review(self.event.event_code, **over),
+            include_internal_footnotes=False,
+        )
+        return html
+
+    def test_no_token_is_left_unrendered(self):
+        """
+        The failure mode a template swap actually has: a token renamed on one
+        side only, which ships as a literal {{ ... }} in a customer-facing email.
+        """
+        html = self.html()
+        self.assertNotIn("{{", html)
+        self.assertNotIn("{%", html)
+
+    def test_every_token_the_template_uses_is_supplied(self):
+        import re
+
+        from django.template.loader import get_template
+        source = get_template("paper_review/handoff_email.html").template.source
+        used = {m.split("|")[0].strip()
+                for m in re.findall(r"\{\{\s*(.*?)\s*\}\}", source)}
+        supplied = set(notifications.template_context(
+            _review(self.event.event_code)))
+        self.assertEqual(used - supplied, set())
+
+    def test_the_scoring_table_matches_the_rubric(self):
+        from paper_review.models import CRITERIA
+        self.assertEqual([f for f, _ in notifications.SCORE_TOKENS],
+                         [f for f, _ in CRITERIA])
+        # Each criterion's maximum is hard-coded beside its score in the template.
+        html = self.html()
+        for _, maximum in CRITERIA:
+            with self.subTest(maximum=maximum):
+                self.assertIn(f">{maximum}</td>", html)
+
+    # grade is DERIVED — models.PaperReview.save() recomputes it from the six
+    # criteria on every write, so a review is pushed into a band by SCORING it,
+    # never by passing grade=. One combination per band, criteria in CRITERIA
+    # order, chosen to sit mid-band rather than on a floor.
+    BANDS = {
+        "A":  (10, 5, 10, 5, 5, 10),   # 45
+        "B+": (10, 5, 10, 5, 0,  5),   # 35
+        "B":  (10, 5, 10, 0, 0,  2),   # 27
+        "C":  (10, 5,  5, 0, 0,  2),   # 22
+        "D":  (10, 5,  0, 0, 0,  0),   # 15
+        "E":  ( 5, 0,  0, 0, 0,  0),   # 5
+        # No criterion filled at all: proposal_score is None and grade is "".
+        # Only reachable by import or direct ORM, and it still has to render.
+        "":   (None,) * 6,
+    }
+
+    def scored(self, band, **over):
+        over.update(dict(zip(
+            [f for f, _ in notifications.SCORE_TOKENS], self.BANDS[band])))
+        return self.html(**over)
+
+    def test_a_grade_that_clears_the_bar_renders_the_cleared_paragraph(self):
+        html = self.scored("B")
+        self.assertIn("is cleared for the", html)
+        self.assertNotIn("is not going on the", html)
+
+    def test_a_grade_below_the_bar_renders_the_other_paragraph(self):
+        html = self.scored("D")
+        self.assertIn("is not going on the", html)
+        self.assertNotIn("is cleared for the", html)
+
+    def test_the_two_opening_paragraphs_are_mutually_exclusive(self):
+        """Exactly one renders for every band, the unscored one included."""
+        for band in self.BANDS:
+            with self.subTest(band=band):
+                html = self.scored(band)
+                self.assertEqual(("is cleared for the" in html)
+                                 + ("is not going on the" in html), 1)
+
+    def test_every_band_lands_on_the_side_cleared_grades_says(self):
+        """
+        Guards the pair, not one half: a letter added to CLEARED_GRADES without
+        the template following, or the reverse, fails here.
+        """
+        for band in self.BANDS:
+            with self.subTest(band=band):
+                cleared = band in notifications.CLEARED_GRADES
+                self.assertEqual("is cleared for the" in self.scored(band),
+                                 cleared)
+
+    def test_the_nos_badge_follows_the_checkbox(self):
+        self.assertIn(">NOS</span>", self.html(nos=True))
+        self.assertNotIn(">NOS</span>", self.html(nos=False))
+
+    def test_the_company_page_link_is_dropped_when_absent(self):
+        self.assertIn("company page", self.html())
+        self.assertNotIn("company page", self.html(linkedin_company=""))
+
+    def test_the_agenda_and_feedback_blocks_are_dropped_when_absent(self):
+        html = self.html(agenda_addition="", feedback_to_speaker="")
+        self.assertNotIn("Agenda addition, use as written", html)
+        self.assertNotIn("To raise with the speaker", html)
+
+    def test_newlines_in_free_text_become_line_breaks(self):
+        html = self.html(feedback_to_speaker="One line.\nTwo line.")
+        self.assertIn("One line.<br>Two line.", html)
+
+    def test_free_text_is_escaped_not_injected(self):
+        html = self.html(speaker_name="<script>alert(1)</script>")
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_the_signature_names_the_submitting_mre(self):
+        html = self.html(created_by=self.user)
+        self.assertIn(self.user.get_full_name() or self.user.username, html)
+
+    def test_a_review_with_no_author_still_signs_off(self):
+        """Importer and webhook rows carry no created_by."""
+        html = self.html()
+        self.assertIn("Linq CRM", html)
+        self.assertIn("Automated notification", html)
+
+    @override_settings(CRM_BASE_URL="https://crm.example.invalid")
+    def test_the_record_button_points_at_the_configured_crm(self):
+        self.assertIn('href="https://crm.example.invalid/paper-review"',
+                      self.html())
+
+    def test_a_missing_value_renders_an_em_dash_not_none(self):
+        html = self.html(theme="", session_location_on_agenda="")
+        self.assertNotIn("None", html)
+        self.assertIn("\u2014", html)
 
 
 class HappyPathTests(_Base):
@@ -183,20 +450,27 @@ class HappyPathTests(_Base):
         sent = mail.outbox[0]
         self.assertEqual(sent.subject, "New Paper Review: AFS - JS - Eli Jasso")
         self.assertEqual(sent.to, ["sales.exec@example.com"])
-        self.assertEqual(sorted(sent.cc),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        # The submitter first, then the standing list.
+        self.assertEqual(sent.cc, ["author@example.com"] + FIXED_CC)
         self.assertNotIn(ALERT, sent.to + sent.cc)
 
-    def test_the_body_carries_the_deluge_field_table(self):
+    def test_the_text_part_carries_the_deluge_field_table(self):
         self.create_review()
-        html = mail.outbox[0].alternatives[0][0]
+        text = mail.outbox[0].body
         for field, label in notifications.EMAIL_FIELDS:
             if field in notifications.MR_FIELDS:
                 continue          # excluded for this mixed recipient list
             with self.subTest(label=label):
-                self.assertIn(label, html)
+                self.assertIn(label, text)
+        self.assertIn("Eli Jasso", text)
+        self.assertIn("27 / 45", text)
+
+    def test_the_html_part_is_the_handoff_template(self):
+        self.create_review()
+        html = mail.outbox[0].alternatives[0][0]
+        self.assertIn("Paper review complete", html)
         self.assertIn("Eli Jasso", html)
-        self.assertIn("27 / 45", html)
+        self.assertIn("Closeness to topic", html)
 
     def test_the_subject_falls_back_to_unknown_event(self):
         self.assertEqual(subject_for(_review("")),
@@ -207,17 +481,22 @@ class HappyPathTests(_Base):
         log = NotificationLog.objects.get()
         self.assertEqual(log.status, NotificationLog.Status.RESOLVED)
         self.assertEqual(log.to_addresses, ["sales.exec@example.com"])
-        self.assertEqual(sorted(log.cc_addresses),
-                         ["market.research@example.com", "speaker.sales@example.com"])
+        self.assertEqual(log.cc_addresses, ["author@example.com"] + FIXED_CC)
         self.assertEqual(log.error, "")
         self.assertIn("AFS - JS", log.subject)
 
     def test_the_refs_are_written_from_what_actually_resolved(self):
-        """B5 — outputs, not inputs."""
+        """
+        B5 — outputs, not inputs. With the fixed Cc the only recipient carrying a
+        User row is the sales executive, so the ref for their role fills and the
+        other stays blank. The complete address list lives on the NotificationLog.
+        """
+        self.sales_exec.role = "market_research"
+        self.sales_exec.save()
         rid = self.create_review().data["id"]
         review = PaperReview.objects.get(id=rid)
-        self.assertEqual(review.speaker_email_ref, "speaker.sales@example.com")
-        self.assertEqual(review.research_email_ref, "market.research@example.com")
+        self.assertEqual(review.research_email_ref, "sales.exec@example.com")
+        self.assertEqual(review.speaker_email_ref, "")
 
     def test_the_refs_cannot_be_written_by_the_client(self):
         r = self.create_review(speaker_email_ref="attacker@example.com",
@@ -233,15 +512,22 @@ class HappyPathTests(_Base):
         self.assertEqual(len(mail.outbox), 1)
 
 
+# The Cc is real people — the submitting MRE and the standing list — so an event
+# with no sales executive DEGRADES to them. The watchdog is reached only when
+# NOTHING resolves, which needs all three gone: no sales executive (the orphan
+# event), no standing list (this decorator), and no address on the submitter
+# (setUpTestData below).
+@override_settings(PAPER_REVIEW_CC_EMAILS=[])
 class FallbackTests(_Base):
     """B3 — the watchdog gets the body AND a separate alert naming the step."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        # No sales executive, and nobody assigned in either Cc role.
         cls.orphan = make_event("ORPH - AN", "Orphaned Event")
         cls.assign_events(cls.orphan)
+        cls.user.email = ""
+        cls.user.save(update_fields=["email"])
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -438,28 +724,49 @@ class InternalFootnotesRuleTests(_Base):
         self.assertNotIn("Internal footnotes", html)
         self.assertFalse(NotificationLog.objects.get().included_internal_footnotes)
 
+    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
     def test_included_when_every_recipient_is_mr(self):
+        """Only reachable with no fixed Cc configured — see the test below."""
         review = _review(self.mr_only_event.event_code,
                          internal_footnotes="MR: weak on region")
         send_paper_review_notification(review)
 
         sent = mail.outbox[0]
         self.assertEqual(sent.to, ["mr.exec@example.com"])
-        self.assertEqual(sent.cc, ["mr.cc@example.com"])
+        self.assertEqual(sent.cc, [])
         self.assertIn("weak on region", sent.body)
-        self.assertIn("Internal footnotes", sent.alternatives[0][0])
+        self.assertIn("Internal footnotes", sent.body)
         self.assertTrue(NotificationLog.objects.get().included_internal_footnotes)
+
+    def test_the_fixed_cc_closes_the_field_even_for_an_all_mr_event(self):
+        """
+        A fixed Cc address has no User row, so nothing can vouch for what its
+        reader may see. All-or-nothing therefore resolves to nothing — this is
+        the field's only remaining state in production, where the fixed list is
+        never empty.
+        """
+        review = _review(self.mr_only_event.event_code,
+                         internal_footnotes="MR: weak on region")
+        send_paper_review_notification(review)
+
+        sent = mail.outbox[0]
+        self.assertEqual(sent.cc, FIXED_CC)
+        self.assertNotIn("weak on region", sent.body)
+        self.assertNotIn("Internal footnotes", sent.body)
+        # The HTML template has no footnotes field at all, in any state.
+        self.assertNotIn("weak on region", sent.alternatives[0][0])
+        self.assertFalse(NotificationLog.objects.get().included_internal_footnotes)
 
     def test_the_other_sixteen_fields_go_out_either_way(self):
         review = _review(self.event.event_code, internal_footnotes="hidden")
         send_paper_review_notification(review)
-        html = mail.outbox[0].alternatives[0][0]
+        text = mail.outbox[0].body
         labels = [label for field, label in notifications.EMAIL_FIELDS
                   if field not in notifications.MR_FIELDS]
         self.assertEqual(len(labels), 16)
         for label in labels:
             with self.subTest(label=label):
-                self.assertIn(label, html)
+                self.assertIn(label, text)
 
 
 class NotificationLogAlwaysWrittenTests(_Base):
@@ -473,7 +780,9 @@ class NotificationLogAlwaysWrittenTests(_Base):
         self.assign_events(orphan)
 
         send_paper_review_notification(_review(self.event.event_code))
-        send_paper_review_notification(_review("NOBODY - NN"))
+        # Nothing at all resolves only with the fixed Cc emptied too.
+        with override_settings(PAPER_REVIEW_CC_EMAILS=[]):
+            send_paper_review_notification(_review("NOBODY - NN"))
         with patch("paper_review.notifications._send",
                    side_effect=_fail_the_notification_only):
             send_paper_review_notification(_review(self.event.event_code))

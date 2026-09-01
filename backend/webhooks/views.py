@@ -2,6 +2,7 @@
 webhooks/views.py
 ──────────────────
 POST /api/webhooks/ingest/          — live booking ingestion  (X-CRM-API-KEY or X-WEBHOOK-SECRET)
+POST /api/webhooks/tickets/         — live ticket ingestion  (same credentials)
 GET  /api/webhooks/ingest/          — liveness check, same credentials, writes no log
                                       The key is accepted in the X-CRM-API-KEY header or as an
                                       X-CRM-API-KEY query parameter; the header takes priority.
@@ -15,7 +16,8 @@ POST /api/webhooks/keys/{id}/regenerate/      — regenerate secret
 """
 import logging
 import traceback
-from django.db.models import Q
+from django.db.models import F, IntegerField, Q, Value
+from django.db.models.functions import Coalesce, Round
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -32,7 +34,11 @@ from .serializers import (
     WebhookApiKeySerializer, WebhookApiKeyCreateSerializer,
     WebhookLogSerializer, WebhookLogListSerializer,
 )
+from ticket_central.models import Ticket
+from ticket_central.serializers import TicketCreateSerializer
+from ticket_central.utils import canonicalise_ticket_fields
 from .services import WebhookProcessor
+from paper_review.webhook import PaperReviewProcessor
 from .utils import (
     authenticate_request, coerce_form_wrapped_json, extract_api_key,
     extract_ip, key_transport, looks_like_a_key, safe_headers, unwrap_payload,
@@ -60,6 +66,12 @@ class WebhookIngestionView(APIView):
     authentication_classes = []
     permission_classes     = [AllowAny]
 
+    # Which endpoint this is, for the optional per-key scope on
+    # WebhookApiKey.target. Subclasses override it; a key that names no target
+    # is accepted here whatever this says, which is what keeps every key issued
+    # before the column existed working.
+    ingest_target = WebhookApiKey.Target.BOOKINGS
+
     # Order is load-bearing. DRF selects the FIRST parser whose media_type
     # matches, and AnyTypeJSONParser declares "*/*", which matches everything,
     # so it must sit last and be reached only once the specific parsers have
@@ -74,6 +86,14 @@ class WebhookIngestionView(APIView):
     # Appended to WebhookLog.source when the key arrived in the URL, so a
     # URL-key delivery is identifiable in the logs UI without opening the row.
     URL_AUTH_SUFFIX = " [url-auth]"
+
+    # The two things a sibling endpoint changes. Everything else on this view —
+    # auth, the unparseable-body row, the crash handler, the response shaping —
+    # is payload-agnostic and is inherited rather than copied; see
+    # PaperReviewIngestionView below.
+    processor_class  = WebhookProcessor
+    LIVENESS_MESSAGE = ("Webhook endpoint is live. POST your JSON booking "
+                        "payload to this same URL.")
 
     # Read off the column rather than hardcoded: WebhookApiKey.name and
     # WebhookLog.source are both max_length 100, so a 100-character key name
@@ -112,7 +132,9 @@ class WebhookIngestionView(APIView):
         back; the whole value is never logged, since an application log is one
         of the places a URL-carried key is already too easy to find.
         """
-        api_key_obj, auth_err = authenticate_request(request, record_usage=False)
+        api_key_obj, auth_err = authenticate_request(
+            request, record_usage=False, target=self.ingest_target,
+        )
         if auth_err:
             attempted, transport = extract_api_key(request)
             # 12 characters is a prefix, not a key. Every key issued here starts
@@ -130,7 +152,7 @@ class WebhookIngestionView(APIView):
 
         return Response({
             "success":   True,
-            "message":   "Webhook endpoint is live. POST your JSON booking payload to this same URL.",
+            "message":   self.LIVENESS_MESSAGE,
             "key_name":  api_key_obj.name if api_key_obj else "legacy-secret",
             "transport": key_transport(request),
         }, status=status.HTTP_200_OK)
@@ -181,7 +203,9 @@ class WebhookIngestionView(APIView):
         try:
             # Authenticate first even when the body is broken: an unauthenticated
             # sender should not be able to write its raw body into our logs.
-            api_key_obj, auth_err = authenticate_request(request)
+            api_key_obj, auth_err = authenticate_request(
+                request, target=self.ingest_target,
+            )
 
             if auth_err:
                 # NAMES ONLY, never values, from either source.
@@ -271,7 +295,7 @@ class WebhookIngestionView(APIView):
                 received_at=recv_at,
             )
 
-            processor       = WebhookProcessor(log)
+            processor       = self.processor_class(log)
             success, result = processor.process()
 
             log.refresh_from_db()
@@ -343,6 +367,198 @@ class WebhookIngestionView(APIView):
             return Response(resp_body, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# ── Ticket ingestion ─────────────────────────────────────────────
+
+class TicketIngestionView(APIView):
+    """
+    POST /api/webhooks/tickets/ — push one Ticket Central ticket.
+    GET  /api/webhooks/tickets/ — liveness check, writes no log.
+
+    Same credentials as /ingest/: the key travels in the X-CRM-API-KEY header
+    or, so that one URL is a complete integration, as an X-CRM-API-KEY query
+    parameter. Every POST leaves exactly one WebhookLog row, for the reason
+    spelled out on WebhookIngestionView.
+
+    The body is the ticket's own field names — purpose, type_of_ticket,
+    event_code, organizer — the same JSON the CRM's own create form posts, and
+    it may be wrapped Zoho-Flow style. purpose and type_of_ticket are required,
+    the ticket number is minted here, and the row lands as MR Submitted with
+    NULL creator columns, since a webhook has no user. Data Mining fields are
+    refused, exactly as they are for an MR creating a ticket by hand.
+
+    external_id is the idempotency key: redelivering one already stored returns
+    200 and the existing ticket instead of a second copy. Deliberately not the
+    booking path's 409 — a sender that reads its own retry as a failure retries
+    forever.
+
+    ponytail: any active webhook key can post here, just as any active key can
+    post a booking; WebhookApiKey carries no per-endpoint scope. Add one if
+    ticket senders and booking senders ever need separating.
+    """
+    authentication_classes = []
+    permission_classes     = [AllowAny]
+    ingest_target          = WebhookApiKey.Target.TICKETS
+    # Same order, same reason as WebhookIngestionView: AnyTypeJSONParser
+    # declares */* and must be reached last.
+    parser_classes = [JSONParser, FormParser, MultiPartParser, AnyTypeJSONParser]
+
+    def get(self, request):
+        api_key_obj, auth_err = authenticate_request(
+            request, record_usage=False, target=self.ingest_target,
+        )
+        if auth_err:
+            return Response({"success": False, "error": auth_err},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        return Response({
+            "success":   True,
+            "message":   "Ticket webhook is live. POST your ticket JSON to this same URL.",
+            "key_name":  api_key_obj.name if api_key_obj else "legacy-secret",
+            "transport": key_transport(request),
+        })
+
+    def post(self, request):
+        recv_at   = timezone.now()
+        transport = key_transport(request)
+        hdrs      = safe_headers(request.META)
+        ip        = extract_ip(request)
+
+        api_key_obj, auth_err = authenticate_request(
+            request, target=self.ingest_target,
+        )
+
+        def _log(payload, log_status, http_status, response, error="", **extra):
+            # source is stamped "tickets: <key>" so a ticket delivery is
+            # identifiable in the shared Delivery Logs table without opening the
+            # row, and invoice_number carries the ticket number because it is
+            # that table's identifier column — leaving it blank makes a
+            # successful delivery look like a broken one.
+            try:
+                return WebhookLog.objects.create(
+                    api_key=api_key_obj,
+                    source=WebhookIngestionView._stamp_source(
+                        "tickets: " + (api_key_obj.name if api_key_obj else "legacy-secret"),
+                        transport,
+                    ),
+                    ip_address=ip, request_method="POST",
+                    payload=payload, headers=hdrs, response=response,
+                    status=log_status, http_status=http_status,
+                    error_message=error,
+                    processing_status=(
+                        WebhookLog.ProcessingStatus.PROCESSED
+                        if log_status == WebhookLog.Status.SUCCESS
+                        else WebhookLog.ProcessingStatus.ERROR
+                    ),
+                    received_at=recv_at, processed_at=timezone.now(),
+                    **extra
+                )
+            except Exception:
+                logger.exception("Could not write a WebhookLog row for a ticket delivery")
+                return None
+
+        try:
+            parsed = request.data
+            data   = coerce_form_wrapped_json(parsed if isinstance(parsed, dict) else {})
+        except Exception as exc:
+            data, parse_error = {}, f"Could not parse request body: {exc}"
+        else:
+            parse_error = None
+
+        if auth_err:
+            _log(data, WebhookLog.Status.FAILED, 401,
+                 {"success": False, "error": auth_err}, auth_err)
+            return Response({"success": False, "error": auth_err},
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+        if parse_error:
+            _log({}, WebhookLog.Status.FAILED, 400,
+                 {"success": False, "error": parse_error}, parse_error)
+            return Response({"success": False, "error": parse_error},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        payload     = canonicalise_ticket_fields(unwrap_payload(data))
+        external_id = str(payload.pop("external_id", "") or "").strip()
+        event_code  = str(payload.get("event_code", "") or "")[:50]
+        event_name  = str(payload.get("event_name", "") or "")[:255]
+
+        try:
+            if external_id:
+                existing = Ticket.objects.filter(external_id=external_id).first()
+                if existing:
+                    body = {"success": True, "duplicate": True,
+                            "ticket_id": existing.id,
+                            "ticket_number": existing.ticket_number}
+                    log = _log(data, WebhookLog.Status.DUPLICATE, 200, body,
+                               db_insert_status=WebhookLog.DbInsertStatus.DUPLICATE,
+                               event_code=event_code, event_name=event_name,
+                               invoice_number=existing.ticket_number[:100])
+                    if log:
+                        body["log_id"] = log.id
+                    return Response(body, status=status.HTTP_200_OK)
+
+            ser = TicketCreateSerializer(data=payload, context={"request": request})
+            if not ser.is_valid():
+                body = {"success": False, "error": "Validation failed",
+                        "detail": ser.errors}
+                log = _log(data, WebhookLog.Status.FAILED, 400, body,
+                           error=str(ser.errors),
+                           event_code=event_code, event_name=event_name)
+                if log:
+                    body["log_id"] = log.id
+                return Response(body, status=status.HTTP_400_BAD_REQUEST)
+
+            ticket = ser.save(external_id=external_id or None)
+        except Exception as e:
+            logger.exception("CRITICAL Ticket Webhook Failure")
+            detail = f"{type(e).__name__}: {e}"
+            body   = {"success": False, "error": "Internal Server Error",
+                      "detail": detail}
+            log = _log(data, WebhookLog.Status.FAILED, 500, body, detail,
+                       stack_trace=traceback.format_exc(),
+                       event_code=event_code, event_name=event_name)
+            if log:
+                body["log_id"] = log.id
+            return Response(body, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        body = {"success": True, "ticket_id": ticket.id,
+                "ticket_number": ticket.ticket_number, "status": ticket.status}
+        # A key the serializer does not know is dropped in silence, which is how
+        # a misspelled field reads as a clean 201 with the value missing. Say
+        # what was ignored so the sender can see it without asking us.
+        ignored = sorted(set(payload) - set(ser.fields))
+        if ignored:
+            body["ignored_fields"] = ignored
+        log = _log(data, WebhookLog.Status.SUCCESS, 201, body,
+                   db_insert_status=WebhookLog.DbInsertStatus.INSERTED,
+                   records_inserted=1,
+                   event_code=event_code, event_name=event_name,
+                   invoice_number=ticket.ticket_number[:100])
+        if log:
+            body["log_id"] = log.id
+        return Response(body, status=status.HTTP_201_CREATED)
+
+
+class PaperReviewIngestionView(WebhookIngestionView):
+    """
+    POST /api/webhooks/paper-review/  is a paper review, or a batch of them.
+    GET  /api/webhooks/paper-review/  is a liveness check.
+
+    Same credentials, same keys page and same delivery log as the booking
+    webhook: a key issued at /api/webhooks/keys/ works on either URL, and both
+    endpoints leave the same one-row-per-delivery audit trail. The ONLY thing
+    that differs is what processes the body, so everything above that line is
+    inherited from WebhookIngestionView rather than restated here.
+
+    Payload, semantics and the two deliberately suppressed workflows are
+    documented on PaperReviewProcessor.
+    """
+    processor_class  = PaperReviewProcessor
+    ingest_target    = WebhookApiKey.Target.PAPER_REVIEW
+    LIVENESS_MESSAGE = (
+        "Paper review webhook is live. POST one JSON object of paper review "
+        'fields, or {"rows": [ ... ]} for a batch, to this same URL.'
+    )
+
+
 # ── Webhook Logs ──────────────────────────────────────────────────────────────
 
 class WebhookLogViewSet(FilterSpecMixin, viewsets.ReadOnlyModelViewSet):
@@ -354,13 +570,39 @@ class WebhookLogViewSet(FilterSpecMixin, viewsets.ReadOnlyModelViewSet):
     # hung one. `payload`, `headers`, `response` and `stack_trace` are excluded
     # — they are large text blobs and filtering them would be a table scan
     # over megabytes per row.
-    filter_spec_fields = build_filter_spec_fields(
-        WebhookLog,
-        exclude={"payload", "headers", "response", "stack_trace",
-                 "api_key", "created_booking"},
-        labels={"invoice_number": "Invoice Number", "event_code": "Event Code",
-                "db_insert_status": "DB Insert Status"},
-    )
+    filter_spec_fields = {
+        **build_filter_spec_fields(
+            WebhookLog,
+            exclude={"payload", "headers", "response", "stack_trace",
+                     "api_key", "created_booking"},
+            labels={"invoice_number": "Invoice Number", "event_code": "Event Code",
+                    "db_insert_status": "DB Insert Status"},
+        ),
+        # ── The three columns the list builds rather than stores ──────────────
+        # api/webhooks.js derives all three per row, so none of them is a column
+        # build_filter_spec_fields could find, and each was therefore filtered in
+        # the browser over the loaded page. On 130,287 deliveries that is a
+        # filter answering from whatever the last scroll fetched.
+        #
+        # Each mirrors its line in api/webhooks.js exactly:
+        #   api_key_name  the related key's name (serializers.get_api_key_name)
+        #   records       records_inserted + records_updated
+        #   duration_ms   processing_duration is SECONDS as a float; the cell
+        #                 shows milliseconds, rounded, and 0 where the delivery
+        #                 never recorded one — so the filter is written in
+        #                 milliseconds too, or "duration_ms gt 500" would compare
+        #                 against a number nobody has seen.
+        "api_key_name": {"type": "text", "label": "API Key",
+                         "source": "api_key__name"},
+        "records": {"type": "number", "label": "Records",
+                    "expression": lambda: F("records_inserted") + F("records_updated")},
+        "duration_ms": {"type": "number", "label": "Duration (ms)",
+                        "expression": lambda: Coalesce(
+                            Round(F("processing_duration") * Value(1000.0)),
+                            Value(0),
+                            output_field=IntegerField(),
+                        )},
+    }
     # Explicit rather than inherited: DRF silently drops an unrecognised
     # ordering term, so anything the frontend may ask for has to be named.
     ordering_fields = ["id", "received_at", "created_at", "status",

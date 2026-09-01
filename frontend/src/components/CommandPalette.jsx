@@ -6,7 +6,7 @@ import * as searchApi from '../api/search';
 import { useSession } from '../context/SessionContext';
 
 export default function CommandPalette({ open, onClose }) {
-  const { canView, user } = useSession();
+  const { canView, user, isAdmin } = useSession();
   const nav = useNavigate();
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
@@ -49,11 +49,12 @@ export default function CommandPalette({ open, onClose }) {
     const res = [];
     NAV_FLAT.forEach((i) => {
       // canAccess, not an inline canView: Dashboard is gated on `needsAny`,
-      // Data API Keys on `hpOnly`, and the old check ignored anything that was
-      // not a single `mod` — so the palette would have kept offering them to
-      // someone the rail hides them from, which is the same page reachable by a
-      // different door. The username is what `hpOnly` is answered against.
-      if (!canAccess(i, canView, user?.username)) return;
+      // Data API Keys on `hpOnly`, Event Performance on `adminOnly`, and the old
+      // check ignored anything that was not a single `mod` — so the palette would
+      // have kept offering them to someone the rail hides them from, which is the
+      // same page reachable by a different door. The username is what `hpOnly` is
+      // answered against, `isAdmin` what `adminOnly` is.
+      if (!canAccess(i, canView, user?.username, isAdmin)) return;
       if (!v || i.l.toLowerCase().includes(v)) res.push({ t: 'Navigate', l: i.l, s: '', ic: i.ic, go: () => nav(i.path) });
     });
     // Buckets are omitted by the backend when the caller cannot see that type, so
@@ -75,7 +76,7 @@ export default function CommandPalette({ open, onClose }) {
     // had nowhere to navigate to. The backend still returns the bucket for admins
     // (config/views.py GlobalSearchView) — it is simply not read here.
     return res.slice(0, 16);
-  }, [q, canView, user?.username, nav, hits]);
+  }, [q, canView, user?.username, isAdmin, nav, hits]);
 
   useEffect(() => { setIdx(0); }, [results.length]);
 

@@ -75,17 +75,41 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     # excludes. status, ticket_number and every provenance field ARE filterable
     # here even though writing them is refused: reading a workflow state cannot
     # route around the submit guards, whereas writing it can.
-    filter_spec_fields = build_filter_spec_fields(
-        Ticket,
-        labels={
-            "assigned_mr": "Assigned MR", "assign_name": "Assign Name",
-            "assign_name_lx2": "Assign Name (LX-2)", "mr_comments": "MR Comments",
-            "dm_comments": "DM Comments", "dm_comments_lx2": "DM Comments (LX-2)",
-            "type_of_ticket": "Type of Ticket", "ticket_type": "Ticket Type (DMD)",
-            "event_month_year": "Event Month/Year",
-            "added_user_text": "Added User",
-        },
-    )
+    filter_spec_fields = {
+        **build_filter_spec_fields(
+            Ticket,
+            labels={
+                "assigned_mr": "Assigned MR", "assign_name": "Assign Name",
+                "assign_name_lx2": "Assign Name (LX-2)", "mr_comments": "MR Comments",
+                "dm_comments": "DM Comments", "dm_comments_lx2": "DM Comments (LX-2)",
+                "type_of_ticket": "Type of Ticket", "ticket_type": "Ticket Type (DMD)",
+                "event_month_year": "Event Month/Year",
+                "added_user_text": "Added User",
+            },
+        ),
+        # ── Columns DEFAULT_EXCLUDES held back ────────────────────────────────
+        # The surrogate key, the two timestamps and the four provenance columns
+        # are excluded from every registry by default, because on most models
+        # nobody filters them. This table SHOWS all seven — Added Time, Modified
+        # Time, ID, Source_Spreadsheet_ID, Source_Tab, Source_Row_Number and
+        # Idempotency_Key are columns in the grid — and a shown column with no
+        # server field is not unfiltered, it is filtered in the browser over the
+        # rows already fetched. Provenance is exactly what someone reaches for
+        # when tracing a bad import, which is precisely when the answer must
+        # cover the whole table rather than the current scroll position.
+        #
+        # has_time is what tells the client to send the END of a day as the
+        # upper bound instead of its midnight; without it a filter for "today"
+        # silently returns nothing but the first instant of it.
+        "created_at": {"type": "date", "label": "Added Time", "has_time": True},
+        "updated_at": {"type": "date", "label": "Modified Time", "has_time": True},
+        "id": {"type": "number", "label": "ID"},
+        "source_spreadsheet_id": {"type": "text", "label": "Source Spreadsheet ID"},
+        "source_tab": {"type": "text", "label": "Source Tab"},
+        "source_row_number": {"type": "number", "label": "Source Row Number",
+                              "nullable": True},
+        "idempotency_key": {"type": "text", "label": "Idempotency Key"},
+    }
 
     _BULK_STATIC_FIELDS = build_bulk_update_fields(
         Ticket,
@@ -512,7 +536,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         take the batch down with it.
         """
         from django.db import transaction
-        from .utils import _coerce_row
+        from .utils import (
+            _coerce_row, assign_next_ticket_number, display_name,
+            extract_purpose_code, extract_type_code,
+        )
 
         inserted, updated, skipped_rows, errors = 0, 0, [], []
         seen_in_batch = set()
@@ -538,9 +565,24 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                                 request_user=request.user,
                             )
                             preserved_created_at = coerced.pop("_preserved_created_at", None)
-                            Ticket.objects.filter(external_id=key).update(**coerced)
                             if preserved_created_at:
-                                Ticket.objects.filter(external_id=key).update(created_at=preserved_created_at)
+                                coerced["created_at"] = preserved_created_at
+                            # updated_at is auto_now, and auto_now is a save()
+                            # hook: a queryset update never fires it. Without
+                            # this line an upserted ticket kept whatever Modified
+                            # Time it had before the import, so a re-import that
+                            # changed twenty columns left the column reading the
+                            # date of the previous import. The file's own Modified
+                            # Time wins where it carries one; otherwise the write
+                            # is happening now, which is what auto_now would have
+                            # stamped through save().
+                            coerced["updated_at"] = (
+                                coerced.pop("_modified_time", None) or timezone.now()
+                            )
+                            # added_user_text is deliberately NOT touched here:
+                            # "Added User" is who put the row in, not who ran the
+                            # re-import.
+                            Ticket.objects.filter(external_id=key).update(**coerced)
                         updated += 1
                     except Exception as e:
                         errors.append({"row_index": idx, "key": key, "message": str(e)[:300]})
@@ -560,14 +602,46 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 with transaction.atomic():  # per-row savepoint (CRIT-1 / Finding #1 fix)
                     coerced = _coerce_row(row, request_user=request.user)
                     preserved_created_at = coerced.pop("_preserved_created_at", None)
+                    modified_time = coerced.pop("_modified_time", None)
+                    # A Zoho export carries its own Added User; a file that does
+                    # not gets the person who ran the import, so the column is
+                    # never blank on a row this CRM created.
+                    if not coerced.get("added_user_text"):
+                        coerced["added_user_text"] = (
+                            display_name(request.user) or ""
+                        )[:150]
+                    # A row that carries no Ticket Number gets one here, from the
+                    # same generator TicketCreateSerializer.create uses. This path
+                    # bypasses the serializer, so imports used to land with
+                    # ticket_number="" and wait for the nightly
+                    # backfill_ticket_numbers cron to name them.
+                    # No purpose means no number can be built; the row stays blank,
+                    # exactly as the backfill command skips it.
+                    # ponytail: assign_next_ticket_number re-reads every
+                    # ticket_number for the purpose per row to find reusable gaps,
+                    # so a 500-row batch does 500 scans. Fine at current volumes;
+                    # cache the used-set per purpose for the batch if it drags.
+                    if not coerced.get("ticket_number"):
+                        purpose_code = extract_purpose_code(coerced.get("purpose", ""))
+                        if purpose_code:
+                            coerced["ticket_number"] = assign_next_ticket_number(
+                                purpose_code,
+                                extract_type_code(coerced.get("type_of_ticket", "")),
+                            )
                     ticket = Ticket.objects.create(
                         created_by=request.user, **coerced,
                     )
-                    # Preserve Added Time if provided (D15)
+                    # Preserve Added Time / Modified Time if provided (D15).
+                    # Both columns are auto_now/auto_now_add, so a queryset update
+                    # is the only way to set them — which is also why they are
+                    # written after create() rather than passed to it.
+                    stamps = {}
                     if preserved_created_at:
-                        Ticket.objects.filter(pk=ticket.pk).update(
-                            created_at=preserved_created_at
-                        )
+                        stamps["created_at"] = preserved_created_at
+                    if modified_time:
+                        stamps["updated_at"] = modified_time
+                    if stamps:
+                        Ticket.objects.filter(pk=ticket.pk).update(**stamps)
                 if key:
                     seen_in_batch.add(key)
                 inserted += 1

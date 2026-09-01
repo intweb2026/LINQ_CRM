@@ -3,22 +3,55 @@ export const nf = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'))
 export const pc = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export function fdate(d) {
-  if (!d) return '—';
+// ── IST rendering ───────────────────────────────────────────────────────
+/**
+ * Timestamps are STORED as UTC and that does not change; see settings.TIME_ZONE
+ * in backend/config/settings.py. An instant carries no timezone of its own, so
+ * the zone belongs to the RENDER, and this is where the render happens.
+ *
+ * THE BUG THIS FIXES
+ * These three read the value back through getDate()/getMonth()/getHours(), which
+ * are the VIEWER'S machine timezone rather than the team's. On an IST laptop that
+ * looked right by accident. Anywhere else the same row read as a different day,
+ * and a plain 'YYYY-MM-DD' was the worst case: '2026-08-21' parses as UTC
+ * midnight, so every viewer west of Greenwich saw 20 Aug for a date nobody had
+ * disputed. Modified Time on Bookings made it visible, because that column is now
+ * also the table's default sort and a timestamp that renders in one zone while it
+ * sorts in another has no consistent reading at all.
+ *
+ * WHY A FIXED OFFSET AND NOT Intl.DateTimeFormat
+ * The offset is exact here rather than an approximation: India has run a single
+ * +05:30 nationwide with no DST since 1945, so shifting the instant and then
+ * reading its UTC fields yields the IST calendar fields for every date this CRM
+ * will ever hold. It also keeps ONE convention in the codebase, because
+ * lib/dateFilter.js rowDateISO() reckons a row's day by the same shift; a filter
+ * that disagreed with the cell beside it by 5h30m every night is exactly the
+ * drift this is meant to close.
+ */
+export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The instant shifted so that its UTC fields read as IST fields, or null. */
+function istView(d) {
+  if (!d) return null;
   const x = new Date(d);
-  if (isNaN(x)) return '—';
-  return String(x.getDate()).padStart(2, '0') + ' ' + MON[x.getMonth()] + ' ' + x.getFullYear();
+  if (isNaN(x)) return null;
+  return new Date(x.getTime() + IST_OFFSET_MS);
+}
+
+export function fdate(d) {
+  const x = istView(d);
+  if (!x) return '—';
+  return String(x.getUTCDate()).padStart(2, '0') + ' ' + MON[x.getUTCMonth()] + ' ' + x.getUTCFullYear();
 }
 export function fmy(d) {
-  if (!d) return '—';
-  const x = new Date(d);
-  if (isNaN(x)) return '—';
-  return MON[x.getMonth()] + ' ' + x.getFullYear();
+  const x = istView(d);
+  if (!x) return '—';
+  return MON[x.getUTCMonth()] + ' ' + x.getUTCFullYear();
 }
 export function ftime(d) {
-  const x = new Date(d);
-  if (isNaN(x)) return '—';
-  return String(x.getHours()).padStart(2, '0') + ':' + String(x.getMinutes()).padStart(2, '0');
+  const x = istView(d);
+  if (!x) return '—';
+  return String(x.getUTCHours()).padStart(2, '0') + ':' + String(x.getUTCMinutes()).padStart(2, '0');
 }
 export function rel(d) {
   const ms = Date.now() - new Date(d).getTime();

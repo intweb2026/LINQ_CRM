@@ -42,14 +42,37 @@ User = get_user_model()
 BACKEND = Path(settings.BASE_DIR)
 FRONTEND = Path(settings.BASE_DIR).parent / "frontend" / "src"
 
-# Every way the bookings importer reaches into a row.
+# Every way the bookings importer reaches into a row DIRECTLY.
 ROW_KEY_RE = re.compile(r'_clean\(row,\s*"([a-z0-9_]+)"\)|row\.get\("([a-z0-9_]+)"\)')
 
 
-def importer_row_keys(path):
-    """The row keys a bulk_import implementation reads, straight from its source."""
+def importer_row_keys(path, shared_table=False):
+    """
+    The row keys a bulk_import implementation reads, straight from its source.
+
+    TWO SOURCES, because bulk_import reads a row two ways now.
+
+      * Unconstrained columns — names, company, notes, references — are still read
+        one at a time as `_clean(row, "x")`, and the regex finds those.
+      * Every CONSTRAINED column goes through `coerce_row(row)`, which reads each
+        key declared in accounts/booking_coercion.RULES that the row carries. Those
+        reads are real but invisible to a regex over this file, so the table's own
+        keys are added here.
+
+    Keeping the second half honest matters as much as the first: a column offered
+    by BOOKING_IMPORT_FIELDS that neither the regex nor the table accounts for is
+    a column the wizard says it will import and the importer ignores, which is the
+    exact failure this module exists to catch.
+    """
     src = path.read_text(encoding="utf-8")
-    return {a or b for a, b in ROW_KEY_RE.findall(src)}
+    direct = {a or b for a, b in ROW_KEY_RE.findall(src)}
+    if not shared_table:
+        # The events importer reads its row keys one at a time and shares no
+        # coercion table, so unioning the bookings columns in would credit it with
+        # columns it has never heard of.
+        return direct
+    from accounts.booking_coercion import RULES
+    return direct | set(RULES)
 
 
 def js_target_fields(kind):
@@ -117,7 +140,7 @@ class BookingImportSchemaTests(TestCase):
         bulk_import and absent from the list, and nothing anywhere said so.
         """
         offered = {key for key, _, _ in BOOKING_IMPORT_FIELDS}
-        reads = importer_row_keys(BACKEND / "book_event" / "views.py")
+        reads = importer_row_keys(BACKEND / "book_event" / "views.py", shared_table=True)
         self.assertEqual(
             reads - offered, set(),
             "bulk_import reads these columns but Smart Import cannot map them",
@@ -178,13 +201,18 @@ class TicketImportSchemaTests(TestCase):
     def test_derived_from_the_model_allowlist(self):
         """
         import_fields() must offer exactly what _coerce_row will accept — the
-        model's writable columns, less the workflow-owned ones, plus created_at.
+        model's writable columns, less the workflow-owned ones, plus the two auto
+        timestamps. created_at and updated_at are auto_now_add/auto_now, so neither
+        is a "writable" field, and both ARE honoured by _coerce_row (through
+        _preserved_created_at and _modified_time) and written by the importer after
+        the row lands.
         """
         from ticket_central.models import Ticket
         from ticket_central.utils import _WRITABLE_FIELDS
 
         offered = {key for key, _ in import_fields()}
-        expected = (set(_WRITABLE_FIELDS) - set(IMPORT_HIDDEN_FIELDS)) | {"created_at"}
+        expected = ((set(_WRITABLE_FIELDS) - set(IMPORT_HIDDEN_FIELDS))
+                    | {"created_at", "updated_at"})
         self.assertEqual(offered, expected)
         # And the exclusions are real model fields, not stale names.
         for name in IMPORT_HIDDEN_FIELDS:

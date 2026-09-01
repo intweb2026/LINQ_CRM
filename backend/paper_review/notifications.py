@@ -15,13 +15,29 @@ has already been burned by (see events/models.py:112, where sales_team is matche
 by icontains against first/last name): a typo or a shared surname routes a
 speaker's paper review to the wrong person, or to nobody, and nothing tells you.
 
-So the traversal is replaced by the two relations that genuinely carry addresses:
+So the traversal is replaced by the one relation that genuinely carries an
+address, the review's own author, and a standing copy list:
 
-    to  → Event.sales_executive           (FK to User)
-    cc  → Event.assigned_users            (the User→Event M2M)
-            filtered to role speaker_sales or market_research
+    from → settings.DEFAULT_FROM_EMAIL     (the SMTP account; James Trevino in
+                                            production, set in the env, no code)
+    to   → Event.sales_executive           (FK to User)
+    cc   → PaperReview.created_by          — the MRE who filled the form
+         + settings.PAPER_REVIEW_CC_EMAILS (Harry Jonas)
 
 The Event schema is untouched.
+
+WHY THE Cc IS NOT A PER-EVENT ROLE WALK ANY MORE
+It used to walk Event.assigned_users filtered to speaker_sales / market_research,
+so who was copied depended on how that event happened to be staffed — and an
+event with nobody assigned copied nobody, silently. The agreed rule is instead
+"the submitter, and Harry, every time", which splits cleanly in two: the submitter
+is already stamped on the row as created_by (the form link's reviewer for a public
+submission, the logged-in author for an in-CRM one — see
+views.create_review_with_workflows), and Harry is a settings constant.
+
+The knock-on is deliberate: internal_footnotes can no longer go out (see
+Recipients.include_internal_footnotes), because a standing address has no User row
+and nothing can vouch for what its reader may see.
 
 THE ZOHO PRECEDENCE BUG, NOT REPLICATED
 The v2 script reads:
@@ -47,6 +63,7 @@ import logging
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.html import escape
 
@@ -56,10 +73,6 @@ from .access import may_see_mr_fields
 from .models import RUBRIC_TOTAL, NotificationLog, PaperReview
 
 logger = logging.getLogger(__name__)
-
-# CC roles, as User.Role values. Named here rather than inline so widening the
-# notification is a one-line change with a test attached.
-CC_ROLES = ("speaker_sales", "market_research")
 
 # Resolution steps, in the order they are attempted. The one that failed is
 # recorded on the NotificationLog and repeated in the fallback alert, so
@@ -98,8 +111,32 @@ EMAIL_FIELDS = (
 )
 
 # Restricted to MR/Admin everywhere else in this app — see serializers.py
-# _MR_ONLY_FIELDS. Included in the body only under the all-or-nothing rule below.
+# _MR_ONLY_FIELDS. Included in the PLAIN-TEXT part only, under the all-or-nothing
+# rule below. The HTML template has no footnotes field at all, so the rule is what
+# stands between the field and the wire on the text side.
 MR_FIELDS = ("internal_footnotes",)
+
+# The letters that count as clearing the bar, deciding which of the template's two
+# opening paragraphs renders (cleared / not_cleared). Absolute bands, so this is a
+# letter set rather than a score floor — see models.GRADE_BANDS.
+#
+# ponytail: A/B+/B assumed, i.e. the 26/45 floor. NOT a confirmed business rule —
+# no rule for it exists anywhere in the CRM or the Deluge. Correct the tuple if
+# the bar sits elsewhere; nothing else has to change.
+CLEARED_GRADES = ("A", "B+", "B")
+
+# review field → template token, for the six rubric criteria. The template hard-
+# codes each maximum next to its score, and those maxima are models.CRITERIA's,
+# so a criterion whose maximum moves has to move in both places; the test in
+# tests_notification.py checks the pair still agrees.
+SCORE_TOKENS = (
+    ("closeness_to_topic",           "score_topic"),
+    ("closeness_to_region",          "score_region"),
+    ("clear_solution_to_challenges", "score_solution"),
+    ("case_study_results_examples",  "score_case_study"),
+    ("not_obvious_sales_pitch",      "score_not_pitch"),
+    ("company_profile_score",        "score_company"),
+)
 
 
 class Recipients:
@@ -109,16 +146,18 @@ class Recipients:
 
     to / cc            — addresses the send is attempted with
     users              — the User objects behind them, for the MR rule
+    unvetted           — resolved addresses with NO User behind them
     is_fallback        — nothing resolved; the watchdog gets it instead
     failure_step       — which step ran out of information
     note              — human-readable degradation, stored on the log
     """
 
-    def __init__(self, to=None, cc=None, users=None, is_fallback=False,
-                 failure_step="", note=""):
+    def __init__(self, to=None, cc=None, users=None, unvetted=None,
+                 is_fallback=False, failure_step="", note=""):
         self.to = to or []
         self.cc = cc or []
         self.users = users or []
+        self.unvetted = unvetted or []
         self.is_fallback = is_fallback
         self.failure_step = failure_step
         self.note = note
@@ -137,6 +176,13 @@ class Recipients:
         the one going somewhere nobody vetted.
         """
         if self.is_fallback or not self.users:
+            return False
+        # The standing Cc (settings.PAPER_REVIEW_CC_EMAILS) is a bare address with
+        # no User row behind it, so nothing here can vouch for what its reader may
+        # see. One such address closes the field, exactly as the fallback watchdog
+        # does and for the same reason. Kept separate from `cc` rather than
+        # testing `cc` outright: the MRE is also a Cc, and they DO have a User row.
+        if self.unvetted:
             return False
         return all(may_see_mr_fields(u) for u in self.users)
 
@@ -185,36 +231,52 @@ def resolve_recipients(review):
             to = [address]
             to_users = [sales_exec]
 
-    cc, cc_users, seen = [], [], {a.lower() for a in to}
-    for user in event.assigned_users.filter(role__in=CC_ROLES).order_by("id"):
-        address = _clean(user.email)
+    # The Cc: the submitter, then the standing list. Deduped against the To and
+    # against each other, case-insensitively, so a sales executive who also filed
+    # the review — or who is on the standing list — is addressed exactly once.
+    cc, cc_users, unvetted, seen = [], [], [], {a.lower() for a in to}
+
+    # The MRE who filled the form. created_by is null on rows the importer and the
+    # webhook create, which neither notify nor have a submitter to copy; getattr
+    # keeps the unsaved PaperReview that report_paper_review_recipients drives
+    # this with working too.
+    author = getattr(review, "created_by", None)
+    author_address = _clean(getattr(author, "email", ""))
+    if author_address and author_address.lower() not in seen:
+        seen.add(author_address.lower())
+        cc.append(author_address)
+        cc_users.append(author)
+
+    for address in settings.PAPER_REVIEW_CC_EMAILS:
+        address = _clean(address)
         if not address or address.lower() in seen:
             continue
         seen.add(address.lower())
         cc.append(address)
-        cc_users.append(user)
+        unvetted.append(address)
 
     if to:
-        return Recipients(to=to, cc=cc, users=to_users + cc_users)
+        return Recipients(to=to, cc=cc, users=to_users + cc_users,
+                          unvetted=unvetted)
 
-    # No sales executive address. The Cc list still contains real people, so the
-    # email goes to them rather than to the watchdog — but the missing assignment
-    # is recorded, not swallowed. DECISION: the fallback fires only when NOTHING
+    # No sales executive address. The Cc is still real people, so the email goes
+    # to them rather than to the watchdog — but the missing assignment is
+    # recorded, not swallowed. DECISION: the fallback fires only when NOTHING
     # resolves, which is what "if no recipient resolves" means; a degraded send is
     # still a delivered send.
     if cc:
         return Recipients(
-            to=cc, cc=[], users=cc_users, failure_step=step,
-            note=(f"Degraded: {step}. The event's assigned speaker-sales / "
-                  f"market-research users were used as the To list instead."),
+            to=cc, cc=[], users=cc_users, unvetted=unvetted, failure_step=step,
+            note=(f"Degraded: {step}. The Cc list (the submitter and the standing "
+                  f"recipients) was used as the To list instead."),
         )
 
     return Recipients(
         to=[settings.PAPER_REVIEW_ALERT_EMAIL], is_fallback=True,
         failure_step=step or STEP_NO_RECIPIENTS,
         note=(f"{step or STEP_NO_RECIPIENTS}: event '{code}' has no sales "
-              f"executive address and no assigned speaker-sales or "
-              f"market-research user with an email address."),
+              f"executive address, the review names no submitter with an email "
+              f"address, and PAPER_REVIEW_CC_EMAILS is empty."),
     )
 
 
@@ -228,9 +290,14 @@ def resolved_refs(recipients):
     server-side removes the need for the cache, so these are written with what was
     ACTUALLY resolved at send time rather than read as inputs.
 
-    ASSUMPTION: both columns are EmailField, i.e. single-valued, and the Cc list
-    can hold several people per role. The first resolved address per role is
-    stored; the complete list lives on the NotificationLog.
+    ASSUMPTION: both columns are EmailField, i.e. single-valued. The first
+    resolved address per role is stored; the complete list lives on the
+    NotificationLog.
+
+    NARROWED with the Cc rewrite: recipients.users is now the sales executive and
+    the submitting MRE (the standing Cc addresses have no User rows), so these
+    fill only when one of those two holds the role in question, and are otherwise
+    blank. The NotificationLog remains the complete record of who was written to.
     """
     speaker, research = "", ""
     for user in recipients.users:
@@ -262,47 +329,96 @@ def _display(review, field):
     return str(value)
 
 
+def template_context(review):
+    """
+    The token set templates/paper_review/handoff_email.html expects.
+
+    NOT ESCAPED HERE. The template autoescapes, and escaping twice turns a speaker
+    called O'Brien into O&amp;#x27;Brien in the delivered mail.
+
+    An absent value becomes an em dash rather than the empty string, so a blank
+    table cell always means "we hold nothing" and never "the token is misspelt".
+    The exceptions are the conditional tokens (nos, cleared, li_company,
+    agenda_addition, feedback), which stay falsy so their blocks strip cleanly.
+    """
+    author = getattr(review, "created_by", None)
+    context = {
+        "event_code":    _display(review, "event_code"),
+        "paper_date":    (review.paper_submission_date.strftime("%d %b %Y")
+                          if review.paper_submission_date else "\u2014"),
+        "speaker_name":  _display(review, "speaker_name"),
+        "company_name":  _display(review, "company_name"),
+        "speaker_email": _display(review, "email"),
+        "li_followers":  _display(review, "linkedin_followers"),
+        "li_profile":    _clean(review.linkedin_speaker),
+        "li_company":    _clean(review.linkedin_company),
+        "session":       _display(review, "session_location_on_agenda"),
+        "theme":         _display(review, "theme"),
+        "grade":         _clean(review.grade) or "\u2014",
+        "score_total":   ("\u2014" if review.proposal_score is None
+                          else review.proposal_score),
+        "nos":           bool(review.nos),
+        "cleared":       _clean(review.grade) in CLEARED_GRADES,
+        # linebreaksbr runs in the template, so raw newlines have to survive to it.
+        "agenda_addition": _clean(review.agenda_addition),
+        "feedback":        _clean(review.feedback_to_speaker),
+        "record_url":    f"{settings.CRM_BASE_URL}/paper-review",
+        # The submitting MRE signs it. Falls back to a description rather than a
+        # blank line: an importer or webhook row has no author, and an email
+        # signed by nobody reads as a bug.
+        "mre_name":      ((author.get_full_name() or author.username)
+                          if author else "Linq CRM"),
+        "mre_role":      (author.get_role_display()
+                          if author and hasattr(author, "get_role_display")
+                          else "Automated notification"),
+    }
+    for field, token in SCORE_TOKENS:
+        value = getattr(review, field, None)
+        context[token] = "\u2014" if value is None else value
+    return context
+
+
 def render_body(review, include_internal_footnotes):
     """
-    (text, html). The HTML table is the real body; the text part exists because a
-    send with no plain-text alternative is what makes an email look like spam.
+    (text, html). The HTML is the supplied handoff template; the text part exists
+    because a send with no plain-text alternative is what makes an email look like
+    spam, and it stays the flat field list \u2014 a plain-text transcription of an
+    editorial layout is a worse fallback than the fields themselves.
 
-    A field the recipients may not read is OMITTED, not blanked — the same choice
-    the serializer makes, so the absence itself carries no information about
-    whether a value exists.
+    THE MR RULE APPLIES TO THE TEXT PART ONLY, because internal_footnotes is the
+    only field it governs and the HTML template never had a place for it. A field
+    the recipients may not read is OMITTED, not blanked \u2014 the same choice the
+    serializer makes, so the absence itself carries no information about whether a
+    value exists.
     """
-    rows_text, rows_html = [], []
-    for field, label in EMAIL_FIELDS:
-        if field in MR_FIELDS and not include_internal_footnotes:
-            continue
-        value = _display(review, field)
-        rows_text.append(f"{label}: {value}")
-        rows_html.append(
-            "<tr>"
-            f'<th align="left" style="padding:6px 12px 6px 0;vertical-align:top;'
-            f'white-space:nowrap;color:#374151;font-weight:600;">{escape(label)}</th>'
-            f'<td style="padding:6px 0;vertical-align:top;color:#111827;">'
-            f"{escape(value).replace(chr(10), '<br>')}</td>"
-            "</tr>"
-        )
-
+    rows_text = [
+        f"{label}: {_display(review, field)}"
+        for field, label in EMAIL_FIELDS
+        if not (field in MR_FIELDS and not include_internal_footnotes)
+    ]
     text = (
         "A new paper review has been submitted.\n\n"
         + "\n".join(rows_text)
-        + "\n\n— Linq CRM"
+        + "\n\n\u2014 Linq CRM"
     )
-    html = (
-        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;">'
-        "<p>A new paper review has been submitted.</p>"
-        '<table cellpadding="0" cellspacing="0" '
-        'style="border-collapse:collapse;font-size:13px;">'
-        + "".join(rows_html)
-        + "</table><p>— Linq CRM</p></div>"
-    )
+    html = render_to_string("paper_review/handoff_email.html",
+                            template_context(review))
     return text, html
 
 
 def _send(subject, text, html, to, cc=None):
+    # The testing redirect, applied at the ONE point every message in this module
+    # passes through — the notification and both watchdog alerts alike. Doing it
+    # here rather than in resolve_recipients is what keeps NotificationLog and
+    # report_paper_review_recipients honest about who the mail was FOR.
+    #
+    # The real To: rides in the subject, so a redirected inbox can still answer
+    # "who would have got this?" without opening the log.
+    redirect = _clean(getattr(settings, "PAPER_REVIEW_REDIRECT_ALL_EMAIL", ""))
+    if redirect:
+        subject = f"[TEST, for {', '.join(to) or '(nobody)'}] {subject}"
+        to, cc = [redirect], []
+
     message = EmailMultiAlternatives(
         subject=subject, body=text,
         from_email=settings.DEFAULT_FROM_EMAIL,

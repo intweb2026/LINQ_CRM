@@ -1,4 +1,4 @@
-import { lazy } from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SessionProvider, useSession } from './context/SessionContext';
 import { ToastProvider } from './context/ToastContext';
@@ -39,6 +39,10 @@ const WebhookLogsPage = lazy(() => import('./pages/WebhookLogsPage'));
 const DataApiKeysPage = lazy(() => import('./pages/DataApiKeysPage'));
 const PaperReviewPage = lazy(() => import('./pages/PaperReviewPage'));
 const ProposalSubmissionPage = lazy(() => import('./pages/ProposalSubmissionPage'));
+// The public MRE paper review form. Split out like every other page, but it needs
+// its OWN Suspense boundary below: the one these lazy chunks normally fall into
+// lives inside AppShell, and this route deliberately renders no AppShell.
+const PublicPaperReviewFormPage = lazy(() => import('./pages/PublicPaperReviewFormPage'));
 
 function RequireAuth({ children }) {
   const { user, permsLoaded } = useSession();
@@ -72,8 +76,8 @@ function LoginRoute() {
  * and send every session to the fallback.
  */
 function HomeRedirect() {
-  const { canView, user } = useSession();
-  return <Navigate to={homeFor(canView, user?.username).path} replace />;
+  const { canView, user, isAdmin } = useSession();
+  return <Navigate to={homeFor(canView, user?.username, isAdmin).path} replace />;
 }
 
 export default function App() {
@@ -89,6 +93,15 @@ export default function App() {
                   unauthenticated visitor would be bounced to /login first. */}
               <Route path="/170405" element={<FallbackGate />} />
               <Route path="/loginpage" element={<FallbackLoginPage />} />
+              {/* The MRE paper review form link. OUTSIDE RequireAuth on purpose:
+                  the reviewer has no CRM account, the key in the query string is
+                  the whole credential, and the events the form offers are that
+                  key's reviewer's own. See backend/paper_review/public_form.py.
+                  It must stay ABOVE the "/" route, whose children own the
+                  authenticated /paper-review page. */}
+              <Route path="/paper-review/submit" element={
+                <Suspense fallback={null}><PublicPaperReviewFormPage /></Suspense>
+              } />
               {/* The Suspense boundary these lazy pages need is INSIDE AppShell,
                   around its <Outlet/>, not here. Wrapping <AppShell/> would put
                   the sidebar and topbar behind the fallback too, so every

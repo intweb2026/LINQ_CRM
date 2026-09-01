@@ -4,6 +4,7 @@ ticket_central/utils.py
 Ticket number auto-generation + Smart Import row coercion.
 """
 import logging
+import re as _re
 from datetime import date, datetime, timedelta
 
 from django.contrib.auth import get_user_model
@@ -11,10 +12,24 @@ from django.utils import timezone
 from django.utils.timezone import make_aware
 
 from .models import Ticket
-from .constants import DMD_WORK_FIELDS, MR_ACTIVITY_FIELDS
+from .constants import (
+    DMD_FIELDS, DMD_WORK_FIELDS, MR_ACTIVITY_FIELDS, MR_FIELDS, SHARED_FIELDS,
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def display_name(user):
+    """
+    How a user is named in a payload or a text column. Returns None for no user.
+
+    Lives here rather than in serializers.py because the importer needs it too,
+    and serializers imports it under its old private name.
+    """
+    if not user:
+        return None
+    return user.get_full_name() or user.username
 
 # D25: allowlist derived from the model — prevents unknown column names from
 # crashing Ticket.objects.create(**coerced) with TypeError.
@@ -24,6 +39,13 @@ _WRITABLE_FIELDS = frozenset(
     if hasattr(f, "name") and not f.auto_created
 ) - _AUTO_FIELDS
 _INTERNAL_KEYS = frozenset({"_preserved_created_at", "_modified_time"})
+# Added Time / Modified Time are read out of the row by hand at the bottom of
+# _coerce_row. Skipping them in the typing loop keeps a datetime string from being
+# stored as text and then dropped by the _WRITABLE_FIELDS filter one warning per
+# row, which is what the loop did with created_at before.
+_TIMESTAMP_KEYS = frozenset({
+    "created_at", "Added Time", "updated_at", "Modified Time", "modified_time",
+})
 
 # Fields _coerce_row accepts but that a spreadsheet must not carry: they are set
 # from the request user or by the workflow transitions, and letting an import
@@ -63,6 +85,9 @@ def import_fields():
     # above skips it — but the importer DOES read it, through
     # _preserved_created_at. Appended once, under the name the Zoho export uses.
     fields.append(("created_at", "Added Time"))
+    # Same story for updated_at: auto_now keeps it out of _WRITABLE_FIELDS, and it
+    # is honoured through _modified_time.
+    fields.append(("updated_at", "Modified Time"))
     return fields
 
 
@@ -153,11 +178,33 @@ def extract_type_code(type_of_ticket):
     return s
 
 
-def extract_purpose_code(purpose):
-    """Strip whitespace, return canonical form."""
+def normalize_purpose(purpose):
+    """
+    Storage form of `purpose`. Upper-cased and whitespace-collapsed, full length.
+
+    Purpose is stored upper-case, not merely displayed that way. Webhook senders
+    push lower-case codes, and a free-text column keyed by a counter turned
+    "CCU", "ccu" and "CCU  " into three sequences that each restarted at 10001.
+    Ticket.save() and _coerce_row both run this, so no write path stores a
+    lower-case purpose.
+
+    It cannot merge genuinely different text. Production holds "ODU b" next to
+    "ODU", and those stay two purposes; guessing that a stray token is a typo
+    would silently file tickets under the wrong code. A fixed purpose list is
+    the only real fix for that.
+    """
     if not purpose:
         return ""
-    return str(purpose).strip()
+    return " ".join(str(purpose).split()).upper()
+
+
+def extract_purpose_code(purpose):
+    """
+    Sequence key and ticket-number middle, i.e. normalize_purpose truncated to
+    50 to match TicketSequence.purpose_key. `purpose` is a 255-char column, so a
+    longer one used to overflow the key and raise DataError at submit time.
+    """
+    return normalize_purpose(purpose)[:50]
 
 
 def build_ticket_number(type_code, purpose_code, number):
@@ -174,16 +221,15 @@ def build_ticket_number(type_code, purpose_code, number):
 
 def assign_next_ticket_number(purpose_code, type_code):
     """
-    Returns the next ticket number for this purpose, reusing gaps left by
-    deleted tickets before advancing past last_number.
+    Returns the next ticket number for this purpose: one past the highest
+    number already in use, never a gap.
 
-    Algorithm:
-      1. Lock the TicketSequence row for this purpose.
-      2. Collect every number currently in use across ALL tickets for this purpose
-         (regardless of type_code — the sequence is per-purpose).
-      3. Scan [min_used .. last_number] for the first missing slot (gap).
-      4. If a gap exists, reuse it.  Otherwise use last_number + 1.
-      5. Only update last_number when we advance beyond it.
+    Gap reuse was removed. It scanned upward from the LOWEST number in use, and
+    the Zoho import left purposes holding two disjoint ranges — FLE, for
+    instance, has 5 and 21-24 sitting alongside 7041-7221. min() picked 5, the
+    scan found 6 free, and every new FLE ticket came out numbered 6, 7, 8 while
+    the live series sat at 7221. Deleted tickets now leave their number retired,
+    which is what a ticket number should do anyway.
 
     Thread-safe: select_for_update ensures two concurrent creates for the same
     purpose cannot pick the same number.
@@ -191,8 +237,13 @@ def assign_next_ticket_number(purpose_code, type_code):
     from django.db import transaction
     from .models import TicketSequence
 
+    # Normalised here too, not just in the callers. It is idempotent, and every
+    # caller having to remember is how one unnormalised path reopens the split
+    # counters this exists to prevent.
+    purpose_code = extract_purpose_code(purpose_code)
+
     with transaction.atomic():
-        seq, _ = TicketSequence.objects.select_for_update().get_or_create(
+        seq, created = TicketSequence.objects.select_for_update().get_or_create(
             purpose_key=purpose_code,
             defaults={"last_number": 10000},
         )
@@ -201,7 +252,7 @@ def assign_next_ticket_number(purpose_code, type_code):
         used = set()
         for tn in (
             Ticket.objects
-            .filter(purpose=purpose_code, ticket_number__gt="")
+            .filter(purpose__iexact=purpose_code, ticket_number__gt="")
             .values_list("ticket_number", flat=True)
         ):
             try:
@@ -209,15 +260,17 @@ def assign_next_ticket_number(purpose_code, type_code):
             except (ValueError, IndexError):
                 pass
 
-        if used:
-            lo = min(used)
-            # First missing slot in [lo, last_number]; fall back to last_number+1.
-            next_num = next(
-                (n for n in range(lo, seq.last_number + 1) if n not in used),
-                seq.last_number + 1,
-            )
-        else:
-            next_num = (seq.last_number or 10000) + 1
+        # The data wins over the default. A counter row that already existed is
+        # real history and counts toward the high-water mark, because it also
+        # remembers numbers whose tickets have since been deleted. A row created
+        # just now carries only the 10000 default, and that must NOT out-rank
+        # what the data holds: FLE tops out at 7221, so seeding from the default
+        # would number the next one 10001 and abandon the live series. 10000 is
+        # the starting point for a purpose with no history at all, nothing more.
+        marks = set(used)
+        if not created:
+            marks.add(seq.last_number)
+        next_num = (max(marks) if marks else 10000) + 1
 
         if next_num > seq.last_number:
             seq.last_number = next_num
@@ -333,6 +386,8 @@ def _coerce_row(row, exclude=None, request_user=None):
             continue
         if val in (None, ""):
             continue   # let model defaults apply
+        if key in _TIMESTAMP_KEYS:
+            continue   # handled below, as _preserved_created_at / _modified_time
         if key in DATE_FIELDS:
             parsed = _parse_date(val)
             if parsed is not None:
@@ -353,6 +408,13 @@ def _coerce_row(row, exclude=None, request_user=None):
         else:
             out[key] = str(val).strip()
 
+    # The import's update branch writes this dict through queryset.update()
+    # (views.py:585), which never calls Ticket.save(), so the model-level
+    # normalisation does not run for it. Normalise here so both import branches
+    # store the same upper-case form.
+    if out.get("purpose"):
+        out["purpose"] = normalize_purpose(out["purpose"])
+
     # D15: preserve Added Time / created_at if provided
     created_at_val = row.get("created_at") or row.get("Added Time")
     if created_at_val:
@@ -360,9 +422,11 @@ def _coerce_row(row, exclude=None, request_user=None):
         if parsed_cat:
             out["_preserved_created_at"] = parsed_cat
 
-    # NEW: preserve Modified Time (read but don't write directly — used for audit derivation)
-    if "modified_time" in row or "Modified Time" in row:
-        mt = row.get("modified_time") or row.get("Modified Time")
+    # Preserve Modified Time. "updated_at" is the key Smart Import maps it under
+    # (import_fields appends it); the other two are what a Zoho export labels it.
+    mt = (row.get("updated_at") or row.get("modified_time")
+          or row.get("Modified Time"))
+    if mt:
         parsed_mt = _parse_datetime(mt)
         if parsed_mt:
             out["_modified_time"] = parsed_mt
@@ -375,9 +439,11 @@ def _coerce_row(row, exclude=None, request_user=None):
     audit = derive_audit_timestamps(out, out["status"])
     out.update(audit)
 
-    # Strip private keys before returning (these aren't model fields)
-    out.pop("_modified_time", None)
-
+    # _modified_time is NOT stripped here. updated_at is auto_now, and auto_now is
+    # a save() hook, so it cannot be passed to Ticket.objects.create() — the
+    # importer applies it with a queryset update afterwards, exactly as it does
+    # _preserved_created_at. Dropping it here is what made every imported row read
+    # "Modified Time = moment of the upload".
     # D25: filter to model-known fields — unknown CSV columns become warnings, not crashes.
     filtered = {}
     dropped = []
@@ -389,3 +455,48 @@ def _coerce_row(row, exclude=None, request_user=None):
     if dropped:
         logger.warning("_coerce_row dropped unknown keys: %s", dropped)
     return filtered
+
+
+# ── Webhook field-name canonicalisation ──────────────────────────────────────
+# DRF silently ignores a key it does not recognise, so a ticket posted with
+# "Link_URL" (Zoho Creator transmits its own API names) or "Link URL" (the
+# column label, which is what a hand-built integration copies) is accepted with
+# a 201 and that field left empty — the delivery looks successful and the value
+# is simply gone. Folding case, spaces, hyphens and underscores away makes every
+# one of those spellings land on the field it obviously means.
+_FOLD_RE = _re.compile(r"[^a-z0-9]+")
+
+
+def _fold(name) -> str:
+    return _FOLD_RE.sub("", str(name).lower())
+
+
+_CANONICAL_FIELDS = {
+    _fold(f): f
+    # DMD fields are folded too, deliberately: a Data Mining field sent under a
+    # loose spelling must still be REFUSED by the serializer's ownership check
+    # rather than quietly dropped as an unknown key.
+    for f in (MR_FIELDS | DMD_FIELDS | SHARED_FIELDS | {"external_id"})
+}
+# Spellings that do not fold to a field name on their own. Nothing else on a
+# ticket is a link, so neither of these is ambiguous.
+_CANONICAL_FIELDS.update({"link": "link_url", "url": "link_url"})
+
+
+def canonicalise_ticket_fields(payload: dict) -> dict:
+    """
+    A webhook body with its keys renamed to the ticket field they name.
+
+    Unrecognised keys are passed through untouched so the caller can report
+    them; a blank duplicate never overwrites a value already resolved, since a
+    sender that emits both "link_url" and "Link URL" usually fills only one.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    out = {}
+    for key, value in payload.items():
+        canon = _CANONICAL_FIELDS.get(_fold(key), key)
+        if canon in out and value in ("", None):
+            continue
+        out[canon] = value
+    return out

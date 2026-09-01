@@ -24,6 +24,10 @@ permission class are all part of what has to work for an edit to stick.
 
     python manage.py test book_event.tests_booking_modal_writes
 """
+from datetime import date
+
+from django.db.models.functions import Coalesce
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -389,3 +393,316 @@ class PaymentStatusChoiceTests(TestCase):
         """
         for legacy in ("Unpaid", "Free"):
             self.assertIn(legacy, BookEvent.PaymentStatus.values)
+
+
+class SppClearsTheDatePaidTests(TestCase):
+    """
+    Booking Code → SPP blanks Date Paid and sets Payable/Free to Free.
+
+    The UI half is DelegateTable.update(); this is the half that made it look
+    like nothing happened. effective_payment_date resolves as
+    `delegate_payment_date or invoice.payment_date`, so writing the override as
+    NULL while the invoice kept its date left the resolved value untouched: the
+    cell blanked, the PATCH returned 200, and the old date came back with the
+    next refetch. The modal now sends payment_date: null for the INVOICE as soon
+    as any delegate has none — api/bookings.js splitPersonLevel — and these lock
+    that contract down from the server's side.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="spp_admin", is_all_access=True)
+        cls.admin = User.objects.create_user(
+            username="spp_admin_u", password="x", role="admin", email="spp@iq-hub.com",
+        )
+        cls.admin.team = cls.role
+        cls.admin.save()
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        make_event(EVENT_A)
+        self.inv = BookEvent.objects.create(
+            invoice_number="SPP-1", event_code=EVENT_A, booking_code="Delegate",
+            payment_status="Paid", payment_date="2026-03-01", paid_or_free="Paid",
+        )
+
+    def delegate(self, email, **over):
+        kwargs = {
+            "invoice": self.inv, "event_code": EVENT_A,
+            "first_name": "A", "last_name": "Delegate", "email": email,
+        }
+        kwargs.update(over)
+        return BookDelegate.objects.create(**kwargs)
+
+    def patch(self, body):
+        req = self.factory.patch(f"/api/invoices/{self.inv.pk}/", body, format="json")
+        force_authenticate(req, user=self.admin)
+        resp = _view({"patch": "partial_update"})(req, pk=self.inv.pk)
+        resp.render()
+        return resp
+
+    def resolved(self, delegate):
+        from book_delegate.serializers import BookDelegateListSerializer
+        delegate.refresh_from_db()
+        data = BookDelegateListSerializer(delegate).data
+        return data["effective_payment_date"], data["effective_paid_or_free"]
+
+    def test_the_only_delegate_going_spp_clears_the_whole_booking(self):
+        d = self.delegate("one@acme.test")
+
+        resp = self.patch({
+            # What the modal sends once its one row holds SPP: the invoice's own
+            # date NULLed, Free agreed by every delegate so it goes on the invoice.
+            "payment_date": None,
+            "paid_or_free": "Free",
+            "delegates": [{
+                "id": d.id, "email": d.email, "first_name": "A",
+                "booking_code": "SPP",
+                "delegate_payment_date": None, "delegate_paid_or_free": None,
+            }],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.payment_date)
+        self.assertEqual(self.inv.paid_or_free, "Free")
+        d.refresh_from_db()
+        self.assertEqual(d.booking_code, "SPP")
+        self.assertEqual(self.resolved(d), (None, "Free"))
+
+    def test_one_delegate_of_two_going_spp_leaves_the_other_paid(self):
+        """
+        The blank is only expressible with the invoice column NULL, so the
+        delegate that still HAS a date carries it as an override. Both rows must
+        resolve to what the modal was showing.
+        """
+        spp = self.delegate("spp@acme.test")
+        keep = self.delegate("keep@acme.test", first_name="B")
+
+        resp = self.patch({
+            "payment_date": None,   # some delegate has none
+            "delegates": [
+                {"id": spp.id, "email": spp.email, "first_name": "A",
+                 "booking_code": "SPP",
+                 "delegate_payment_date": None, "delegate_paid_or_free": "Free"},
+                {"id": keep.id, "email": keep.email, "first_name": "B",
+                 "booking_code": "Delegate",
+                 "delegate_payment_date": "2026-03-01", "delegate_paid_or_free": "Paid"},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.payment_date)
+        self.assertEqual(self.resolved(spp), (None, "Free"))
+        self.assertEqual(self.resolved(keep), ("2026-03-01", "Paid"))
+
+
+class RequestDateEditTests(TestCase):
+    """
+    Request Date has to be changeable from the booking modal.
+
+    TWO BUGS THIS SITS BEHIND
+    Nobody could edit a Request Date, and the endpoint was never the reason; it
+    has always accepted the invoice column. The browser simply never sent it.
+    Then, sent as one shared invoice value, editing one delegate's date moved
+    every delegate on the invoice with it. Request Date and Invoice Date are now
+    a per-delegate OVERRIDE pair like the five payment columns,
+    delegate_request_date and delegate_invoice_date, null meaning "inherit the
+    invoice". The browser half lives in frontend/src/api/bookings.js
+    splitPersonLevel, pinned in api/bookings.invoiceDates.test.js.
+
+    What is pinned HERE is the server end of that contract. The modal's PATCH
+    stores an invoice-level date, a null CLEARS it, an override sticks to the
+    one delegate that carries it, and booked_on follows in every case. That
+    last one is the trap: booked_on is the delegate-level copy of the booking
+    date and the column the period window filters on, and the modal's delegate
+    branch writes through a queryset .update() that never runs
+    BookDelegate.save(). A date stored without it would show one value in the
+    Bookings table and be windowed by another.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.role = Team.objects.create(name="rd_admin", is_all_access=True)
+        cls.admin = User.objects.create_user(
+            username="rd_admin_u", password="x", role="admin", email="rd@iq-hub.com",
+        )
+        cls.admin.team = cls.role
+        cls.admin.save()
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        make_event(EVENT_A)
+        self.inv = BookEvent.objects.create(
+            invoice_number="MOD-RD", event_code=EVENT_A,
+            request_date="2026-01-05", invoice_date="2026-01-09",
+        )
+        self.d = BookDelegate.objects.create(
+            invoice=self.inv, event_code=self.inv.event_code,
+            first_name="One", last_name="Delegate", email="rd@acme.test",
+        )
+
+    def patch(self, body):
+        req = self.factory.patch(f"/api/invoices/{self.inv.pk}/", body, format="json")
+        force_authenticate(req, user=self.admin)
+        resp = _view({"patch": "partial_update"})(req, pk=self.inv.pk)
+        resp.render()
+        return resp
+
+    def resolved(self, delegate):
+        """effective_request_date, i.e. what the Bookings table shows."""
+        from book_delegate.serializers import BookDelegateListSerializer
+        delegate.refresh_from_db()
+        return BookDelegateListSerializer(delegate).data["effective_request_date"]
+
+    def test_the_modal_patch_stores_a_new_request_date(self):
+        resp = self.patch({
+            "request_date": "2026-02-11",
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.request_date, date(2026, 2, 11))
+        # The delegate's own copy of the booking date moves with it.
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.booked_on, date(2026, 2, 11))
+
+    def test_a_null_request_date_clears_it_and_booked_on_falls_back(self):
+        resp = self.patch({
+            "request_date": None,
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertIsNone(self.inv.request_date)
+        # booked_on is COALESCE(request_date, invoice_date) by another name.
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.booked_on, date(2026, 1, 9))
+
+    def test_the_invoice_date_is_editable_the_same_way(self):
+        resp = self.patch({
+            "invoice_date": "2026-04-02",
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.inv.refresh_from_db()
+        self.assertEqual(self.inv.invoice_date, date(2026, 4, 2))
+
+    def test_one_delegate_keeps_its_own_request_date(self):
+        """
+        The reason the override column exists. Two people on one invoice, and a
+        correction to one of them must not move the other.
+        """
+        other = BookDelegate.objects.create(
+            invoice=self.inv, event_code=self.inv.event_code,
+            first_name="Two", last_name="Delegate", email="rd2@acme.test",
+        )
+        resp = self.patch({
+            "delegates": [
+                {"id": self.d.id, "email": self.d.email, "first_name": "One",
+                 "delegate_request_date": "2026-07-07"},
+                {"id": other.id, "email": other.email, "first_name": "Two"},
+            ],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.d.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(self.d.delegate_request_date, date(2026, 7, 7))
+        self.assertIsNone(other.delegate_request_date)
+        # And the resolved values, which is what the table shows: the overridden
+        # row on its own date, the other still on the invoice's.
+        self.assertEqual(self.resolved(self.d), "2026-07-07")
+        self.assertEqual(self.resolved(other), "2026-01-05")
+        # booked_on follows the override on one row and the invoice on the
+        # other, or the period window and the table would disagree.
+        self.assertEqual(self.d.booked_on, date(2026, 7, 7))
+        self.assertEqual(other.booked_on, date(2026, 1, 5))
+
+    def test_a_delegate_invoice_date_override_is_independent_of_the_request_date(self):
+        resp = self.patch({
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One",
+                           "delegate_invoice_date": "2026-09-09"}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.d.refresh_from_db()
+        self.assertEqual(self.d.delegate_invoice_date, date(2026, 9, 9))
+        self.assertIsNone(self.d.delegate_request_date)
+        # The invoice's request date still leads, so the booking date is unmoved.
+        self.assertEqual(self.d.booked_on, date(2026, 1, 5))
+
+    def test_clearing_an_override_returns_the_delegate_to_the_invoice(self):
+        self.d.delegate_request_date = date(2026, 7, 7)
+        self.d.save()
+        self.assertEqual(self.d.booked_on, date(2026, 7, 7))
+
+        resp = self.patch({
+            "delegates": [{"id": self.d.id, "email": self.d.email, "first_name": "One",
+                           "delegate_request_date": None}],
+        })
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.d.refresh_from_db()
+        self.assertIsNone(self.d.delegate_request_date)
+        self.assertEqual(self.resolved(self.d), "2026-01-05")
+        self.assertEqual(self.d.booked_on, date(2026, 1, 5))
+
+    def test_an_invoice_date_change_does_not_destroy_a_delegate_override(self):
+        """
+        BookEvent.save() cascades booked_on to every delegate on the invoice. It
+        used to write one literal date, which would have overwritten the row
+        that carries its own; it writes the COALESCE chain per row instead.
+        """
+        self.d.delegate_request_date = date(2026, 7, 7)
+        self.d.save()
+        plain = BookDelegate.objects.create(
+            invoice=self.inv, event_code=self.inv.event_code,
+            first_name="Two", last_name="Delegate", email="rd2@acme.test",
+        )
+
+        resp = self.patch({"request_date": "2026-02-11"})
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        self.d.refresh_from_db()
+        plain.refresh_from_db()
+        self.assertEqual(self.d.delegate_request_date, date(2026, 7, 7))
+        self.assertEqual(self.d.booked_on, date(2026, 7, 7))
+        self.assertEqual(plain.booked_on, date(2026, 2, 11))
+
+    def test_the_bookings_list_sorts_by_the_resolved_date(self):
+        """
+        _sort_request_date is the Request Date column's serverOrdering. It used
+        to be F("invoice__request_date"), which orders the table by a value the
+        cell is not showing for any row carrying an override; the same reasoning
+        as accounts/tests_resolved_ordering.py for the payment fields.
+
+        The two rows here are deliberately ordered one way by the invoices and
+        the other way by the resolved dates, so the assertion cannot pass under
+        the old expression.
+        """
+        from book_delegate.views import BookDelegateViewSet
+
+        self.d.delegate_request_date = date(2026, 7, 7)   # invoice says 2026-01-05
+        self.d.save()
+        later_invoice = BookEvent.objects.create(
+            invoice_number="MOD-RD2", event_code=EVENT_A,
+            request_date="2026-04-01", invoice_date="2026-04-01",
+        )
+        other = BookDelegate.objects.create(
+            invoice=later_invoice, event_code=later_invoice.event_code,
+            first_name="Two", last_name="Delegate", email="rd2@acme.test",
+        )
+
+        req = self.factory.get("/api/delegates/", {"ordering": "-_sort_request_date"})
+        force_authenticate(req, user=self.admin)
+        resp = BookDelegateViewSet.as_view({"get": "list"})(req)
+        resp.render()
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        ids = [r["id"] for r in resp.data["results"]]
+        self.assertEqual(ids, [self.d.id, other.id])

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
 import Popover from './Popover';
+import { useMenuNav } from '../lib/menuNav';
 import { EmptyState, Seg } from './UI';
 import {
   MAX_SPEC_BYTES, orderingParam, partitionConds, specByteLength, specToJson,
@@ -195,16 +196,51 @@ function condPasses(row, cond) {
 const STORE_PREFIX = 'iqhub.table.';
 const STORE_VERSION = 1;
 
-function readStored(tableId) {
+/**
+ * RETIRING A STORED SORT WHEN THE PAGE'S DEFAULT MOVES.
+ *
+ * THE BUG THIS FIXES. A stored sort beats `defaultSort` on purpose, and that is
+ * right for a sort the USER chose. But it also beat a default the user had never
+ * chosen and could not see: Bookings changed its default from Request Date to
+ * Modified Time, and every person who had ever loaded that page — which is
+ * everyone, since merely visiting it writes the blob — kept opening on Request
+ * Date with no indication why. The change was invisible in the only place it was
+ * supposed to appear.
+ *
+ * WHY NOT BUMP STORE_VERSION. That discards the WHOLE blob, on EVERY table, so a
+ * moved sort default would also throw away filter sets people had built by hand
+ * and every hidden-column choice. The cost has to land on the one thing that
+ * actually changed.
+ *
+ * So the sort carries its own generation, declared per page as
+ * `defaultSortVersion`. A stored sort written under an older generation is
+ * retired once; conds and hidden come back untouched. Bumping the number is what
+ * a page does when it changes its default, and it is a ONE-TIME reset: the next
+ * write stamps the current generation, so a user who re-picks Request Date keeps
+ * it forever after.
+ *
+ * `sortStale` is returned rather than just nulling `sort`, because a null sort is
+ * already meaningful — it is "I cycled sort off" and must survive a reload. The
+ * caller needs to tell "retired, use your default" apart from "deliberately off".
+ */
+// Exported for components/DataTable.storedSort.test.js. Not for use elsewhere:
+// the table owns this state. They are pinned by a test because the failure they
+// caused is SILENT — a moved default that reaches nobody looks exactly like a
+// default that was never changed, and no error is raised anywhere.
+export function readStored(tableId, sortVersion = 0) {
   if (!tableId) return null;
   try {
     const raw = window.localStorage.getItem(STORE_PREFIX + tableId);
     if (!raw) return null;
     const p = JSON.parse(raw);
     if (!p || p.version !== STORE_VERSION) return null;
+    // Absent on a blob written before sorts were generationed, which reads as
+    // generation 0 — so a page that has never bumped is unaffected.
+    const stale = (p.sortVersion || 0) !== sortVersion;
     return {
       conds: Array.isArray(p.conds) ? p.conds.map((c) => ({ ...c, _live: '' })) : [],
-      sort: p.sort || null,
+      sort: stale ? null : (p.sort || null),
+      sortStale: stale,
       hidden: Array.isArray(p.hidden) ? p.hidden : null,
     };
   } catch {
@@ -212,11 +248,12 @@ function readStored(tableId) {
   }
 }
 
-function writeStored(tableId, { conds, sort, hidden }) {
+export function writeStored(tableId, { conds, sort, hidden }, sortVersion = 0) {
   if (!tableId) return;
   try {
     window.localStorage.setItem(STORE_PREFIX + tableId, JSON.stringify({
       version: STORE_VERSION,
+      sortVersion,
       conds: (conds || []).map(({ _live, ...c }) => c),
       sort: sort || null,
       hidden: [...(hidden || [])],
@@ -281,7 +318,10 @@ function ValueTagInput({ values, onChange, onLive, pill }) {
       ) : null}
       <input className={pill ? 'flt-pill' : 'in in-xs'} placeholder="Type a value, press Enter…" value={draft}
         onChange={(e) => { setDraft(e.target.value); if (onLive) onLive(e.target.value); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+        // Enter on an EMPTY box is deliberately not swallowed — it bubbles to the
+        // filter panel's form, which applies. So: type, Enter to take the value,
+        // Enter again to search. See FilterPanel.
+        onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { e.preventDefault(); add(); } }}
         onBlur={add}
       />
     </div>
@@ -328,12 +368,98 @@ function OperatorSelect({ value, onChange, ops = FILTER_OPS }) {
   );
 }
 
+/**
+ * The condition a column starts with when its filter is first opened.
+ *
+ * A column with `opts` picks from a CLOSED list — the payment statuses, the
+ * grades, the ticket priorities — and every one of those is a `choice` field
+ * server-side. The backend's choice vocabulary has no `contains`, so defaulting
+ * these to Contains meant the single most common interaction in the whole table
+ * (open the funnel, tick "Paid") had no backend form and was re-applied in the
+ * browser over the loaded rows, with the footer counting them. Ticking a value
+ * off a closed list means EQUALITY anyway, and Is is also the more accurate
+ * answer where one choice is a prefix of another: Contains "Paid" swept up
+ * "Paid (Transferred)" as well.
+ *
+ * Free-text columns keep Contains — it is what a person typing a fragment
+ * means, and text fields register it.
+ */
+function blankCond(col) {
+  if (isDateCol(col)) return emptyDateCond(col.key);
+  return { key: col.key, op: col.opts ? 'Is' : 'Contains', values: [] };
+}
+
+/**
+ * Value picker for a column with a closed option list.
+ *
+ * The checkbox list on its own is unworkable once the list is long, and it has
+ * no answer at all for a value the column holds but the list does not offer.
+ * The box above it types both: it narrows the list as you type, and Enter
+ * commits the typed text as a value in its own right. A committed value that is
+ * not one of the column's options gets its own row at the top, so it stays
+ * visible and removable instead of becoming a filter nobody can see.
+ *
+ * Enter commits, blur deliberately does not: the next thing a person clicks
+ * after typing here is usually one of the checkboxes underneath, and a
+ * blur-commit would tick that box AND add the half-typed text beside it.
+ */
+/**
+ * The typed text, resolved against the option list and appended to the picked
+ * values. Typing an option out in full means THAT OPTION — matched
+ * case-insensitively on the label, stored as the underlying value — not a
+ * lookalike string the server would then fail to match against the field's
+ * choice vocabulary. Anything with no match is taken at face value.
+ */
+export function commitOptValue(rows, typed, values, optText = (o) => o) {
+  const v = String(typed).trim();
+  if (!v) return values;
+  const exact = rows.find((o) => String(optText(o)).toLowerCase() === v.toLowerCase());
+  const val = exact === undefined ? v : exact;
+  return values.includes(val) ? values : [...values, val];
+}
+
+function OptsPicker({ opts, optText, values, onChange, pill }) {
+  const [q, setQ] = useState('');
+  const t = q.trim().toLowerCase();
+  const rows = [...values.filter((v) => !opts.includes(v)), ...opts];
+  const shown = t ? rows.filter((o) => String(optText(o)).toLowerCase().includes(t)) : rows;
+  function commit() {
+    onChange(commitOptValue(rows, q, values, optText));
+    setQ('');
+  }
+  function toggle(o) {
+    onChange(values.includes(o) ? values.filter((v) => v !== o) : [...values, o]);
+  }
+  // Enter has two meanings here. With a row highlighted it ticks that row; with
+  // none it commits the typed text, which is why the highlight starts at NONE.
+  const nav = useMenuNav(shown.length, (i) => toggle(shown[i]));
+  return (
+    <div className="vti" onKeyDown={nav.onKeyDown}>
+      <input className={pill ? 'flt-pill' : 'in in-xs'} placeholder="Type a value, press Enter…" value={q}
+        onChange={(e) => setQ(e.target.value)}
+        // With nothing highlighted AND nothing typed, Enter is left alone to
+        // reach the panel's form and apply — see ValueTagInput and FilterPanel.
+        onKeyDown={(e) => { if (e.key === 'Enter' && nav.idx < 0 && q.trim()) { e.preventDefault(); commit(); } }} />
+      <div className="vti-opts" style={{ marginTop: 6 }} ref={nav.boxRef}>
+        {shown.map((o, i) => (
+          <label className={'pop-i' + (i === nav.idx ? ' cur' : '')} key={o} data-nav={i}
+            style={{ padding: '3px 6px' }} onMouseEnter={() => nav.setIdx(i)}>
+            <input type="checkbox" checked={values.includes(o)} onChange={() => toggle(o)} />
+            {optText(o)}
+          </label>
+        ))}
+        {shown.length ? null : <div className="sel-none">No match — press Enter to use “{q.trim()}”</div>}
+      </div>
+    </div>
+  );
+}
+
 // Unified checklist item for the toolbar Search/Filter panel: checking a field
 // expands its operator + value editor directly beneath it (spreadsheet-search style).
 function FilterListItem({ col, cond, onToggle, onChangeCond }) {
   const checked = !!cond;
   const isDate = isDateCol(col);
-  const value = cond || (isDate ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
+  const value = cond || blankCond(col);
   const ops = isDate ? DATE_OPS : FILTER_OPS;
   const noValueOps = isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS;
   const needsValue = checked && !noValueOps.includes(value.op);
@@ -356,17 +482,8 @@ function FilterListItem({ col, cond, onToggle, onChangeCond }) {
             isDate ? (
               <DateFilterEditor pill cond={value} onChange={onChangeCond} />
             ) : opts ? (
-              <div className="vti-opts">
-                {opts.map((o) => (
-                  <label className="pop-i" key={o} style={{ padding: '3px 6px' }}>
-                    <input type="checkbox" checked={value.values.includes(o)} onChange={() => {
-                      const has = value.values.includes(o);
-                      onChangeCond({ ...value, values: has ? value.values.filter((v) => v !== o) : [...value.values, o] });
-                    }} />
-                    {optText(o)}
-                  </label>
-                ))}
-              </div>
+              <OptsPicker pill opts={opts} optText={optText} values={value.values}
+                onChange={(values) => onChangeCond({ ...value, values })} />
             ) : (
               <ValueTagInput pill values={value.values} onChange={(values) => onChangeCond({ ...value, values, _live: '' })}
                 onLive={(text) => onChangeCond({ ...value, _live: text })} />
@@ -375,6 +492,63 @@ function FilterListItem({ col, cond, onToggle, onChangeCond }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The toolbar Search/Filter panel.
+ *
+ * Every edit lands in a DRAFT set of conditions and only "Search" commits it.
+ * Editing the live conditions meant each checkbox, each operator and each typed
+ * character was its own query: building a three-column filter fired three table
+ * loads, two of them answering a half-built question, and the rows churned
+ * under the user while they were still choosing. Now nothing moves until Search.
+ *
+ * Closing the panel any other way discards the draft, which is what a Cancel
+ * button would do anyway. The panel is mounted fresh on every open (Popover
+ * unmounts its content when closed), so the draft seeds itself from the live
+ * conditions each time with no effect needed to resynchronise it.
+ *
+ * The field box searches the CHECKLIST, not the data — a table with forty
+ * columns is forty checkboxes to scroll past before you reach the one you want.
+ *
+ * A <form>, so Enter applies from anywhere inside it rather than only from a
+ * click on Search. A value box swallows Enter only while it holds something to
+ * commit, which makes the whole flow “type, Enter to take the value, Enter
+ * again to search” — and a single Enter from any box that is already empty.
+ * Every other control in here is type="button" and so cannot submit by accident.
+ */
+function FilterPanel({ cols, conds, onApply, close, focus }) {
+  const [draft, setDraft] = useState(conds);
+  // Seeded from the chip that opened the panel, so clicking "Payment Status is
+  // Paid" lands on that field instead of at the top of forty checkboxes. Plain
+  // initial state, not an effect: the panel is mounted fresh on every open.
+  const [q, setQ] = useState(focus || '');
+  const t = q.trim().toLowerCase();
+  const shown = t ? cols.filter((c) => String(c.label || c.key).toLowerCase().includes(t)) : cols;
+  const staged = draft.filter(condActive).length;
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); onApply(draft); close(); }}>
+      <div className="pop-hd"><h3>Search</h3><button type="button" className="pop-x" onClick={close} aria-label="Close"><Icon name="x" size={16} /></button></div>
+      <div className="flt-search"><input className="in in-s" placeholder="Type a field name…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+      <div className="pop-mx flt-list">
+        {shown.map((c) => {
+          const cond = draft.find((cd) => cd.key === c.key);
+          return (
+            <FilterListItem key={c.key} col={c} cond={cond}
+              onToggle={() => setDraft((d) => (cond ? d.filter((x) => x.key !== c.key) : [...d, blankCond(c)]))}
+              onChangeCond={(next) => setDraft((d) => d.map((x) => (x.key === c.key ? next : x)))}
+            />
+          );
+        })}
+        {shown.length ? null : <div className="sel-none">No field matches “{q.trim()}”</div>}
+      </div>
+      <div className="pop-search-f">
+        <button type="submit" className="btn btn-p btn-pill">
+          {staged ? 'Search (' + staged + ')' : 'Search'}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -401,17 +575,8 @@ function FilterRow({ col, cond, onChange, onRemove }) {
           {isDate ? (
             <DateFilterEditor cond={cond} onChange={onChange} />
           ) : opts ? (
-            <div className="vti-opts">
-              {opts.map((o) => (
-                <label className="pop-i" key={o} style={{ padding: '3px 6px' }}>
-                  <input type="checkbox" checked={cond.values.includes(o)} onChange={() => {
-                    const has = cond.values.includes(o);
-                    onChange({ ...cond, values: has ? cond.values.filter((v) => v !== o) : [...cond.values, o] });
-                  }} />
-                  {optText(o)}
-                </label>
-              ))}
-            </div>
+            <OptsPicker opts={opts} optText={optText} values={cond.values}
+              onChange={(values) => onChange({ ...cond, values })} />
           ) : (
             <ValueTagInput values={cond.values} onChange={(values) => onChange({ ...cond, values })} />
           )}
@@ -441,7 +606,7 @@ function sortHint(col, dir) {
  */
 function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove }) {
   const active = cond ? condActive(cond) : false;
-  const value = cond || (isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] });
+  const value = cond || blankCond(col);
   const dir = sort && sort.key === col.key ? sort.dir : null;
   return (
     <th className={(col.num ? 'num ' : '') + (col.cls ? col.cls + ' ' : '') + (active ? 'act' : '')}>
@@ -485,23 +650,40 @@ function EditableCell({ row, col, value }) {
         </span>
       )}
     >
-      {({ close }) => {
-        const opts = typeof col.editOpts === 'function' ? col.editOpts(row) : col.editOpts;
-        return (
-          <>
-            <div className="pop-t">{col.label}</div>
-            <div className="pop-mx">
-              {opts.map((o) => (
-                <button key={o} className="pop-i" onClick={() => { close(); if (String(row[col.key]) !== String(o)) col.onEdit(row, o); }}>
-                  {String(row[col.key]) === String(o) ? <Icon name="check" size={15} /> : <span style={{ width: 15 }} />}
-                  {o}
-                </button>
-              ))}
-            </div>
-          </>
-        );
-      }}
+      {({ close }) => <EditMenu row={row} col={col} close={close} />}
     </Popover>
+  );
+}
+
+// A child component, not inline JSX in the render prop, because the arrow-key
+// highlight is a hook and a render prop cannot hold one.
+function EditMenu({ row, col, close }) {
+  const opts = typeof col.editOpts === 'function' ? col.editOpts(row) : col.editOpts;
+  const pick = (o) => { close(); if (String(row[col.key]) !== String(o)) col.onEdit(row, o); };
+  const nav = useMenuNav(opts.length, (i) => pick(opts[i]));
+
+  // Nothing here autofocuses, and the trigger that opened the menu sits outside
+  // this subtree, so without focusing the wrapper the arrows never reach it.
+  const wrapRef = useRef(null);
+  useEffect(() => { wrapRef.current?.focus(); }, []);
+
+  return (
+    <div ref={wrapRef} onKeyDown={nav.onKeyDown} tabIndex={-1} className="sel-menu">
+      <div className="pop-t">{col.label}</div>
+      <div className="pop-mx" ref={nav.boxRef}>
+        {opts.map((o, i) => (
+          <button
+            key={o} data-nav={i}
+            className={'pop-i' + (i === nav.idx ? ' cur' : '')}
+            onMouseEnter={() => nav.setIdx(i)}
+            onClick={() => pick(o)}
+          >
+            {String(row[col.key]) === String(o) ? <Icon name="check" size={15} /> : <span style={{ width: 15 }} />}
+            {o}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -580,6 +762,15 @@ const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, o
 export default function DataTable({
   rows, cols, noun = 'records', groups, hiddenDefault = [], select = false, infinite = false,
   pageSize = PAGE_SIZE_DEFAULT, defaultSort = null, scope = null, searchPlaceholder = 'Search…',
+  /**
+   * Generation of `defaultSort`. BUMP IT WHENEVER defaultSort CHANGES.
+   *
+   * A stored sort outranks defaultSort, which is correct for a sort the user
+   * picked and wrong for a default they never saw — without this, changing a
+   * page's default changes nothing for anyone who has already visited it. See
+   * readStored. Filters and hidden columns are NOT reset; only the stale sort is.
+   */
+  defaultSortVersion = 0,
   card, onRow, bulkActions, extraToolbar, tableId, server = null,
   // Whether this table may edit a cell in place. Defaults to FALSE, so a column
   // carrying editOpts is inert until its page explicitly opts in with the
@@ -618,7 +809,7 @@ export default function DataTable({
 }) {
   const storeId = tableId || noun;
   const storedRef = useRef(undefined);
-  if (storedRef.current === undefined) storedRef.current = readStored(storeId);
+  if (storedRef.current === undefined) storedRef.current = readStored(storeId, defaultSortVersion);
   const stored = storedRef.current;
 
   const [q, setQ] = useState('');
@@ -627,7 +818,14 @@ export default function DataTable({
   // Falling back to defaultSort on a null would make turning sort off impossible
   // to keep across a reload, even though it is exactly as deliberate an action as
   // choosing a column.
-  const [sort, setSort] = useState(() => (stored ? stored.sort : defaultSort));
+  //
+  // UNLESS IT IS STALE. A sort stored under an older defaultSortVersion is not a
+  // choice the user is defending, it is a default they were given before the page
+  // changed its mind, so the new default wins exactly once. This is the only way
+  // a moved default reaches anyone who has already loaded the table. See
+  // readStored for why the whole blob is not simply discarded.
+  const [sort, setSort] = useState(() => (
+    stored && !stored.sortStale ? stored.sort : defaultSort));
   const [conds, setConds] = useState(() => reconcileConds(stored ? stored.conds : [], cols));
   const [page, setPage] = useState(1);
   const [shown, setShown] = useState(pageSize);
@@ -648,10 +846,12 @@ export default function DataTable({
   const [hidden, setHidden] = useState(() => new Set(stored && stored.hidden ? stored.hidden : hiddenDefault));
   const [view, setView] = useState('table');
 
-  // Persist whenever any persisted slice changes.
+  // Persist whenever any persisted slice changes. The generation goes WITH the
+  // write, so the retirement above happens once and the user's next choice —
+  // including re-picking the column the default just replaced — sticks for good.
   useEffect(() => {
-    writeStored(storeId, { conds, sort, hidden });
-  }, [storeId, conds, sort, hidden]);
+    writeStored(storeId, { conds, sort, hidden }, defaultSortVersion);
+  }, [storeId, conds, sort, hidden, defaultSortVersion]);
 
   // Memoised because it is a prop on every rendered row: a fresh array here would
   // give each row a changed prop on every render and defeat the memo on Row. This
@@ -786,11 +986,32 @@ export default function DataTable({
   const [liveTotal, setLiveTotal] = useState(null);
   useEffect(() => {
     if (!serverMode || !infinite) return;
-    setAcc([]);
     setPage(1);
     setLiveTotal(null);
     lastAppliedRef.current = '';
   }, [serverMode, infinite, fetchKey]);
+
+  /**
+   * WHY THE ACCUMULATOR IS NOT EMPTIED ABOVE.
+   *
+   * It used to be, and that one line is what made applying a filter look like a
+   * page reload: the rows vanished, the table collapsed to a "Loading…" box,
+   * the toolbar and footer jumped up the page, and half a second later the whole
+   * thing was rebuilt from nothing with the scroll position gone. The fetch was
+   * always fast; the screen being torn down and rebuilt around it was the part
+   * that read as a reload.
+   *
+   * The previous rows stay put, dimmed, until page 1 of the new query lands and
+   * replaces them wholesale (the accumulate effect below swaps rather than
+   * appends whenever dataPage <= 1). The count in the footer is stale for the
+   * same moment and by the same query, so what is on screen stays internally
+   * consistent — it is the previous answer, whole, not a half-updated one.
+   */
+  // A FAILED query is the exception: leaving the old rows under an error banner
+  // shows an answer to a question the user has already moved on from. Only a
+  // foreground failure sets `error` — a dropped background poll is silent by
+  // design and must not clear anything.
+  useEffect(() => { if (serverState.error) setAcc([]); }, [serverState.error]);
   // Keyed on the page the ROWS came from, never on the `page` we asked for.
   // useServerRows sets `loading` from inside an effect, so in the render that
   // advances `page` this component still sees loading=false next to the PREVIOUS
@@ -1199,12 +1420,15 @@ export default function DataTable({
     else selectEverything();
   }
   function clearAll() { setConds([]); setQ(''); resetPaging(); }
-  function addCond(col) {
-    const blank = isDateCol(col) ? emptyDateCond(col.key) : { key: col.key, op: 'Contains', values: [] };
-    setConds((cs) => [...cs, blank]);
-    resetPaging();
+  // Opens the toolbar filter panel from a chip, with its field pre-searched. The
+  // chips were read-only apart from their remove button, so "narrow this a bit
+  // further" meant hunting for the Filter button and then for the field again.
+  const filterPop = useRef(null);
+  const [filterFocus, setFilterFocus] = useState('');
+  function openFilters(label) {
+    setFilterFocus(label || '');
+    if (filterPop.current) filterPop.current();
   }
-  function updateCond(key, next) { setConds((cs) => cs.map((c) => (c.key === key ? next : c))); resetPaging(); }
   function removeCond(key) { setConds((cs) => cs.filter((c) => c.key !== key)); resetPaging(); }
   function setColFilter(key, next) {
     setConds((cs) => (cs.some((c) => c.key === key) ? cs.map((c) => (c.key === key ? next : c)) : [...cs, next]));
@@ -1244,6 +1468,10 @@ export default function DataTable({
     return n;
   };
 
+  // Rows on screen answer the PREVIOUS query while the next one is in flight.
+  // Dimming is the whole indicator: it says "this is about to change" without
+  // removing anything, which is what blanking the table got wrong.
+  const staleRows = serverMode && serverState.loading && sourceRows.length > 0;
   const activeCondCount = conds.filter(condActive).length;
   const isFiltered = activeCondCount > 0 || !!q;
   const nounCap = noun.charAt(0).toUpperCase() + noun.slice(1);
@@ -1311,23 +1539,10 @@ export default function DataTable({
         {card ? (
           <Seg options={[{ value: 'table', icon: 'list', label: 'Table' }, { value: 'cards', icon: 'grid', label: 'Cards' }]} value={view} onChange={setView} />
         ) : null}
-        <Popover width={400} align="right" panelClassName="pop-lg" trigger={({ toggle }) => <button className={'btn btn-s btn-sm' + (activeCondCount ? ' on' : '')} onClick={toggle}><Icon name="filter" size={13} />Filter{activeCondCount ? ` (${activeCondCount})` : ''}</button>}>
+        <Popover width={400} align="right" panelClassName="pop-lg" openRef={filterPop} trigger={({ toggle }) => <button className={'btn btn-s btn-sm' + (activeCondCount ? ' on' : '')} onClick={() => { setFilterFocus(''); toggle(); }}><Icon name="filter" size={13} />Filter{activeCondCount ? ` (${activeCondCount})` : ''}</button>}>
           {({ close }) => (
-            <>
-              <div className="pop-hd"><h3>Search</h3><button type="button" className="pop-x" onClick={close} aria-label="Close"><Icon name="x" size={16} /></button></div>
-              <div className="pop-mx flt-list">
-                {cols.map((c) => {
-                  const cond = conds.find((cd) => cd.key === c.key);
-                  return (
-                    <FilterListItem key={c.key} col={c} cond={cond}
-                      onToggle={() => (cond ? removeCond(c.key) : addCond(c))}
-                      onChangeCond={(next) => updateCond(c.key, next)}
-                    />
-                  );
-                })}
-              </div>
-              <div className="pop-search-f"><button type="button" className="btn btn-p btn-pill" onClick={close}>Search</button></div>
-            </>
+            <FilterPanel cols={cols} conds={conds} close={close} focus={filterFocus}
+              onApply={(next) => { setConds(next); resetPaging(); }} />
           )}
         </Popover>
       </div>
@@ -1369,9 +1584,14 @@ export default function DataTable({
                 : `${opLabel(cond.op)} ${fmtValues(cond.values, c && c.optLabel)}`;
             const local = serverMode && split.unsupported.some((u) => u.key === cond.key);
             return (
-              <span className={'fc' + (local ? ' fc-local' : '')} key={cond.key} title={`${c ? c.label : cond.key} ${text}${local ? ' — filtered in the browser' : ''}`}>
+              /* A span with role=button, not a <button>: the remove control is
+                 already a button and nesting one inside another is invalid. */
+              <span className={'fc fc-open' + (local ? ' fc-local' : '')} key={cond.key} role="button" tabIndex={0}
+                title={`${c ? c.label : cond.key} ${text}${local ? ' — filtered in the browser' : ''} — click to edit filters`}
+                onClick={() => openFilters(c ? c.label : '')}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFilters(c ? c.label : ''); } }}>
                 <span className="k">{c ? c.label : cond.key}</span><span className="fc-txt">{text}</span>
-                <button onClick={() => removeCond(cond.key)} aria-label="Remove filter"><Icon name="x" size={11} /></button>
+                <button onClick={(e) => { e.stopPropagation(); removeCond(cond.key); }} aria-label="Remove filter"><Icon name="x" size={11} /></button>
               </span>
             );
           })}
@@ -1381,7 +1601,7 @@ export default function DataTable({
 
       {view === 'cards' && card ? (
         <>
-          {pageRows.length ? <div className="cg">{pageRows.map((r) => <div key={r.id} onClick={() => onRow && onRow(r)}>{card(r)}</div>)}</div>
+          {pageRows.length ? <div className={'cg' + (staleRows ? ' dt-busy' : '')}>{pageRows.map((r) => <div key={r.id} onClick={() => onRow && onRow(r)}>{card(r)}</div>)}</div>
             : emptyState}
           {/* Cards scroll with the page, not inside .tsc — the sentinel still
               belongs directly under the last card so scrolling loads there too. */}
@@ -1389,7 +1609,7 @@ export default function DataTable({
           <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
         </>
       ) : pageRows.length ? (
-        <div className="tw dt-tw">
+        <div className={'tw dt-tw' + (staleRows ? ' dt-busy' : '')}>
           <div className="tsc" ref={scrollBoxRef}>
             <table className="dt dt-grid">
               <colgroup>
