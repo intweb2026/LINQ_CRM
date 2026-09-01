@@ -495,7 +495,18 @@ class TicketIngestionView(APIView):
                         body["log_id"] = log.id
                     return Response(body, status=status.HTTP_200_OK)
 
-            ser = TicketCreateSerializer(data=payload, context={"request": request})
+            # skip_link_check: the repeated-link rule REFUSES a second ticket on
+            # the same link under the same purpose inside 90 days, and that rule
+            # is written for a person — it says "change the purpose, or work that
+            # ticket", and the entry grid shows it on the cell so they can. A
+            # sender has nobody to read it, so enforcing it here would turn a
+            # legitimate delivery into a silent 400 on the far side of an
+            # integration nobody is watching. This endpoint already has its own
+            # idempotency, just above, and its own DUPLICATE log status.
+            ser = TicketCreateSerializer(
+                data=payload,
+                context={"request": request, "skip_link_check": True},
+            )
             if not ser.is_valid():
                 body = {"success": False, "error": "Validation failed",
                         "detail": ser.errors}

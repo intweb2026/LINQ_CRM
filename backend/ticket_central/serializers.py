@@ -24,7 +24,7 @@ class TicketListSerializer(serializers.ModelSerializer):
             "purpose", "type_of_ticket", "competitor_event_name", "organizer",
             "event_month_year", "event_location", "relationship",
             "priority", "estimate", "assigned_mr", "link_url",
-            "linkedin_keywords", "duplicate_tickets", "mr_comments",
+            "linkedin_keywords", "mr_comments",
             # DMD section — all fields used in COLUMNS
             "assign_name", "assign_date", "ticket_type",
             "actual_number", "new_contacts_created", "mined_count",
@@ -100,7 +100,38 @@ class TicketCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {f: "This field belongs to the Data Mining section."}
                 )
+        # bulk_create checks the whole batch in one query and sets this, so the
+        # same lookup is not repeated per row.
+        if not self.context.get("skip_link_check"):
+            self._validate_not_a_recent_repeat(data)
         return data
+
+    @staticmethod
+    def _validate_not_a_recent_repeat(data):
+        """
+        Refuse the same link under the same purpose inside the block window.
+
+        Enforced here, not only in the entry grid, so the rule holds for any
+        caller. A repeat under a DIFFERENT purpose is allowed on purpose, and so
+        is one older than utils.DUP_BLOCK_DAYS — both surface as a warning in
+        the UI instead. See find_link_matches for why.
+        """
+        from .utils import DUP_BLOCK_DAYS, SEVERITY_BLOCK, find_link_matches
+
+        link = (data.get("link_url") or "").strip()
+        if not link:
+            return
+        result = find_link_matches([(link, data.get("purpose", ""))])[0]
+        if result["severity"] != SEVERITY_BLOCK:
+            return
+        clash = next(m for m in result["matches"]
+                     if m["severity"] == SEVERITY_BLOCK)
+        raise serializers.ValidationError({"link_url": (
+            f"This link was already raised under the same purpose "
+            f"{clash['purpose']} as {clash['ticket_number'] or 'an unnumbered ticket'} "
+            f"within the last {DUP_BLOCK_DAYS} days. Use a different purpose, "
+            f"or work the existing ticket."
+        )})
 
     def validate_purpose(self, value):
         if not value or not value.strip():
@@ -128,6 +159,12 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         # on the Ticket Central table. It was only ever filled by an import, so
         # every ticket raised in this CRM showed it blank. A webhook delivery has
         # no user, so that case keeps whatever the payload sent.
+        #
+        # A DISPLAY NAME, not a username — migration 0008 backfilled the existing
+        # rows that way, so this keeps one convention in the column. The
+        # author-scoping in scoping.py therefore leans on created_by for
+        # visibility and treats this column as the secondary match; see the note
+        # there for why it accepts either form.
         if user and not validated_data.get("added_user_text"):
             validated_data["added_user_text"] = _name(user)
 

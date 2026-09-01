@@ -135,6 +135,10 @@ INSTALLED_APPS = [
     "event_performance",
     "historical_event_registry",
     "ticket_central",
+    # Mining Resource Matrix. Reads ticket_central and events, owns no table
+    # of its own, so it must sit AFTER both -- there are no migrations here to
+    # order, but the service imports both models at module scope.
+    "mining_matrix",
     # paper_review before proposal_submission: ProposalSubmission carries an FK to
     # PaperReview (source_paper_review), so its table has to exist first.
     "paper_review",

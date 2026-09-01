@@ -5,6 +5,7 @@ Ticket CRUD + two-phase submit actions.
 """
 import logging
 from django.db import transaction
+from django.db.models import Count
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -26,6 +27,14 @@ from .serializers import (
     TicketAdminUpdateSerializer,
 )
 from .filters import TicketFilter
+from .scoping import UNSCOPED_ROLES as _UNSCOPED_ROLES, scope_tickets
+from .utils import (
+    DUP_BLOCK_DAYS,
+    SEVERITY_BLOCK,
+    SEVERITY_WARN,
+    find_link_matches,
+    link_digest,
+)
 from .permissions import (
     IsMarketResearchOrAdmin,
     IsDataMiningOrAdmin,
@@ -78,6 +87,11 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     filter_spec_fields = {
         **build_filter_spec_fields(
             Ticket,
+            # link_key is a digest nobody can read, let alone type into a filter.
+            # Excluded here, from mass update and from Smart Import for the same
+            # reason: link_url is the field people work with, and this is derived
+            # from it.
+            exclude=("link_key",),
             labels={
                 "assigned_mr": "Assigned MR", "assign_name": "Assign Name",
                 "assign_name_lx2": "Assign Name (LX-2)", "mr_comments": "MR Comments",
@@ -120,6 +134,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             # added per request by the property below, with live user emails as
             # its choices rather than the free text this would produce
             "assigned_mr",
+            # derived from link_url by Ticket.save(), so it is never something a
+            # person sets — offering it would invite mass-editing the very column
+            # the repeated-link check reads
+            "link_key",
         ),
         # priority, type_of_ticket and relationship carry NO choices= at the DB
         # level (the D4 notes in models.py:71-85 — Zoho's values don't match a
@@ -216,16 +234,24 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "competitor_event_name", "assigned_mr", "assign_name",
     ]
     ordering_fields = ["id", "created_at", "updated_at", "status", "priority"]
-    ordering        = ["-created_at"]
+    # Oldest first, so the newest ticket is the LAST row. See Ticket.Meta for why
+    # the descending composite indexes still serve this without a sort.
+    ordering        = ["created_at", "id"]
+
+    # Roles that see every ticket regardless of who raised it. Re-exported as a
+    # class attribute because it read as one here before; the list itself lives
+    # in ticket_central/scoping.py now, which is what actually decides.
+    UNSCOPED_ROLES = _UNSCOPED_ROLES
 
     def get_queryset(self):
         qs = Ticket.objects.select_related(
             "created_by", "mr_submitted_by", "dmd_submitted_by",
         )  # assignee fields are CharField now (D4), not FKs — no select_related
-        # ⚠ Deliberately NOT calling self.rbac_filter(qs) — tickets are cross-team
-        # visibility per product spec; admin, MR, and DMD all see all tickets.
-        # Writability stays phase-locked by role + status in the update serializers.
-        return qs
+        # The author-scoping rule moved to ticket_central/scoping.py so the
+        # Mining Resource Matrix can apply the SAME one. Its rows are counts of
+        # these tickets and clicking one navigates here, so a second copy of the
+        # predicate would eventually show a total that this table disagrees with.
+        return scope_tickets(qs, self.request.user)
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -352,6 +378,158 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 details=f"Reason: {reason[:200]}",
             )
         return Response(TicketDetailSerializer(ticket).data)
+
+    # ── Inline entry grid ─────────────────────────────────────────────
+    #
+    # Three endpoints the spreadsheet-style entry grid needs and the single-row
+    # form did not: the purpose codes to offer, a batched repeated-link check,
+    # and an ordered batch create.
+
+    @action(detail=False, methods=["get"], url_path="purposes",
+            permission_classes=[IsMarketResearchOrAdmin])
+    def purposes(self, request):
+        """
+        GET /api/tickets/purposes/ — purpose codes in use, commonest first.
+
+        Off Ticket.objects, NOT self.get_queryset(): this is the picker's option
+        list, and scoping it to the caller's own rows would leave a new MR user
+        with an empty dropdown and no way to enter the code the rest of the team
+        uses. It exposes codes, never anyone's ticket.
+        """
+        rows = (
+            Ticket.objects.exclude(purpose="")
+            .values("purpose")
+            .annotate(n=Count("id"))
+            .order_by("-n", "purpose")[:400]
+        )
+        return Response([{"purpose": r["purpose"], "count": r["n"]} for r in rows])
+
+    @action(detail=False, methods=["post"], url_path="check_links",
+            permission_classes=[IsMarketResearchOrAdmin])
+    def check_links(self, request):
+        """
+        POST /api/tickets/check_links/ — has this link been raised before.
+
+        Body: {"rows": [{"link_url": "...", "purpose": "..."}, ...]}
+        Answers one entry per row, in the same order, each
+            {"severity": "block"|"warn"|null, "matches": [...], "total": n}
+
+        One query for the whole batch. Unscoped for the same reason as purposes:
+        a repeat matters whoever raised the earlier ticket, and hiding a
+        colleague's ticket here would let the grid wave through the exact
+        duplicate this check exists to catch. Only the ticket number, purpose,
+        status and date come back, never the rest of the row.
+        """
+        rows = request.data.get("rows")
+        if not isinstance(rows, list):
+            return Response({"detail": "Send {\"rows\": [...]}."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if len(rows) > 500:
+            return Response({"detail": "At most 500 rows per check."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        pairs = [((r or {}).get("link_url", ""), (r or {}).get("purpose", ""))
+                 for r in rows]
+        return Response({"results": find_link_matches(pairs)})
+
+    @action(detail=False, methods=["post"], url_path="bulk_create",
+            permission_classes=[IsMarketResearchOrAdmin])
+    def bulk_create(self, request):
+        """
+        POST /api/tickets/bulk_create/ — create a batch IN THE ORDER GIVEN.
+
+        Body: {"rows": [ {MR fields}, ... ]}
+
+        Why this exists rather than looping POST /api/tickets/ from the browser:
+        the frontend fires those six at a time (api/tickets.js mapLimit), so
+        created_at — the "Added Time" the table is now sorted by — would not
+        follow the order the rows were typed in. Here every row is inserted in
+        sequence inside ONE transaction, so Added Time, the id, and the
+        per-purpose ticket number all advance together down the grid.
+
+        All or nothing. A batch with a blocking repeat creates nothing and comes
+        back 400 with per-row errors keyed by index, so the grid can mark the
+        offending cells and keep everything the user typed.
+        """
+        rows = request.data.get("rows")
+        if not isinstance(rows, list) or not rows:
+            return Response({"detail": "Send {\"rows\": [...]} with at least one row."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if len(rows) > 200:
+            return Response({"detail": "At most 200 tickets per batch."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        errors = {}
+
+        # 1. Repeats against what is already stored.
+        pairs = [((r or {}).get("link_url", ""), (r or {}).get("purpose", ""))
+                 for r in rows]
+        checked = find_link_matches(pairs)
+        for i, result in enumerate(checked):
+            if result["severity"] != SEVERITY_BLOCK:
+                continue
+            clash = next(m for m in result["matches"]
+                         if m["severity"] == SEVERITY_BLOCK)
+            errors[i] = {"link_url": (
+                f"Already raised under {clash['purpose']} as "
+                f"{clash['ticket_number'] or 'an unnumbered ticket'} within the "
+                f"last {DUP_BLOCK_DAYS} days."
+            )}
+
+        # 2. Repeats WITHIN this batch. find_link_matches only sees the table,
+        #    and two identical rows pasted together are the likeliest duplicate
+        #    of all. The first occurrence is kept, the later ones are refused.
+        seen = {}
+        for i, (link, purpose) in enumerate(pairs):
+            digest = link_digest(link)
+            if not digest:
+                continue
+            key = (digest, (purpose or "").strip().upper())
+            if key in seen:
+                errors.setdefault(i, {})["link_url"] = (
+                    f"Same link and purpose as row {seen[key] + 1} of this batch."
+                )
+            else:
+                seen[key] = i
+
+        # 3. Field-level validation. The per-row link check is skipped because
+        #    step 1 just did it for the whole batch in one query.
+        serializers_ = []
+        for i, row in enumerate(rows):
+            ser = TicketCreateSerializer(
+                data=row,
+                context={**self.get_serializer_context(), "skip_link_check": True},
+            )
+            if not ser.is_valid():
+                errors.setdefault(i, {}).update(ser.errors)
+            serializers_.append(ser)
+
+        if errors:
+            return Response(
+                {"detail": f"{len(errors)} of {len(rows)} rows need attention. "
+                           f"Nothing was created.",
+                 "errors": {str(k): v for k, v in errors.items()}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from accounts.models import ActionLog
+        created = []
+        with transaction.atomic():
+            for ser in serializers_:
+                created.append(ser.save())
+            ActionLog.objects.create(
+                user=request.user,
+                action=f"Created {len(created)} tickets from the entry grid",
+                details=", ".join(
+                    t.ticket_number or f"#{t.id}" for t in created
+                )[:200],
+            )
+
+        return Response(
+            {"created": TicketListSerializer(created, many=True).data,
+             "warnings": {str(i): checked[i] for i, c in enumerate(checked)
+                          if c["severity"] == SEVERITY_WARN}},
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=["get"], url_path="stats")
     def stats(self, request):
@@ -582,6 +760,15 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                             # added_user_text is deliberately NOT touched here:
                             # "Added User" is who put the row in, not who ran the
                             # re-import.
+                            #
+                            # link_key is set by hand for the same reason
+                            # updated_at is: a queryset .update() never calls
+                            # Model.save(), where the digest is normally derived.
+                            # Without this an upsert that changes the link leaves
+                            # the old digest behind and the repeated-link check
+                            # silently stops seeing that ticket.
+                            if "link_url" in coerced:
+                                coerced["link_key"] = link_digest(coerced["link_url"])
                             Ticket.objects.filter(external_id=key).update(**coerced)
                         updated += 1
                     except Exception as e:

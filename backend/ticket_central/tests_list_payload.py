@@ -40,12 +40,17 @@ class ListPayloadContractTests(APITestCase):
         cls.mr = make_user("payload_mr", "market_research")
 
     def _row(self):
+        # created_by is the viewer because the list is scoped to the person who
+        # added the row now (TicketViewSet.get_queryset). added_user_text keeps a
+        # legacy Zoho value on purpose: that combination — raised by this user,
+        # carrying imported Added User text — is what the column has to survive.
         make_ticket(
             purpose="Payload", type_of_ticket="Blue - BX",
             status="mr_submitted", mr_submitted_at=timezone.now(),
             source_spreadsheet_id="sheet-1", source_tab="General",
             source_row_number=726, idempotency_key="sheet-1|General|726",
             added_user_text="zoho_linq-corporate",
+            created_by=self.mr,
         )
         auth(self.client, self.mr)
         resp = self.client.get("/api/tickets/")
@@ -93,6 +98,7 @@ class ListPayloadContractTests(APITestCase):
             assign_date="2026-03-19", complete_date="2026-03-19",
             event_month_year="2026-01-01", hubspot_entry_date="2026-04-01",
             complete_date_lx2="2026-05-02",
+            created_by=self.mr,   # the list is author-scoped now
         )
         auth(self.client, self.mr)
         row = self.client.get("/api/tickets/").data["results"][0]

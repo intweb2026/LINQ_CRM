@@ -80,6 +80,11 @@ export const NAV = [
     // never sits here with no module at all, and the Permissions grid shows the
     // Performance row as locked for the same reason (see CRM_MODULES).
     { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance' },
+    // Its own module, not a corner of ticket_central: the matrix aggregates
+    // tickets but it is a capacity-planning surface, and ticket_central's grant
+    // carries create/update/delete over the live queue. See CRM_MODULES in
+    // backend/accounts/models.py and migration 0029.
+    { id: 'mining_matrix', l: 'Mining Matrix', ic: 'chart', mod: 'mining_matrix', path: '/mining-matrix' },
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },

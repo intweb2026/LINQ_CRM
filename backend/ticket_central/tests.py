@@ -622,9 +622,12 @@ class CRUDTests(APITestCase):
 
     def test_mr_cannot_update_after_submitted(self):
         auth(self.client, self.mr)
+        # created_by=self.mr so the refusal comes from the phase lock, which is
+        # what this asserts, and not from the row being outside their scope.
         t = make_ticket(
             purpose="Submitted", type_of_ticket="BX",
             status="mr_submitted", mr_submitted_at=timezone.now(),
+            created_by=self.mr,
         )
         resp = self.client.patch(f"/api/tickets/{t.id}/",
                                  {"purpose": "Attempt"}, format="json")
@@ -758,14 +761,21 @@ class FilterTests(APITestCase):
     def setUpTestData(cls):
         cls.admin = make_user("filt_admin", "admin")
         cls.mr    = make_user("filt_mr",    "market_research")
+        # created_by=cls.mr on all three: these tests are about the FILTERS, and
+        # the list is scoped to whoever added the row (TicketViewSet
+        # .get_queryset), so an unattributed ticket is invisible to cls.mr and
+        # every assertion below would fail for a reason it is not testing.
         cls.t1 = make_ticket(purpose="CEU Conference",   type_of_ticket="BX", status="draft",
-                             priority="SPEX", relationship="Direct", event_code="CEU2024")
+                             priority="SPEX", relationship="Direct", event_code="CEU2024",
+                             created_by=cls.mr)
         cls.t2 = make_ticket(purpose="Medical Summit",  type_of_ticket="ZID", status="mr_submitted",
                              mr_submitted_at=timezone.now(),
-                             priority="DD", relationship="Indirect", event_code="MED2024")
+                             priority="DD", relationship="Indirect", event_code="MED2024",
+                             created_by=cls.mr)
         cls.t3 = make_ticket(purpose="Tech Expo",       type_of_ticket="BX", status="completed",
                              mr_submitted_at=timezone.now(), dmd_submitted_at=timezone.now(),
-                             priority="SPEX", assigned_mr="Alice Researcher")
+                             priority="SPEX", assigned_mr="Alice Researcher",
+                             created_by=cls.mr)
 
     def _list(self, params):
         auth(self.client, self.mr)

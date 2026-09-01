@@ -59,6 +59,9 @@ urlpatterns = [
     # separate credential domain, not part of the session-authenticated API.
     path("api/data/",            include("dataapi.urls")),
     path("api/event-performance/", include("event_performance.urls")),
+    # Mining Resource Matrix. A single aggregate response per view rather than
+    # a paginated list, so it is its own include and not a router entry above.
+    path("api/mining-matrix/", include("mining_matrix.urls")),
     path("api/historical-events/", include("historical_event_registry.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),

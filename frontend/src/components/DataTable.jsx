@@ -1113,10 +1113,18 @@ export default function DataTable({
 
           // Beyond MAX_LIVE_SPAN: merge the first page into the accumulated
           // rows by id. Values on rows the user can see update in place; rows
-          // keep their positions; genuinely new records prepend at the top,
-          // which is where the default newest-first ordering would have placed
-          // them. Nothing moves, and the request is one page rather than the
-          // whole scroll.
+          // keep their positions; genuinely new records go to whichever END the
+          // current sort would have put them. Nothing moves, and the request is
+          // one page rather than the whole scroll.
+          //
+          // That last part used to prepend unconditionally, on the reasoning
+          // that the default sort is newest-first. Ticket Central's default is
+          // now Added Time ASCENDING, where a new row belongs at the bottom, so
+          // the direction is read off `ordering` instead of assumed. (Under an
+          // ascending sort a new row is rarely on page 1 to begin with — it is
+          // at the far end — so this mostly matters for a table small enough
+          // that the branch above replaces wholesale anyway. The assumption was
+          // still false, and a false assumption in a merge is worth removing.)
           //
           // This REPLACES the old "if (span > MAX_LIVE_SPAN) return;" branch,
           // which stood down completely and left a deep-scrolled table stale
@@ -1131,7 +1139,9 @@ export default function DataTable({
             const prevIds = new Set(prev.map((r) => r.id));
             const merged = prev.map((r) => byId.get(r.id) || r);
             const arrivals = fresh.filter((r) => !prevIds.has(r.id));
-            return arrivals.length ? [...arrivals, ...merged] : merged;
+            if (!arrivals.length) return merged;
+            const ascending = !!ordering && !ordering.startsWith('-');
+            return ascending ? [...merged, ...arrivals] : [...arrivals, ...merged];
           });
         })
         // Silent by design: a failed background refresh must leave the rows on

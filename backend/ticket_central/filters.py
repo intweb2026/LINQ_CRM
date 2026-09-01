@@ -25,7 +25,6 @@ class TicketFilter(django_filters.FilterSet):
     assign_name           = django_filters.CharFilter(lookup_expr="icontains")
     assign_name_lx2       = django_filters.CharFilter(lookup_expr="icontains")
     linkedin_keywords     = django_filters.CharFilter(lookup_expr="icontains")
-    duplicate_tickets     = django_filters.CharFilter(lookup_expr="icontains")
     mr_comments           = django_filters.CharFilter(lookup_expr="icontains")
     dm_comments           = django_filters.CharFilter(lookup_expr="icontains")
     source_tab            = django_filters.CharFilter(lookup_expr="icontains")
@@ -57,7 +56,7 @@ class TicketFilter(django_filters.FilterSet):
             "purpose", "competitor_event_name", "organizer",
             "event_location", "linkedin_keywords",
             "assigned_mr", "assign_name", "assign_name_lx2",
-            "duplicate_tickets", "mr_comments", "dm_comments", "source_tab",
+            "mr_comments", "dm_comments", "source_tab",
             "created_at_from", "created_at_to",
             "complete_date_from", "complete_date_to",
             "assign_date_from", "assign_date_to",

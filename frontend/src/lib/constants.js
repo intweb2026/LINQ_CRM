@@ -140,7 +140,7 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // every other module rather than offering a tick that saves fine and changes
 // nothing, which is the worse failure: an administrator would read it as
 // "shared" and never find out otherwise.
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }];
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }, { k: 'mining_matrix', l: 'Mining Matrix' }];
 // 'all' is the odd one and is deliberately last. The first four answer "does
 // this module open"; 'all' answers "whose rows are in it" — own rows, or every
 // row. It rides in the same list because every matrix helper, every delta and
