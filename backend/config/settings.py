@@ -502,7 +502,7 @@ GOOGLE_OAUTH_ALLOWED_DOMAINS = [
     d.strip().lower()
     for d in config(
         "GOOGLE_OAUTH_ALLOWED_DOMAINS",
-        default="iq-hub.com,linq-corporate.com",
+        default="iq-hub.com,linq-corporate.com,gmail.com",
     ).split(",")
     if d.strip()
 ]
