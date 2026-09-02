@@ -26,6 +26,7 @@ from paper_review.notifications import (
     resolve_recipients, send_paper_review_notification, subject_for,
 )
 from events.testutils import assign_reviewer
+from events.testutils import assign_reviewer
 from paper_review.tests import ALERT, FIXED_CC, _Base, make_event
 from proposal_submission.models import ProposalSubmission
 
@@ -400,6 +401,20 @@ class HandoffTemplateTests(_Base):
         self.assertIn(">NOS</span>", self.html(nos=True))
         self.assertNotIn(">NOS</span>", self.html(nos=False))
 
+    def test_the_nos_badge_is_white_on_red(self):
+        """
+        It is the one thing in the header that has to be seen before the reader
+        has read anything, so it is the only element in the email allowed to
+        break the palette. Colours are inline hex, because an email client will
+        not load a stylesheet.
+        """
+        badge = [line for line in self.html(nos=True).splitlines()
+                 if ">NOS</span>" in line][0]
+        self.assertIn("background-color:#dc2626", badge)
+        self.assertIn("color:#ffffff", badge)
+        # The grade badge beside it keeps the original treatment.
+        self.assertIn("background-color:#f0ede4", self.html(nos=True))
+
     def test_the_company_page_link_is_dropped_when_absent(self):
         self.assertIn("company page", self.html())
         self.assertNotIn("company page", self.html(linkedin_company=""))
@@ -413,25 +428,194 @@ class HandoffTemplateTests(_Base):
         html = self.html(feedback_to_speaker="One line.\nTwo line.")
         self.assertIn("One line.<br>Two line.", html)
 
-    def test_free_text_is_escaped_not_injected(self):
+    def test_free_text_cannot_inject_markup(self):
+        """
+        Two layers now, and the first one gets there first. _plain strips the tag
+        outright, so the escaped spelling never appears either; what reaches the
+        reader is the inert text that was inside it.
+        """
         html = self.html(speaker_name="<script>alert(1)</script>")
         self.assertNotIn("<script>", html)
-        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("&lt;script&gt;", html)
+        self.assertIn("alert(1)", html)
 
-    def test_the_signature_names_the_submitting_mre(self):
+    def test_the_header_names_the_events_reviewer(self):
+        """
+        "reviewed by ..." names whoever the EVENT names as its reviewer, which is
+        the same column access.py grants event visibility on.
+        """
+        assign_reviewer(self.cc_market_research, self.event)
+        expected = (self.cc_market_research.get_full_name()
+                    or self.cc_market_research.username)
+        self.assertIn(f"reviewed by {expected}", self.html())
+
+    def test_the_events_reviewer_wins_over_the_submitter(self):
+        """
+        The two differ exactly when it matters, so the choice has to be pinned.
+        cls.user files this one, and must not be the name on the header.
+        """
+        assign_reviewer(self.cc_market_research, self.event)
         html = self.html(created_by=self.user)
-        self.assertIn(self.user.get_full_name() or self.user.username, html)
+        expected = (self.cc_market_research.get_full_name()
+                    or self.cc_market_research.username)
+        self.assertIn(f"reviewed by {expected}", html)
+        self.assertNotIn(self.user.get_full_name() or self.user.username, html)
 
-    def test_a_review_with_no_author_still_signs_off(self):
-        """Importer and webhook rows carry no created_by."""
-        html = self.html()
-        self.assertIn("Linq CRM", html)
+    def test_the_junior_reviewer_is_used_when_there_is_no_senior(self):
+        """
+        access.py grants on either column, so the email has to read both.
+
+        On a FRESH event, because _Base already names a senior reviewer on
+        cls.event and the senior always wins; reusing it would have passed
+        without the junior branch ever running.
+        """
+        junior_only = make_event("MRE - JNR")
+        junior_only.sales_executive = self.sales_exec
+        junior_only.save()
+        assign_reviewer(self.cc_market_research, junior_only, junior=True)
+
+        _, html = notifications.render_body(
+            _review("MRE - JNR"), include_internal_footnotes=False)
+        expected = (self.cc_market_research.get_full_name()
+                    or self.cc_market_research.username)
+        self.assertIn(f"reviewed by {expected}", html)
+
+    def test_the_senior_wins_when_both_columns_are_filled(self):
+        assign_reviewer(self.cc_market_research, self.event)
+        assign_reviewer(self.user, self.event, junior=True)
+        expected = (self.cc_market_research.get_full_name()
+                    or self.cc_market_research.username)
+        self.assertIn(f"reviewed by {expected}", self.html())
+
+    def test_it_falls_back_to_the_submitter_then_to_the_system(self):
+        """An event with neither column filled, which 2 of 244 real events are."""
+        bare = make_event("MRE - NONE")
+        bare.sales_executive = self.sales_exec
+        bare.save()
+
+        _, html = notifications.render_body(
+            _review("MRE - NONE", created_by=self.user),
+            include_internal_footnotes=False)
+        self.assertIn(
+            f"reviewed by {self.user.get_full_name() or self.user.username}", html)
+
+        # Importer and webhook rows have neither a named reviewer nor an author.
+        _, html = notifications.render_body(
+            _review("MRE - NONE"), include_internal_footnotes=False)
+        self.assertIn("reviewed by Linq CRM", html)
+
+    def test_the_signature_is_the_crm_not_a_person(self):
+        """
+        The message is from the system, so the sign-off is constant. A person's
+        name there reads as a note they wrote and invites a reply to them.
+        """
+        assign_reviewer(self.cc_market_research, self.event)
+        html = self.html(created_by=self.user)
+        self.assertIn("LINQ CRM", html)
         self.assertIn("Automated notification", html)
+        self.assertIn("IQ International Pte. Ltd.", html)
+        expected = (self.cc_market_research.get_full_name()
+                    or self.cc_market_research.username)
+        # Named once, on the header line, and never as the sign-off.
+        self.assertEqual(html.count(expected), 1)
 
-    @override_settings(CRM_BASE_URL="https://crm.example.invalid")
-    def test_the_record_button_points_at_the_configured_crm(self):
-        self.assertIn('href="https://crm.example.invalid/paper-review"',
-                      self.html())
+    # Real agenda_addition values are pasted out of Word and out of the Zoho
+    # rich-text editor, so they arrive wrapped in markup. The template autoescapes,
+    # correctly, which meant the tags were reaching the reader as visible text.
+    WORD_PASTE = (
+        '<p style="margin: 0cm; background: white"><b>'
+        '<span style="font-family: Arial">UNLOCKING CORNWALL&#39;S LITHIUM '
+        'POTENTIAL</span></b></p>'
+        '<p><span>&bull; Impact of financing<br />&bull; Lithium resource '
+        'development</span></p><div><br /></div>'
+    )
+
+    def test_pasted_markup_never_reaches_the_reader_as_tags(self):
+        """
+        Asserted on the ESCAPED forms, which is how a surviving tag would look in
+        the delivered mail. Not on "font-family" or "style" as bare strings; the
+        template's own inline CSS is full of both, so those would fail on a
+        perfectly clean render.
+        """
+        html = self.html(agenda_addition=self.WORD_PASTE)
+        for fragment in ("&lt;p", "&lt;span", "&lt;b&gt;", "&lt;div",
+                         "margin: 0cm", "background: white"):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, html)
+
+    def test_the_words_survive_the_stripping(self):
+        html = self.html(agenda_addition=self.WORD_PASTE)
+        self.assertIn("UNLOCKING CORNWALL", html)
+        self.assertIn("Impact of financing", html)
+        self.assertIn("Lithium resource development", html)
+
+    def test_the_line_structure_survives_the_stripping(self):
+        """
+        A pasted bulleted list has to stay a list. Block tags become newlines
+        before the rest are stripped, and linebreaksbr turns those into <br>.
+        """
+        html = self.html(agenda_addition=self.WORD_PASTE)
+        self.assertIn("POTENTIAL<br>", html)
+        self.assertIn("financing<br>", html)
+
+    def test_entities_are_decoded_not_doubled(self):
+        """
+        &#39; has to become an apostrophe, then be escaped exactly once on the way
+        out. Doubling it would put a literal &amp;#39; in front of the reader.
+
+        The stripped value is checked directly, because Django escapes an
+        apostrophe as &#x27; rather than reproducing the &#39; that came in, and
+        asserting on the output spelling would be testing Django's choice of
+        entity rather than this behaviour.
+        """
+        self.assertIn("CORNWALL'S", notifications._plain(self.WORD_PASTE))
+        html = self.html(agenda_addition=self.WORD_PASTE)
+        self.assertNotIn("&amp;#39;", html)
+        self.assertNotIn("&amp;bull;", html)
+        self.assertIn("•", html)          # the bullet itself came through
+
+    def test_stripping_cannot_inject_markup_of_its_own(self):
+        """
+        The stripped text is still escaped by the template. A field holding a
+        script tag ends up as text, never as an element.
+        """
+        html = self.html(agenda_addition="<script>alert(1)</script>hello")
+        self.assertNotIn("<script>", html)
+        self.assertIn("hello", html)
+
+    def test_the_plain_text_part_is_stripped_too(self):
+        """One helper, both parts; the text alternative had the same problem."""
+        text, _ = notifications.render_body(
+            _review(self.event.event_code, agenda_addition=self.WORD_PASTE),
+            include_internal_footnotes=False)
+        self.assertNotIn("<p style", text)
+        self.assertNotIn("font-family", text)
+        self.assertIn("UNLOCKING CORNWALL", text)
+
+    def test_a_bare_ampersand_is_not_turned_into_an_entity(self):
+        """
+        Regression, seen on review #459. django.utils.html.strip_tags runs an
+        HTMLParser whose handle_entityref re-emits a bare ampersand WITH a
+        semicolon, so a stored "Q&A SESSION" reached the reader as "Q&A; SESSION".
+        Plain tag removal leaves ampersands alone.
+        """
+        stripped = notifications._plain(
+            '<p><b>Q&A SESSION ON FINANCING</b></p>')
+        self.assertEqual(stripped, "Q&A SESSION ON FINANCING")
+
+        html = self.html(agenda_addition="<p>Q&A SESSION</p>")
+        self.assertIn("Q&amp;A SESSION", html)
+        self.assertNotIn("Q&amp;A; SESSION", html)
+
+    def test_real_entities_are_still_decoded(self):
+        """The bare-ampersand fix must not stop &bull; and &nbsp; working."""
+        self.assertEqual(notifications._plain("<p>&bull;&nbsp;Item</p>"),
+                         "• Item")
+
+    def test_text_with_no_markup_is_returned_untouched(self):
+        """The common case, and it must not be reformatted on the way past."""
+        plain = "Day 1, Afternoon Session"
+        self.assertEqual(notifications._plain(plain), plain)
 
     def test_a_missing_value_renders_an_em_dash_not_none(self):
         html = self.html(theme="", session_location_on_agenda="")

@@ -201,6 +201,18 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f"Wrote {options['out']} — open it in a browser."))
 
+        # Marked in the subject on every send. Everything this command puts on the
+        # wire is a rehearsal, and an unmarked one sitting in a real inbox looks
+        # exactly like the notification a submitted review produces. The real send
+        # path marks itself the same way when PAPER_REVIEW_REDIRECT_ALL_EMAIL is
+        # set, so a marked subject consistently means "nobody acted on this".
+        #
+        # Applied BEFORE the subject is reported, so the line printed here is the
+        # line that arrives; reporting the unmarked one would be a small lie that
+        # costs someone a confused search of their inbox.
+        if options["to"]:
+            subject = f"[TEST] {subject}"
+
         self.stdout.write(f"Subject: {subject}")
         self.stdout.write(f"From:    {settings.DEFAULT_FROM_EMAIL or '(unset)'}")
 

@@ -60,6 +60,8 @@ the request stays 201. Zoho's try/catch "SCRIPT ERROR" alert is replicated, and 
 that alert cannot be sent either, it is logged and dropped.
 """
 import logging
+import re
+from html import unescape
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
@@ -190,6 +192,62 @@ class Recipients:
 def _clean(value):
     """Whitespace-trimmed string. Turns Zoho's "" and Django's None into one case."""
     return (value or "").strip()
+
+
+# Tags that END A LINE rather than disappearing. Converted to newlines BEFORE the
+# rest are stripped, so a pasted bulleted list survives as separate lines instead
+# of collapsing into one paragraph. </li> and </tr> are here for the same reason
+# even though the fields that carry them are rarer.
+_LINE_BREAKING_TAGS = re.compile(r"(?is)<\s*(?:br\s*/?|/\s*(?:p|div|li|tr|h[1-6]))\s*>")
+
+# Everything else that looks like a tag. Deliberately NOT django.utils.html
+# .strip_tags: that runs an HTMLParser whose handle_entityref re-emits a bare
+# ampersand as an entity, so a real stored value of "Q&A SESSION" came back out
+# as "Q&A; SESSION" with a semicolon nobody typed. A plain removal leaves
+# ampersands exactly as they were found, which is what the reader wants; the
+# template escapes the result afterwards, so nothing is trusted either way.
+_ANY_TAG = re.compile(r"(?s)<[^>]*>")
+
+
+def _plain(value):
+    """
+    Free text with any markup reduced to plain text and its line structure kept.
+
+    WHY THIS EXISTS. agenda_addition and feedback_to_speaker are pasted from Word
+    and from the Zoho rich-text editor, so real rows hold things like
+    `<p style="margin: 0cm"><b><span style="font-family: Arial">TITLE</span></b>`.
+    The template autoescapes, which is correct and must not change, so that markup
+    was reaching the reader as visible tags.
+
+    STRIPPED, NOT TRUSTED. The alternative was marking the field safe and letting
+    the stored HTML render, which would put arbitrary user-entered markup into an
+    email; Word's styling would also fight the template's own. Stripping keeps the
+    escaping intact and the email consistent, and the words are what the reader
+    needs.
+
+    Cheap when there is nothing to do — a value with no "<" is returned untouched,
+    which is almost every field on almost every row.
+    """
+    text = str(value)
+    if "<" not in text and "&" not in text:
+        return text
+
+    text = _LINE_BREAKING_TAGS.sub("\n", text)
+    text = _ANY_TAG.sub("", text)
+    # After the tags, the entities: &nbsp; and &amp; are what Word leaves behind.
+    # The template escapes again on the way out, so this does not un-escape
+    # anything into the HTML.
+    # Real entities only. A bare "&" that is not part of one is left alone, so
+    # "Q&A" stays "Q&A".
+    text = unescape(text).replace(" ", " ")
+
+    # Word emits runs of empty paragraphs. Collapse them, so the email does not
+    # open with a hole where the pasted content used to have spacing.
+    lines, out = [l.strip() for l in text.splitlines()], []
+    for line in lines:
+        if line or (out and out[-1]):
+            out.append(line)
+    return "\n".join(out).strip()
 
 
 def resolve_recipients(review):
@@ -326,7 +384,50 @@ def _display(review, field):
         return "—" if value is None else f"{value} / {RUBRIC_TOTAL}"
     if value is None or value == "":
         return "—"
-    return str(value)
+    # Markup-stripped here rather than at each call site, so the plain-text part
+    # of the email and every cell of the HTML table get it from one place.
+    return _plain(value) or "—"
+
+
+def event_mre_name(review):
+    """
+    The MR executive named on the EVENT, for the email's "reviewed by" line.
+
+    NOT the submitter. Those are the same person most of the time and diverge
+    exactly when it matters — a stand-in files the review while the event still
+    belongs to someone else — and the sales executive reading this wants the name
+    of whoever owns the research on their event. The submitter is Cc'd either way,
+    so nobody is dropped from the thread.
+
+    SAME SOURCE AS THE ACCESS RULE. paper_review/access.py decides which events an
+    MRE may see at all from Event.market_research_senior / _junior, the columns the
+    event modal's Team ownership block writes; see
+    accounts.user_resolution.event_codes_naming. Reading a different column here
+    would let the email credit somebody who cannot open the record it links to.
+
+    Senior first, then Junior, matching the order access.py grants on. These are
+    CharField(255) free text, and they are used here as a DISPLAY STRING ONLY,
+    never resolved back to a User — matching a name against User to find an
+    address is the misrouting this codebase has already been burned by (see the
+    module docstring and events/models.py). Displaying a name routes nothing.
+
+    Falls back to the submitter, then to the system name, because an importer or
+    webhook row has neither a named reviewer nor an author, and a blank name
+    mid-sentence reads as a bug.
+    """
+    code = _clean(review.event_code)
+    event = Event.objects.filter(event_code=code).first() if code else None
+
+    if event is not None:
+        named = (_clean(event.market_research_senior)
+                 or _clean(event.market_research_junior))
+        if named:
+            return named
+
+    author = getattr(review, "created_by", None)
+    if author is not None:
+        return author.get_full_name() or author.username
+    return "Linq CRM"
 
 
 def template_context(review):
@@ -341,7 +442,6 @@ def template_context(review):
     The exceptions are the conditional tokens (nos, cleared, li_company,
     agenda_addition, feedback), which stay falsy so their blocks strip cleanly.
     """
-    author = getattr(review, "created_by", None)
     context = {
         "event_code":    _display(review, "event_code"),
         "paper_date":    (review.paper_submission_date.strftime("%d %b %Y")
@@ -359,18 +459,17 @@ def template_context(review):
                           else review.proposal_score),
         "nos":           bool(review.nos),
         "cleared":       _clean(review.grade) in CLEARED_GRADES,
-        # linebreaksbr runs in the template, so raw newlines have to survive to it.
-        "agenda_addition": _clean(review.agenda_addition),
-        "feedback":        _clean(review.feedback_to_speaker),
+        # linebreaksbr runs in the template, so the newlines _plain leaves behind
+        # have to survive to it. These two are the fields that actually carry
+        # pasted Word markup.
+        "agenda_addition": _plain(_clean(review.agenda_addition)),
+        "feedback":        _plain(_clean(review.feedback_to_speaker)),
         "record_url":    f"{settings.CRM_BASE_URL}/paper-review",
-        # The submitting MRE signs it. Falls back to a description rather than a
-        # blank line: an importer or webhook row has no author, and an email
-        # signed by nobody reads as a bug.
-        "mre_name":      ((author.get_full_name() or author.username)
-                          if author else "Linq CRM"),
-        "mre_role":      (author.get_role_display()
-                          if author and hasattr(author, "get_role_display")
-                          else "Automated notification"),
+        # Named in the HEADER line, "reviewed by ...". The event's assigned MRE,
+        # not the submitter — see event_mre_name. NOT the signature either; the
+        # message is from the CRM rather than from a person, so the sign-off is
+        # constant in the template.
+        "mre_name":      event_mre_name(review),
     }
     for field, token in SCORE_TOKENS:
         value = getattr(review, field, None)

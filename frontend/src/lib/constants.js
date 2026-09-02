@@ -217,7 +217,35 @@ export const PAPER_REVIEW_MAX_SCORE = PAPER_REVIEW_CRITERIA.reduce((s, c) => s +
 // A, B, B+, C, D, E, not A-D.
 export const PAPER_GRADES = ['A', 'B', 'B+', 'C', 'D', 'E'];
 export const PAPER_GRADE_TONE = { A: 'green', B: 'blue', 'B+': 'blue', C: 'amber', D: 'red', E: 'red' };
-export const PAPER_SESSION_OPTIONS = ['Day 1, Morning Session', 'Day 1, Afternoon Session', 'Day 2, Morning Session', 'Day 2, Afternoon Session'];
+/**
+ * Every slot a paper review can sit in, in the order a delegate would live them.
+ *
+ * ALL TEN, and the count is the point. This list held four, while the live data
+ * held ten — so six values in active use, 941 rows of them, were not selectable.
+ * The picker in PaperReviewFields.jsx drops a stored value it does not recognise
+ * and the field is REQUIRED, so opening one of those rows showed "— Select —" and
+ * forced a re-pick: the field looked broken and an edit silently rewrote the slot.
+ *
+ * Adding a slot to the agenda therefore means adding it HERE, or the same failure
+ * comes back for the new one. paper_review/tests_session_options.py holds the two
+ * copies in step.
+ *
+ * Chronological, not alphabetical: the form reads this order verbatim, and "Day 2,
+ * Afternoon Opening Session" sorts before "Day 2, Afternoon Session" while running
+ * after it. The table filter sorts its own options from stored values.
+ */
+export const PAPER_SESSION_OPTIONS = [
+  'Day 1, Opening Session',
+  'Day 1, Morning Session',
+  'Day 1, Afternoon Opening Session',
+  'Day 1, Afternoon Session',
+  'Day 1, Closing Session',
+  'Day 2, Opening Session',
+  'Day 2, Morning Session',
+  'Day 2, Afternoon Opening Session',
+  'Day 2, Afternoon Session',
+  'Day 2, Closing Session',
+];
 
 /**
  * Payable/Free, as the STORED values plus the wording the UI shows for them.
