@@ -150,6 +150,40 @@ class DataApiBaseViewSet(viewsets.ReadOnlyModelViewSet):
         self._log_request(request, 1)
         return response
 
+    @action(detail=False, methods=["get"])
+    def ids(self, request):
+        """
+        GET /api/data/<resource>/ids/ — every live pk, unpaginated.
+
+        THE RECONCILIATION HALF OF A FULL PULL. The list endpoints return rows
+        that exist, so a consumer that appends them cannot see a row that went;
+        /deletions/ closes that for anything removed after the tombstone table
+        was created, and for nothing before it. Ticket ids are also re-minted
+        every time Ticket Central is emptied and re-imported, which this CRM
+        does — the sequence is past 290,000 for 37,001 live rows — so a copy
+        keyed on id keeps every previous generation and its count drifts above
+        the CRM's for good. Measured: 84,649 exported rows against a 47,356-row
+        table. Saying what IS here answers both, whatever happened before.
+
+        The consumer deletes what it holds and this does not return. It does
+        NOT replace ?updated_since= — that is still how changes arrive; this is
+        the sweep that runs after.
+
+        Takes the same query params as the list, so a manifest is always about
+        the same population as the rows being reconciled against it.
+
+        ponytail: unpaginated, one array. 47k ids is ~350 KB in a single
+        request, which is the whole point for a client on a six-minute clock;
+        page it if a resource outgrows what a consumer can hold at once.
+        """
+        ids = list(self.get_queryset().values_list("pk", flat=True))
+        self._log_request(request, len(ids))
+        return Response({
+            "resource": self.resource_name,
+            "count": len(ids),
+            "ids": ids,
+        })
+
 
 class BookingDataViewSet(DataApiBaseViewSet):
     resource_name = "bookings"

@@ -328,6 +328,35 @@ class DataApiEndpointTests(TestCase):
         resp = self.client.post("/api/data/bookings/", **{HEADER: self.raw})
         self.assertEqual(resp.status_code, 405)
 
+    def test_ids_manifest_lists_every_live_pk(self):
+        """
+        The sweep that lets a consumer drop rows the CRM no longer has.
+
+        Asserted against the whole table rather than a count, because the
+        failure this guards is a manifest that omits an id: a consumer would
+        then delete a row that is still live, which is worse than the drift the
+        endpoint exists to fix.
+        """
+        for n in range(2, 6):
+            BookEvent.objects.create(invoice_number=f"INV-IDS-{n}",
+                                     event_code="TESTEV-26", payment_status="Pending")
+        body = self._get("/api/data/bookings/ids/", self.raw).json()
+        live = sorted(BookEvent.objects.values_list("id", flat=True))
+        self.assertEqual(sorted(body["ids"]), live)
+        self.assertEqual(body["count"], len(live))
+        self.assertEqual(body["resource"], "bookings")
+
+    def test_ids_manifest_honours_the_list_filters(self):
+        """A manifest wider than the pull would delete rows outside it."""
+        body = self._get("/api/data/bookings/ids/?event_code=NOPE", self.raw).json()
+        self.assertEqual(body["ids"], [])
+
+    def test_ids_manifest_obeys_key_scopes(self):
+        _, scoped = DataApiKey.create_key(name="Bookings only", scopes=["bookings"])
+        self.assertEqual(self._get("/api/data/bookings/ids/", scoped).status_code, 200)
+        self.assertEqual(self._get("/api/data/delegates/ids/", scoped).status_code, 403)
+        self.assertEqual(self._get("/api/data/bookings/ids/").status_code, 401)
+
 
 class DataApiWiringTests(TestCase):
     def test_authenticator_is_not_global(self):
