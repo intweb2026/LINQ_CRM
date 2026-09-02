@@ -106,7 +106,9 @@ export function ReportsTo({ value, avatar = true }) {
   const plural = value.names.length > 1 ? 's' : '';
   const why = value.source === 'admin'
     ? `Not recorded for this person, and they lead ${value.team || 'their team'} — shown as the administrator${plural}`
-    : `Not recorded for this person — shown as the lead${plural} of ${value.team}`;
+    : value.source === 'manager'
+      ? `Not recorded for this person — shown as the manager${plural} of ${value.team}`
+      : `Not recorded for this person — shown as the lead${plural} of ${value.team}`;
 
   return (
     <span className="dim" style={{ fontStyle: 'italic' }} title={why}>

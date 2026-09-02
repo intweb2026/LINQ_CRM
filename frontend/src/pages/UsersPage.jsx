@@ -34,7 +34,14 @@ export default function UsersPage() {
    * assert_can_manage_user in backend/accounts/permissions.py. This is the
    * screen agreeing with the API about whose accounts are the manager's job.
    */
-  const USERS = (users || []).filter(
+  //
+  // NARROWS THE TABLE ONLY. DIRECTORY is the whole list and is what the
+  // reporting-manager helpers read; they need every candidate, and a team's
+  // manager sits OUTSIDE the team as often as not. Filtering first meant a
+  // manager opening Add user could not find themselves in the list of people
+  // the new account could report to, and neither could they find an admin.
+  const DIRECTORY = users || [];
+  const USERS = DIRECTORY.filter(
     (u) => !managedTeam || u.team_id === managedTeam.id,
   );
   const TEAMS = teams || [];
@@ -95,7 +102,7 @@ export default function UsersPage() {
           // Sorted and filtered on the raw mapped_lead_name, which is '' for
           // everyone until somebody records one; the cell falls back to the
           // team's leads so the column is readable in the meantime.
-          { key: 'mapped_lead_name', label: 'Reporting Manager', cell: (v, r) => <ReportsTo value={reportingManagerOf(r, TEAMS, USERS)} avatar={false} /> },
+          { key: 'mapped_lead_name', label: 'Reporting Manager', cell: (v, r) => <ReportsTo value={reportingManagerOf(r, TEAMS, DIRECTORY)} avatar={false} /> },
           { key: 'events_count', label: 'Events', num: true },
           { key: 'last_login', label: 'Last active', cell: (v) => rel(v) },
           { key: 'status', label: 'Status', cell: (v) => <StatusPill value={v} />, opts: () => ['active', 'inactive'] },
@@ -112,7 +119,7 @@ export default function UsersPage() {
               <div><div className="l">Events</div><div className="v">{r.events_count}</div></div>
               <div><div className="l">Lead</div><div className="v">{r.is_lead ? 'Yes' : 'No'}</div></div>
               {r.managed_team_id ? <div><div className="l">Manages</div><div className="v">{r.managed_team_name}</div></div> : null}
-              <div><div className="l">Reports to</div><div className="v"><ReportsTo value={reportingManagerOf(r, TEAMS, USERS)} avatar={false} /></div></div>
+              <div><div className="l">Reports to</div><div className="v"><ReportsTo value={reportingManagerOf(r, TEAMS, DIRECTORY)} avatar={false} /></div></div>
             </div>
           </div>
         )}
@@ -121,8 +128,8 @@ export default function UsersPage() {
       {/* `users` is passed down, not re-fetched in each child. Both need the list
           only to work out who could be a reporting manager, and api/client.js
           warns about exactly the duplicate fetchAllPages walk that would be. */}
-      {drawerUser ? <UserDrawer user={drawerUser} users={USERS} onClose={() => setDrawerUser(null)} onChanged={refresh} onEdit={setFormUser} onResetPassword={setPwUser} /> : null}
-      {formUser !== undefined ? <UserFormModal user={formUser} users={USERS} onClose={() => setFormUser(undefined)} onSaved={refresh} /> : null}
+      {drawerUser ? <UserDrawer user={drawerUser} users={DIRECTORY} onClose={() => setDrawerUser(null)} onChanged={refresh} onEdit={setFormUser} onResetPassword={setPwUser} /> : null}
+      {formUser !== undefined ? <UserFormModal user={formUser} users={DIRECTORY} onClose={() => setFormUser(undefined)} onSaved={refresh} /> : null}
       {pwUser ? <ResetPasswordModal user={pwUser} onClose={() => setPwUser(null)} /> : null}
       {inviteOpen ? (
         <Modal size="sm" title="Invite by email" sub="They receive a link to set their own password." onClose={() => setInviteOpen(false)}
