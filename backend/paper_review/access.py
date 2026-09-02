@@ -22,10 +22,8 @@ from the same column, so `__in` is exact, indexed, and cannot over-grant on a
 prefix.
 
 WHERE AN ASSIGNMENT COMES FROM
-The event's own Market Research Sr./Jr. columns, which is what the Team ownership
-block of the event modal writes. See permitted_event_codes; it used to read
-User.assigned_events instead, and that M2M is written by the CSV importer and by
-nothing a human touches.
+The event's own Market Research Sr./Jr. columns, which is what the event modal's
+Team ownership block writes. See accounts.user_resolution.event_codes_naming.
 """
 
 # Roles that may read and write internal_footnotes, in addition to anyone with
@@ -78,23 +76,9 @@ def permitted_event_codes(user):
     """
     The codes of the events this person is the named REVIEWER on.
 
-    ONE source: the event's Market Research Sr./Jr. columns, which is what the
-    Team ownership block of the event modal writes. Assigning somebody there is
-    what gives them the event, and nothing else does.
-
-    WHY NOT User.assigned_events, WHICH THIS READ UNTIL NOW
-    Nothing a human touches writes that M2M. The CSV importer is its only writer,
-    and it resolves each name against the user table AS IT STOOD AT IMPORT TIME.
-    So a reviewer whose account was created after their events were imported was
-    named on four events and could file against one; assigning them in the event
-    modal changed nothing, because the modal writes the column and this read the
-    M2M. Reading the column is what makes the two agree.
-
-    The resolution itself, the typo risk it carries and the exact-keys-only rule
-    that contains it, live in accounts.user_resolution.event_codes_naming —
-    SHARED with proposal_submission/access.py rather than copied, because every
-    paper review mints a proposal through the same user and the two scopes
-    disagreeing fails the save.
+    ONE source, accounts.user_resolution.event_codes_naming, SHARED with
+    proposal_submission/access.py rather than copied; that function carries the
+    reasoning, the typo risk, and why this is no longer User.assigned_events.
     """
     from accounts.user_resolution import event_codes_naming
     return event_codes_naming(user)

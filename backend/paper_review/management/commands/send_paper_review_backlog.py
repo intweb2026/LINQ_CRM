@@ -198,20 +198,46 @@ class Command(BaseCommand):
                 "these. Consider --limit 1 first."))
             return
 
-        self.stdout.write("\nSending.")
-        sent = 0
+        self.stdout.write("")
+        self.stdout.write("Sending.")
+        results = Counter()
         for index, review in enumerate(reviews):
             # Never raises; it catches everything and records the outcome on the
             # NotificationLog, so one dead recipient cannot halt the backlog.
             send_paper_review_notification(review)
-            sent += 1
-            self.stdout.write(f"  sent #{review.id}")
+
+            # Read the outcome back off the log rather than reporting what was
+            # INTENDED. The send happens inside that callable and can fail there;
+            # printing the resolved recipients as though they were delivered
+            # would tell you a message went to a sales executive who never got
+            # one, which is exactly the thing this output exists to rule out.
+            log = (NotificationLog.objects.filter(paper_review=review)
+                   .order_by("-id").first())
+            status = log.status if log else "no log written"
+            results[status] += 1
+
+            style = (self.style.SUCCESS
+                     if status == NotificationLog.Status.RESOLVED
+                     else self.style.WARNING)
+            self.stdout.write(style(
+                f"  #{review.id:<6} {status:<11} "
+                f"to=[{', '.join(log.to_addresses) if log else ''}] "
+                f"cc=[{', '.join(log.cc_addresses) if log else ''}]"))
+            self.stdout.write(f"          {review.event_code} — "
+                              f"{review.speaker_name}")
+            if log and log.error:
+                self.stdout.write(self.style.WARNING(f"          {log.error}"))
+
             if options["delay"] and index < len(reviews) - 1:
                 time.sleep(options["delay"])
 
-        self.stdout.write(self.style.SUCCESS(f"\n{sent} sent."))
-        self.stdout.write(
-            "Check the outcome, which is on the log rather than in this output:\n"
-            "  python manage.py shell -c \"from paper_review.models import "
-            "NotificationLog as N; print(list(N.objects.order_by('-id')"
-            "[:5].values_list('paper_review_id','status','error')))\"")
+        self.stdout.write("")
+        self.stdout.write("Delivered:")
+        for status, count in results.most_common():
+            self.stdout.write(f"  {status:<12} {count}")
+        self.stdout.write("")
+        self.stdout.write(self.style.SUCCESS(
+            f"{results.get(NotificationLog.Status.RESOLVED, 0)} of "
+            f"{len(reviews)} reached the mail server. `resolved` means sent, "
+            f"`failed` carries the reason, `fallback` means nobody resolved from "
+            f"the event and the watchdog got it instead."))

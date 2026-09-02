@@ -74,6 +74,41 @@ class BacklogCommandTests(_Base):
         self.assertEqual(
             {m.to[0] for m in mail.outbox}, {"sales.exec@example.com"})
 
+    def test_the_send_reports_who_each_one_actually_reached(self):
+        """
+        The output has to be usable as a checklist: go to this sales executive,
+        ask whether it arrived. So every line carries the id, the status, the To
+        and the Cc, and the event and speaker underneath to identify it.
+        """
+        out = run("--send", "--delay", "0", "--limit", "1")
+        self.assertIn(f"#{self.a.id}", out)
+        self.assertIn("resolved", out)
+        self.assertIn("sales.exec@example.com", out)
+        self.assertIn("Ada Speaker", out)
+        self.assertIn(self.event.event_code, out)
+
+    def test_the_reported_status_comes_from_the_log_not_from_intent(self):
+        """
+        A send that blew up must be reported as failed, not as delivered to the
+        recipients it resolved to. Reporting intent would tell you to go and ask
+        someone about an email that was never sent.
+        """
+        from unittest.mock import patch
+        with patch("paper_review.notifications._send",
+                   side_effect=OSError("smtp refused")):
+            out = run("--send", "--delay", "0", "--limit", "1")
+
+        self.assertIn("failed", out)
+        self.assertIn("smtp refused", out)
+        # The headline count, not the word "resolved" — the closing legend names
+        # every status, so searching for the word finds it either way.
+        self.assertIn("0 of 1 reached the mail server", out)
+
+    def test_the_run_ends_with_a_count_by_outcome(self):
+        out = run("--send", "--delay", "0")
+        self.assertIn("Delivered:", out)
+        self.assertIn("reached the mail server", out)
+
     def test_a_second_run_sends_nothing_because_the_first_is_recorded(self):
         """
         Idempotence, and the reason a half-finished run can just be re-run. The

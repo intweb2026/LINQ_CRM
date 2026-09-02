@@ -77,13 +77,8 @@ def permitted_event_codes(user):
     The codes of the events this person is the named reviewer on.
 
     THE SAME ANSWER paper_review/access.py gives, from the same shared function,
-    and it has to be. paper_review mints a ProposalSubmission for every review it
-    saves, through the same user, so the instant these two scopes disagree every
-    paper review create fails on its own proposal's validation. They were
-    near-identical copies reading User.assigned_events until that M2M turned out
-    to be written by the CSV importer and by nothing a human touches; see
-    accounts.user_resolution.event_codes_naming for what replaced it and why the
-    free-text columns are safe enough to read.
+    and it has to be; paper_review mints a proposal through this same user. See
+    accounts.user_resolution.event_codes_naming.
     """
     from accounts.user_resolution import event_codes_naming
     return event_codes_naming(user)

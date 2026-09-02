@@ -149,15 +149,14 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
     <label className="fd-l" htmlFor={'pr-' + k}>{text}{req ? <span className="req">*</span> : null}</label>
   );
 
-  // Server-owned values, displayed the way proposal score and grade are. No id,
-  // no name, no onChange: nothing here is part of the payload.
-  const ro = (text, value, note) => (
+  // Server-owned values, shown with .in-ro, the same locked-field class
+  // TicketFormModal uses. No id, no name, no onChange: nothing here is part of
+  // the payload.
+  const ro = (text, value) => (
     <div className="fd">
       <label className="fd-l">{text}</label>
-      <div className="in" style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-2)', color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {value || <span className="dim">—</span>}
-      </div>
-      <span style={{ fontSize: 10, color: 'var(--text-4)' }}>{note}</span>
+      <div className="in-ro">{value || <span className="dim">—</span>}</div>
+      <span style={{ fontSize: 10, color: 'var(--text-4)' }}>Set when the notification sends</span>
     </div>
   );
 
@@ -182,8 +181,8 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd">{lab('event_code', 'Event code', true)}
             {picker('event_code', EVENTS.map((e) => e.event_code))}
           </div>
-          {ro('Speaker email ref', form.speaker_email_ref, 'Set when the notification sends')}
-          {ro('Research email ref', form.research_email_ref, 'Set when the notification sends')}
+          {ro('Speaker email ref', form.speaker_email_ref)}
+          {ro('Research email ref', form.research_email_ref)}
         </div>
       </div>
       <div className="fs">

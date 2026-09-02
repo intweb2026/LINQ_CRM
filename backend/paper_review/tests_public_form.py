@@ -27,7 +27,7 @@ from rest_framework.test import APITestCase
 
 from events.models import Event
 from paper_review.models import NotificationLog, PaperReview
-from events.testutils import assign_reviewer, unassign_reviewer
+from events.testutils import assign_reviewer
 from proposal_submission.models import ProposalSubmission
 from webhooks.models import WebhookApiKey
 
@@ -171,7 +171,7 @@ class ConfigTests(FormLinkBase):
         self.assertEqual(r.status_code, 401)
 
     def test_reviewer_with_no_assigned_events_is_refused_not_shown_everything(self):
-        unassign_reviewer(self.biu)
+        Event.objects.filter(pk=self.biu.pk).update(market_research_senior="")
         r = self.config()
         self.assertEqual(r.status_code, 409)
         self.assertIn("No events are assigned", r.data["detail"])
@@ -407,7 +407,8 @@ class CompletedEventsAreNotOfferedTests(FormLinkBase):
     def test_a_past_event_cannot_be_submitted_against_either(self):
         past = make_event("PAST - MR", days=-1)
         assign_reviewer(self.mre, past)
-        unassign_reviewer(self.biu)          # leave only the finished one
+        Event.objects.filter(pk=self.biu.pk).update(
+            market_research_senior="")       # leave only the finished one
         assign_reviewer(self.mre, past)
 
         response = self.submit(body(event_code="PAST - MR"))
@@ -425,7 +426,7 @@ class CompletedEventsAreNotOfferedTests(FormLinkBase):
         self.assertIn("already", response.data["detail"])
 
     def test_nothing_assigned_still_says_nothing_assigned(self):
-        unassign_reviewer(self.biu)
+        Event.objects.filter(pk=self.biu.pk).update(market_research_senior="")
 
         response = self.config()
         self.assertEqual(response.status_code, 409)
