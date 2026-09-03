@@ -75,7 +75,7 @@ class TicketWebhookTests(TestCase):
         self.assertEqual(ticket.status, Ticket.Status.MR_SUBMITTED)
         self.assertEqual(ticket.event_code, "TST - PM")
         # Minted at create, format "TYPE-PURPOSE NUMBER".
-        self.assertTrue(ticket.ticket_number.startswith("BX-AS "))
+        self.assertTrue(ticket.ticket_number.startswith("AS "))
         # The whole point: no user on the request, so no user on the row.
         self.assertIsNone(ticket.created_by)
         self.assertIsNone(ticket.mr_submitted_by)
@@ -210,7 +210,7 @@ class WebhookPurposeCasingTests(TestCase):
 
         ticket = Ticket.objects.get(external_id="WH-CASE-1")
         self.assertEqual(ticket.purpose, "CCU")
-        self.assertTrue(ticket.ticket_number.startswith("BX-CCU "))
+        self.assertTrue(ticket.ticket_number.startswith("CCU "))
 
     def test_lowercase_webhook_shares_the_uppercase_counter(self):
         from ticket_central.models import TicketSequence
@@ -220,5 +220,5 @@ class WebhookPurposeCasingTests(TestCase):
         self._auth(payload(purpose="ccu", external_id="WH-CASE-2"))
 
         ticket = Ticket.objects.get(external_id="WH-CASE-2")
-        self.assertEqual(ticket.ticket_number, "BX-CCU 10042")
+        self.assertEqual(ticket.ticket_number, "CCU 10042")
         self.assertEqual(TicketSequence.objects.count(), 1)

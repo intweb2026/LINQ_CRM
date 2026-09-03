@@ -715,7 +715,7 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         from django.db import transaction
         from .utils import (
             _coerce_row, assign_next_ticket_number, display_name,
-            extract_purpose_code, extract_type_code,
+            extract_purpose_code,
         )
 
         inserted, updated, skipped_rows, errors = 0, 0, [], []
@@ -804,15 +804,14 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                     # No purpose means no number can be built; the row stays blank,
                     # exactly as the backfill command skips it.
                     # ponytail: assign_next_ticket_number re-reads every
-                    # ticket_number for the purpose per row to find reusable gaps,
-                    # so a 500-row batch does 500 scans. Fine at current volumes;
-                    # cache the used-set per purpose for the batch if it drags.
+                    # ticket_number for the purpose per row to find the high-water
+                    # mark, so a 500-row batch does 500 scans. Fine at current
+                    # volumes; cache the used-set per purpose if it drags.
                     if not coerced.get("ticket_number"):
                         purpose_code = extract_purpose_code(coerced.get("purpose", ""))
                         if purpose_code:
                             coerced["ticket_number"] = assign_next_ticket_number(
-                                purpose_code,
-                                extract_type_code(coerced.get("type_of_ticket", "")),
+                                purpose_code
                             )
                     ticket = Ticket.objects.create(
                         created_by=request.user, **coerced,

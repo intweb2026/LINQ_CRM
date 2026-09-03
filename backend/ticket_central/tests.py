@@ -224,24 +224,20 @@ class TicketNumberTests(TestCase):
     def test_extract_purpose_code(self):
         self.assertEqual(extract_purpose_code("  CEU  "), "CEU")
 
-    def test_build_with_type(self):
-        result = build_ticket_number("BX", "CEU", 10001)
-        self.assertEqual(result, "BX-CEU 10001")
-
-    def test_build_no_type(self):
-        result = build_ticket_number("", "CEU", 10001)
-        self.assertEqual(result, "CEU 10001")
+    def test_build_is_purpose_and_number_only(self):
+        """No type prefix: 'BX-CEU 10001' is the old shape."""
+        self.assertEqual(build_ticket_number("CEU", 10001), "CEU 10001")
 
     def test_build_no_purpose_returns_empty(self):
-        self.assertEqual(build_ticket_number("BX", "", 10001), "")
+        self.assertEqual(build_ticket_number("", 10001), "")
 
     def test_build_truncates_to_50(self):
         long_purpose = "A" * 100
-        result = build_ticket_number("BX", long_purpose, 10001)
+        result = build_ticket_number(long_purpose, 10001)
         self.assertLessEqual(len(result), 50)
 
     def test_build_5digit_number_fits(self):
-        result = build_ticket_number("BX", "CEU", 10001)
+        result = build_ticket_number("CEU", 10001)
         self.assertLessEqual(len(result), 50)
 
 
@@ -568,10 +564,10 @@ class CRUDTests(APITestCase):
     def test_create_assigns_ticket_number_when_purpose_present(self):
         """
         ticket_number is assigned AT CREATE, not overnight — supersedes D9.
-        Format is '{type}-{purpose} {n}' (utils.build_ticket_number). The
-        purpose is upper-cased, not embedded verbatim: extract_purpose_code
-        normalises it so that case variants of one code cannot open separate
-        counters.
+        Format is '{purpose} {n}' (utils.build_ticket_number) — the type code
+        is not in it. The purpose is upper-cased, not embedded verbatim:
+        extract_purpose_code normalises it so that case variants of one code
+        cannot open separate counters.
         """
         auth(self.client, self.mr)
         resp = self.client.post("/api/tickets/", {
@@ -580,7 +576,7 @@ class CRUDTests(APITestCase):
         self.assertEqual(resp.status_code, 201)
         ticket = Ticket.objects.get(pk=resp.data["id"])
         self.assertNotEqual(ticket.ticket_number, "")
-        self.assertTrue(ticket.ticket_number.startswith("BX-NUMBERED "))
+        self.assertTrue(ticket.ticket_number.startswith("NUMBERED "))
 
     def test_create_without_purpose_is_rejected(self):
         """
@@ -1025,11 +1021,11 @@ class BackfillTests(TestCase):
         self.assertNotEqual(t.ticket_number, "")
 
     def test_number_format_matches_expected(self):
+        """Purpose and number only — the type code is not in the string."""
         Ticket.objects.create(purpose="CEU", type_of_ticket="Blue - BX", ticket_number="")
         self._run()
         t = Ticket.objects.get(purpose="CEU")
-        self.assertIn("BX", t.ticket_number)
-        self.assertIn("CEU", t.ticket_number)
+        self.assertEqual(t.ticket_number, "CEU 10001")
 
     def test_skips_ticket_with_no_purpose(self):
         Ticket.objects.create(purpose="", type_of_ticket="BX", ticket_number="")

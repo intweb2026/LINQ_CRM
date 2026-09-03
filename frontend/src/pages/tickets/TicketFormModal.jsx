@@ -395,9 +395,9 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
           <div className="fg c3">
             <div className="fcol">
               <Field label="Ticket Number">
-                {/* Server-assigned at create from purpose + type code, and reused
-                    from gaps by assign_next_ticket_number — never caller-writable,
-                    at any status or role. */}
+                {/* Server-assigned at create as '{purpose} {n}', one past the
+                    highest number in use for that purpose (assign_next_ticket_number)
+                    — never caller-writable, at any status or role. */}
                 <input className="in" value={ticket?.ticket_number || ''} placeholder={isNew ? 'Assigned on create' : ''} readOnly disabled />
               </Field>
               <Field label="Assign Name">

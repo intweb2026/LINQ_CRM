@@ -197,7 +197,7 @@ class BulkCreateTests(APITestCase):
         resp = self._post([self._row(i) for i in range(3)])
         self.assertEqual(resp.status_code, 201, resp.content)
         numbers = [row["ticket_number"] for row in resp.data["created"]]
-        self.assertEqual(numbers, ["WH-SCU 10001", "WH-SCU 10002", "WH-SCU 10003"])
+        self.assertEqual(numbers, ["SCU 10001", "SCU 10002", "SCU 10003"])
 
     def test_assigned_mr_defaults_to_the_person_raising_the_batch(self):
         """

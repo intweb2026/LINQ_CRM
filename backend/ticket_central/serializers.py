@@ -145,7 +145,7 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from django.utils import timezone
-        from .utils import extract_type_code, extract_purpose_code, assign_next_ticket_number
+        from .utils import extract_purpose_code, assign_next_ticket_number
 
         # A webhook delivery (webhooks/views.py TicketIngestionView) carries no
         # logged-in user, and AnonymousUser is not something an FK will accept,
@@ -182,12 +182,8 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         validated_data["mr_submitted_at"] = timezone.now()
 
         purpose_code = extract_purpose_code(validated_data.get("purpose", ""))
-        type_code = extract_type_code(validated_data.get("type_of_ticket", ""))
-
         if purpose_code:
-            validated_data["ticket_number"] = assign_next_ticket_number(
-                purpose_code, type_code
-            )
+            validated_data["ticket_number"] = assign_next_ticket_number(purpose_code)
 
         return super().create(validated_data)
 

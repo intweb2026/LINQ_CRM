@@ -19,9 +19,7 @@ import logging
 from django.core.management.base import BaseCommand
 
 from ticket_central.models import Ticket
-from ticket_central.utils import (
-    extract_type_code, extract_purpose_code, assign_next_ticket_number,
-)
+from ticket_central.utils import extract_purpose_code, assign_next_ticket_number
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +55,7 @@ class Command(BaseCommand):
             # ponytail: one locked round-trip per row. The queue is rows that
             # arrived without a number, so it is small; batch by purpose if a
             # migration ever makes it large.
-            ticket.ticket_number = assign_next_ticket_number(
-                purpose_code, extract_type_code(ticket.type_of_ticket),
-            )
+            ticket.ticket_number = assign_next_ticket_number(purpose_code)
             ticket.save(update_fields=["ticket_number"])
 
         if dry_run:

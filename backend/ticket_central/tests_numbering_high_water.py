@@ -16,18 +16,18 @@ class HighWaterNumberingTests(TestCase):
             Ticket.objects.create(purpose="FLE", ticket_number=tn)
         TicketSequence.objects.create(purpose_key="FLE", last_number=24)
 
-        self.assertEqual(assign_next_ticket_number("FLE", "WH"), "WH-FLE 7222")
+        self.assertEqual(assign_next_ticket_number("FLE"), "FLE 7222")
 
     def test_deleted_number_is_not_reissued(self):
         Ticket.objects.create(purpose="PSZ", ticket_number="CX-PSZ 7044")
         TicketSequence.objects.create(purpose_key="PSZ", last_number=7044)
 
-        first = assign_next_ticket_number("PSZ", "LX")
+        first = assign_next_ticket_number("PSZ")
         Ticket.objects.create(purpose="PSZ", ticket_number=first)
         Ticket.objects.filter(ticket_number=first).delete()
 
-        self.assertEqual(first, "LX-PSZ 7045")
-        self.assertEqual(assign_next_ticket_number("PSZ", "LX"), "LX-PSZ 7046")
+        self.assertEqual(first, "PSZ 7045")
+        self.assertEqual(assign_next_ticket_number("PSZ"), "PSZ 7046")
 
     def test_data_outranks_the_10000_default(self):
         """
@@ -37,7 +37,7 @@ class HighWaterNumberingTests(TestCase):
         Ticket.objects.create(purpose="FLE", ticket_number="YL-FLE 7221")
         self.assertFalse(TicketSequence.objects.filter(purpose_key="FLE").exists())
 
-        self.assertEqual(assign_next_ticket_number("FLE", "WH"), "WH-FLE 7222")
+        self.assertEqual(assign_next_ticket_number("FLE"), "FLE 7222")
 
     def test_an_existing_counter_still_outranks_thinner_data(self):
         """
@@ -47,11 +47,10 @@ class HighWaterNumberingTests(TestCase):
         Ticket.objects.create(purpose="PSZ", ticket_number="CX-PSZ 7044")
         TicketSequence.objects.create(purpose_key="PSZ", last_number=7050)
 
-        self.assertEqual(assign_next_ticket_number("PSZ", "LX"), "LX-PSZ 7051")
+        self.assertEqual(assign_next_ticket_number("PSZ"), "PSZ 7051")
 
     def test_fresh_purpose_starts_at_10001(self):
-        self.assertEqual(assign_next_ticket_number("BRANDNEW", "BX"),
-                         "BX-BRANDNEW 10001")
+        self.assertEqual(assign_next_ticket_number("BRANDNEW"), "BRANDNEW 10001")
 
 
 class PurposeKeyNormalisationTests(TestCase):
@@ -62,13 +61,13 @@ class PurposeKeyNormalisationTests(TestCase):
         TicketSequence.objects.create(purpose_key="CCU", last_number=10001)
 
         # Typed lowercase in the form; must not open a second counter at 10001.
-        self.assertEqual(assign_next_ticket_number("ccu", "BX"), "BX-CCU 10002")
+        self.assertEqual(assign_next_ticket_number("ccu"), "CCU 10002")
         self.assertEqual(TicketSequence.objects.filter(
             purpose_key__iexact="CCU").count(), 1)
 
     def test_long_purpose_does_not_overflow_the_key(self):
         """purpose is 255 chars, purpose_key is 50 — this used to raise DataError."""
-        number = assign_next_ticket_number("X" * 200, "BX")
+        number = assign_next_ticket_number("X" * 200)
 
         self.assertTrue(number.endswith(" 10001"))
         self.assertEqual(TicketSequence.objects.get().purpose_key, "X" * 50)
@@ -94,7 +93,7 @@ class BackfillUsesSharedGeneratorTests(TestCase):
         call_command("backfill_ticket_numbers")
 
         blank.refresh_from_db()
-        self.assertEqual(blank.ticket_number, "WH-FLE 7222")
+        self.assertEqual(blank.ticket_number, "FLE 7222")
 
     def test_dry_run_writes_nothing(self):
         from django.core.management import call_command

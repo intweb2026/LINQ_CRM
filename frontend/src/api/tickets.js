@@ -51,7 +51,7 @@ export function markComplete(id) {
   return http.post(`tickets/${id}/submit_dmd/`, {}).then((r) => r.data);
 }
 export function create(payload) {
-  // ticket_number is server-assigned (purpose + type code, gaps reused — see
+  // ticket_number is server-assigned (purpose + running number — see
   // utils.assign_next_ticket_number), so a caller-supplied one is dropped rather
   // than sent to a serializer that has no such field.
   const { ticket_number, ...body } = payload;

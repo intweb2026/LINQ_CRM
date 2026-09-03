@@ -98,10 +98,10 @@ def import_fields():
 
 # The TC-YYYYMMDD-XXXX generator that used to sit here was removed. It was
 # reachable from nothing: ticket numbers come from assign_next_ticket_number()
-# below, which builds them from the purpose and type codes and reuses gaps
-# through TicketSequence. Keeping a second generator that mints numbers in a
-# format the sequence table does not track is a live hazard, not dead weight —
-# one call from a future importer and the two schemes are interleaved.
+# below, which builds them from the purpose code alone and tracks the series in
+# TicketSequence. Keeping a second generator that mints numbers in a format the
+# sequence table does not track is a live hazard, not dead weight — one call
+# from a future importer and the two schemes are interleaved.
 
 # ── Smart Import: row coercion ──────────────────────────────────────────────
 
@@ -350,19 +350,25 @@ def extract_purpose_code(purpose):
     return normalize_purpose(purpose)[:50]
 
 
-def build_ticket_number(type_code, purpose_code, number):
-    """Format: 'TYPE-PURPOSE NUMBER', or just 'PURPOSE NUMBER' if no type."""
+def build_ticket_number(purpose_code, number):
+    """
+    Format: 'PURPOSE NUMBER', e.g. 'CEU 10001'.
+
+    The type code used to lead the string ('BX-CEU 10001'). It never keyed
+    anything — the counter has always been per purpose, so two types under one
+    purpose shared a series and the prefix only recorded which type happened to
+    raise that row, a fact the type_of_ticket column already holds. Numbers
+    already in the table keep their old prefix; the scan below reads the
+    trailing integer, so both shapes count toward the same high-water mark.
+    """
     if not purpose_code:
         return ""  # cannot build without a purpose
     num_str = str(number)
     max_prefix_len = 50 - len(num_str) - 1
-    prefix = f"{type_code}-{purpose_code}" if type_code else purpose_code
-    if len(prefix) > max_prefix_len:
-        prefix = prefix[:max_prefix_len]
-    return f"{prefix} {num_str}"
+    return f"{purpose_code[:max_prefix_len]} {num_str}"
 
 
-def assign_next_ticket_number(purpose_code, type_code):
+def assign_next_ticket_number(purpose_code):
     """
     Returns the next ticket number for this purpose: one past the highest
     number already in use, never a gap.
@@ -391,7 +397,9 @@ def assign_next_ticket_number(purpose_code, type_code):
             defaults={"last_number": 10000},
         )
 
-        # All numbers currently occupied for this purpose (any type_code).
+        # All numbers currently occupied for this purpose. Purpose is the only
+        # key: type_of_ticket has never split the series, and legacy numbers
+        # carrying a 'TYPE-' prefix are read here by their trailing integer.
         used = set()
         for tn in (
             Ticket.objects
@@ -419,7 +427,7 @@ def assign_next_ticket_number(purpose_code, type_code):
             seq.last_number = next_num
             seq.save(update_fields=["last_number"])
 
-        return build_ticket_number(type_code, purpose_code, next_num)
+        return build_ticket_number(purpose_code, next_num)
 
 
 def _resolve_user(v):

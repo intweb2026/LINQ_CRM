@@ -33,7 +33,7 @@ class ImportTicketNumberTests(TestCase):
             [{"purpose": "LX", "type_of_ticket": "Blue - BX"}]
         )
         self.assertEqual((inserted, errors), (1, []))
-        self.assertEqual(Ticket.objects.get().ticket_number, "BX-LX 10001")
+        self.assertEqual(Ticket.objects.get().ticket_number, "LX 10001")
         self.assertEqual(
             TicketSequence.objects.get(purpose_key="LX").last_number, 10001
         )
