@@ -56,7 +56,7 @@ READ_ONLY_FIELDS = [
 # these blank-able so historical imports can land incomplete rows.
 REQUIRED_FIELDS = [
     "paper_submission_date", "event_code", "speaker_name", "company_name",
-    "email", "linkedin_speaker", "linkedin_followers",
+    "email",
     "closeness_to_topic", "closeness_to_region", "clear_solution_to_challenges",
     "case_study_results_examples", "not_obvious_sales_pitch",
     "company_profile_score",

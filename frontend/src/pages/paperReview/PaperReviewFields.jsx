@@ -87,8 +87,6 @@ export function firstMissing(form) {
   if (!form.speaker_name.trim()) return 'Speaker name is required';
   if (!form.company_name.trim()) return 'Company name is required';
   if (!form.email.trim()) return 'Email address of the speaker is required';
-  if (!form.linkedin_speaker.trim()) return 'Speaker LinkedIn URL is required';
-  if (isBlank(form.linkedin_followers)) return 'LinkedIn followers count is required';
   if (!form.session_location_on_agenda) return 'Session location on agenda is required';
   if (!form.proposal_received.trim()) return 'Proposal received is required';
   if (!form.theme.trim()) return 'Theme is required';
@@ -178,9 +176,9 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd">{lab('speaker_name', 'Speaker name', true)}<input className="in" id="pr-speaker_name" name="speaker_name" value={form.speaker_name} onChange={set('speaker_name')} /></div>
           <div className="fd">{lab('company_name', 'Company name', true)}<input className="in" id="pr-company_name" name="company_name" value={form.company_name} onChange={set('company_name')} /></div>
           <div className="fd">{lab('email', 'Email address of the speaker', true)}<input className="in" id="pr-email" name="email" type="email" value={form.email} onChange={set('email')} /></div>
-          <div className="fd" style={{ gridColumn: '1/3' }}>{lab('linkedin_speaker', 'LinkedIn profile of speaker', true)}<input className="in" id="pr-linkedin_speaker" name="linkedin_speaker" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
+          <div className="fd" style={{ gridColumn: '1/3' }}>{lab('linkedin_speaker', 'LinkedIn profile of speaker')}<input className="in" id="pr-linkedin_speaker" name="linkedin_speaker" type="url" placeholder="https://linkedin.com/in/…" value={form.linkedin_speaker} onChange={set('linkedin_speaker')} /></div>
           <div className="fd" style={{ gridColumn: '3/-1' }}>{lab('linkedin_company', 'LinkedIn company profile')}<input className="in" id="pr-linkedin_company" name="linkedin_company" type="url" placeholder="https://linkedin.com/company/…" value={form.linkedin_company} onChange={set('linkedin_company')} /></div>
-          <div className="fd">{lab('linkedin_followers', 'LinkedIn followers count', true)}<NumField id="pr-linkedin_followers" name="linkedin_followers" min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
+          <div className="fd">{lab('linkedin_followers', 'LinkedIn followers count')}<NumField id="pr-linkedin_followers" name="linkedin_followers" min={0} value={form.linkedin_followers} onChange={set('linkedin_followers')} /></div>
           <div className="fd" style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 18 }}>
             <input type="checkbox" className="ck" id="pr-nos" name="nos" checked={!!form.nos} onChange={(e) => setForm((f) => ({ ...f, nos: e.target.checked, ...scoreReset(e.target.checked) }))} />
             <label className="fd-l" htmlFor="pr-nos" style={{ marginBottom: 0 }}>NOS?</label>
