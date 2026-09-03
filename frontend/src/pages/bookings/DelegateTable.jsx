@@ -156,7 +156,7 @@ const baseCols = ({ onTransfer } = {}) => [
   { key: 'paid_or_free', label: 'Payable/Free', type: 'select', options: PAID_OR_FREE, optionLabel: paidOrFreeLabel, width: 110 },
   { key: 'payment_date', label: 'Date Paid', type: 'date', width: 140 },
   { key: 'payment_type', label: 'Payment Type', type: 'select', options: BLANK_FIRST(PAYMENT_TYPES), width: 120 },
-  { key: 'ticket_tier', label: 'Ticket Tier', type: 'select', options: TICKET_TIERS, width: 110 },
+  { key: 'ticket_tier', label: 'Ticket Tier', type: 'select', options: BLANK_FIRST(TICKET_TIERS), width: 110 },
   { key: 'discount', label: 'Discount', type: 'select', options: DISCOUNTS, width: 100, percent: true },
   { key: 'add_ons', label: 'Add-Ons', type: 'text', width: 140 },
   { key: 'reference', label: 'Ref', type: 'text', width: 130 },
