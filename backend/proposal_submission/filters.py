@@ -52,6 +52,9 @@ class ProposalSubmissionFilter(django_filters.FilterSet):
     company_name       = django_filters.CharFilter(lookup_expr="icontains")
     presentation_theme = django_filters.CharFilter(lookup_expr="icontains")
     agenda_slot        = django_filters.CharFilter(lookup_expr="icontains")
+    # icontains like agenda_slot beside it, not iexact: both hold the same ten
+    # session slots, and "Day 1" as a fragment is a useful narrowing on either.
+    speaking_slot_assignment = django_filters.CharFilter(lookup_expr="icontains")
     sales_pitch_factor = django_filters.CharFilter(lookup_expr="icontains")
 
     # Dropdown columns — whole-value match.

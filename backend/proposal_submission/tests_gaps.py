@@ -301,35 +301,57 @@ class MixinWiringTests(_Base):
         r = self.client.get(f"{self.LIST}bulk_update_schema/")
         self.assertEqual(r.status_code, 200, r.content)
         required = {
-            "qc_grade", "qc_score", "speaker_slot_status", "sponsorship_status",
+            "speaker_slot_status", "sponsorship_status",
             "agenda_slot", "revenue_possibility", "sales_pitch_factor",
             "agenda_addition", "spex_remarks",
         }
         wired = set(r.data["fields"])
         self.assertTrue(required <= wired, required - wired)
-        # Identity, provenance and audit must never be mass-writable.
+        # Identity, provenance and audit must never be mass-writable. qc_grade and
+        # qc_score joined them: they are the paper review rubric's output, so mass
+        # update would otherwise be the widest possible version of the edit the
+        # detail form now refuses, one value across a thousand derived scores.
         for forbidden in ("event_code", "speaker_name", "email", "company_name",
                           "source_paper_review", "import_batch_id",
-                          "created_by", "updated_by", "id"):
+                          "created_by", "updated_by", "id",
+                          "qc_grade", "qc_score"):
             self.assertNotIn(forbidden, wired)
 
-    def test_qc_score_keeps_its_floor_from_the_model_validator(self):
+    def test_a_numeric_field_keeps_its_floor_from_the_model(self):
         """
-        The >= 0 rule is MinValueValidator(0) on the column; the registry reads
-        it rather than restating it, so removing the validator would remove the
-        bound in one place instead of leaving the two disagreeing.
+        The registry READS bounds off the column rather than restating them, so
+        removing a validator removes the bound in one place instead of leaving two
+        declarations to disagree.
+
+        On linkedin_followers, which is the mass-updatable integer now. This test
+        named qc_score until that column became read-only.
         """
         r = self.client.get(f"{self.LIST}bulk_update_schema/")
-        self.assertEqual(r.data["fields"]["qc_score"]["min"], 0)
-        self.assertTrue(r.data["fields"]["qc_score"]["nullable"])
+        field = r.data["fields"]["linkedin_followers"]
+        self.assertEqual(field["min"], 0)
+        self.assertTrue(field["nullable"])
+
+    def test_qc_scores_floor_survives_the_field_going_read_only(self):
+        """
+        The >= 0 rule is MinValueValidator(0) on the column, and the importer's
+        column checks still read it. Read-only removed the API's ability to WRITE
+        qc_score; it must not have removed the bound itself.
+        """
+        validators = ProposalSubmission._meta.get_field("qc_score").validators
+        self.assertTrue(
+            any(getattr(v, "limit_value", None) == 0 for v in validators),
+            f"MinValueValidator(0) is gone from qc_score: {validators}")
 
     def test_bulk_update_preview_writes_nothing(self):
+        # speaker_slot_status, not qc_grade: this test is about preview writing
+        # nothing, so it needs any field that is still mass-writable.
         rows = [ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name=f"P{i}", email=f"p{i}@x.com",
-            qc_grade="C") for i in range(3)]
+            speaker_slot_status="Pending MR") for i in range(3)]
         ids = [r.id for r in rows]
         r = self.client.post(f"{self.LIST}bulk_update/",
-                             {"ids": ids, "field": "qc_grade", "commit": False},
+                             {"ids": ids, "field": "speaker_slot_status",
+                              "commit": False},
                              format="json")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.data["updated"], 0)
@@ -339,26 +361,27 @@ class MixinWiringTests(_Base):
     def test_bulk_update_commits_and_logs_one_entry_with_every_id(self):
         rows = [ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name=f"B{i}", email=f"b{i}@x.com",
-            qc_grade="C") for i in range(4)]
+            speaker_slot_status="Pending MR") for i in range(4)]
         ids = [r.id for r in rows]
 
         preview = self.client.post(
             f"{self.LIST}bulk_update/",
-            {"ids": ids, "field": "qc_grade", "value": "A", "commit": False},
+            {"ids": ids, "field": "speaker_slot_status", "value": "Confirmed",
+             "commit": False},
             format="json")
         self.assertEqual(preview.status_code, 200, preview.content)
         logs_before = ActionLog.objects.count()
 
         r = self.client.post(
             f"{self.LIST}bulk_update/",
-            {"ids": ids, "field": "qc_grade", "value": "A", "commit": True,
-             "plan_hash": preview.data["plan_hash"]},
+            {"ids": ids, "field": "speaker_slot_status", "value": "Confirmed",
+             "commit": True, "plan_hash": preview.data["plan_hash"]},
             format="json")
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.data["updated"], 4)
         for row in rows:
             row.refresh_from_db()
-            self.assertEqual(row.qc_grade, "A")
+            self.assertEqual(row.speaker_slot_status, "Confirmed")
 
         # Exactly one log line for the batch, carrying every id untruncated.
         self.assertEqual(ActionLog.objects.count(), logs_before + 1)
@@ -371,43 +394,50 @@ class MixinWiringTests(_Base):
             event_code="AFS - JS", speaker_name="X", email="x@x.com")
         r = self.client.post(
             f"{self.LIST}bulk_update/",
-            {"ids": [row.id], "field": "qc_grade", "value": "Z", "commit": False},
+            {"ids": [row.id], "field": "speaker_slot_status", "value": "Z",
+             "commit": False},
             format="json")
+        # 400 because Z is outside the choice list. This named qc_grade before,
+        # which would now 400 for a DIFFERENT reason — that field is no longer in
+        # the whitelist at all — and a test passing for the wrong reason has
+        # stopped testing the rule in its name.
         self.assertEqual(r.status_code, 400, r.content)
 
-    def test_bulk_update_qc_score_coerces_and_rejects_non_numeric(self):
+    def test_bulk_update_integer_coerces_and_rejects_non_numeric(self):
         """
-        qc_score is an IntegerField. Garbage must come back as a 400, not blow up
-        inside save() as a 500 — that is what the local "integer" type is for.
+        Garbage in a numeric column must come back as a 400, not blow up inside
+        save() as a 500 — that is what the local "integer" type is for.
+
+        On linkedin_followers, the mass-updatable integer. This named qc_score
+        until that column became read-only; the guarantee is about the integer
+        TYPE, not about whichever column happens to use it.
         """
         row = ProposalSubmission.objects.create(
             event_code="AFS - JS", speaker_name="N", email="n@x.com")
 
-        bad = self.client.post(
-            f"{self.LIST}bulk_update/",
-            {"ids": [row.id], "field": "qc_score", "value": "abc", "commit": False},
-            format="json")
-        self.assertEqual(bad.status_code, 400, bad.content)
-
-        neg = self.client.post(
-            f"{self.LIST}bulk_update/",
-            {"ids": [row.id], "field": "qc_score", "value": "-5", "commit": False},
-            format="json")
-        self.assertEqual(neg.status_code, 400, neg.content)
+        for value in ("abc", "-5"):
+            with self.subTest(value=value):
+                r = self.client.post(
+                    f"{self.LIST}bulk_update/",
+                    {"ids": [row.id], "field": "linkedin_followers",
+                     "value": value, "commit": False},
+                    format="json")
+                self.assertEqual(r.status_code, 400, r.content)
 
         preview = self.client.post(
             f"{self.LIST}bulk_update/",
-            {"ids": [row.id], "field": "qc_score", "value": "31", "commit": False},
+            {"ids": [row.id], "field": "linkedin_followers", "value": "31",
+             "commit": False},
             format="json")
         self.assertEqual(preview.status_code, 200, preview.content)
         ok = self.client.post(
             f"{self.LIST}bulk_update/",
-            {"ids": [row.id], "field": "qc_score", "value": "31", "commit": True,
-             "plan_hash": preview.data["plan_hash"]},
+            {"ids": [row.id], "field": "linkedin_followers", "value": "31",
+             "commit": True, "plan_hash": preview.data["plan_hash"]},
             format="json")
         self.assertEqual(ok.status_code, 200, ok.content)
         row.refresh_from_db()
-        self.assertEqual(row.qc_score, 31)
+        self.assertEqual(row.linkedin_followers, 31)
 
     def test_stable_ordering_filter_is_on_the_viewset(self):
         from accounts.ordering import StableOrderingFilter

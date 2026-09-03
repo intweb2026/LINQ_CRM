@@ -10,6 +10,7 @@ Individual attendee linked to an invoice.
   Several delegates may share one email address; see Meta.constraints.
 """
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from book_event.booking_code_canonical import canonicalize_on_save
@@ -262,6 +263,29 @@ class BookDelegate(models.Model):
             # that form emits DESC NULLS FIRST and would park every delegate whose
             # invoice carries no date at the TOP of the table. Same reasoning, and
             # the same spelling, as book_events_reqdate_id_idx.
+            # (event_code, lower(email)) — the PERSON lookup, which is how
+            # Proposal Submission resolves a speaker's booking (see
+            # ProposalSubmissionViewSet._annotate_tracker_context). Its three
+            # correlated subqueries ran once per row over 11,129 delegates with
+            # no usable index, because email is compared case-insensitively and
+            # a plain btree on email cannot answer lower(email). Measured on this
+            # database, one 1,000-row page of /api/proposal-submissions/ went
+            # from 10,289 ms to the figure quoted in that method's docstring.
+            #
+            # The case-insensitivity is NOT optional: 72 real proposal/delegate
+            # pairs match on email only once case is folded, against 449 that
+            # match exactly, so an exact comparison would silently drop 14% of
+            # the bookings the column exists to show.
+            #
+            # Identical shape and reasoning to proposal_dupe_idx and
+            # paper_review_dupe_idx; the three stay parallel. event_code first
+            # because it is the more selective half here and keeps the index
+            # usable for the event_code-only lookups the declared-but-absent
+            # single-column index was meant to serve.
+            models.Index(
+                "event_code", Lower("email"),
+                name="book_delegates_event_email_idx",
+            ),
             models.Index(
                 models.F("booked_on").desc(nulls_last=True),
                 models.F("id").desc(),

@@ -19,7 +19,7 @@ tests that import them from here keep working unchanged.
 """
 from accounts.import_common import (
     CREATE, CREATE_WITH_WARNING, ERROR, MAX_ROWS,
-    absolute_url, as_int, as_text, as_url, build_header_mapper, clean_header,
+    absolute_url, as_bool, as_int, as_text, as_url, build_header_mapper, clean_header,
     column_errors, excel_serial_to_date, normalise_row, parse_import_date,
     plain_text_cell, plan_hash, public_plan, summarise, unwrap_anchor,
 )
@@ -34,6 +34,7 @@ from .models import ProposalSubmission
 __all__ = [
     "MAX_ROWS", "CREATE", "CREATE_WITH_WARNING", "ERROR",
     "ZOHO_HEADERS", "MODEL_FIELDS", "FIELD_TO_LABEL", "MR_COLUMNS",
+    "DERIVED_HEADERS", "NON_TEXT_FIELDS",
     "REQUIRED", "URL_FIELDS", "MAX_URL_LEN",
     "excel_serial_to_date", "parse_import_date", "map_headers",
     "normalise_row", "file_has_mr_content", "classify_rows",
@@ -66,7 +67,77 @@ ZOHO_HEADERS = {
     "internal footnotes (mr)":    "internal_footnotes_mr",
     "slot recommendation by mr":  "slot_recommendation_mr",
     "agenda addition":            "agenda_addition",
+
+    # ── The agenda tracker's own columns ─────────────────────────────────────
+    # New stored fields.
+    #
+    # THE BARE SUB-HEADERS "approached?" AND "topic" WERE HERE AND WERE REMOVED.
+    # They rested on an unconfirmed guess that the sheet carries a two-row header
+    # with a merged Panel group. "Topic" in particular is a plausible header for a
+    # presentation topic in any pasted file, and mapping it here filed that column
+    # into panel_topic silently, with no unrecognised-column warning to notice. An
+    # unmapped header is REPORTED; a wrongly mapped one is not, so a guess of this
+    # shape has to earn its place and this one could not. Re-add them only against
+    # a real sheet that needs them.
+    "panel approached?":          "panel_approached",
+    "panel topic":                "panel_topic",
+    "panel status":               "panel_status",
+    # The sheet spells it "Re-Offerred"; both spellings are accepted rather than
+    # making a correct header the one that fails.
+    "speaker slot re-offerred":   "speaker_slot_reoffered",
+    "speaker slot re-offered":    "speaker_slot_reoffered",
+    # As above, "Assesment" is the sheet's spelling.
+    "risk assesment (live)":      "risk_assessment_live",
+    "risk assessment (live)":     "risk_assessment_live",
+
+    # ── Tracker spellings of columns that already existed ────────────────────
+    # The tracker names several of these differently from the Zoho export. Both
+    # labels reach the same column, so a paste from either source lands.
+    # clean_header() collapses newlines, so the two-line headers in the sheet
+    # arrive here as one space-separated string.
+    "full name":                                        "speaker_name",
+    "sponsorship":                                      "sponsorship_status",
+    # TWO different columns, confirmed by the business: the MRE recommends a slot
+    # on the paper review, and the agenda team assigns one. "Agenda Slot" above
+    # stays pointed at the recommendation, because that is what the 1,877 rows
+    # already under that header hold, so an older export re-imports unchanged.
+    "speaking slot assignment":                         "speaking_slot_assignment",
+    "slot recommendation by mre":                       "agenda_slot",
+    # The CHECKBOX, and NOT agenda_addition. Mapping this to the prose column was
+    # the wrong guess: a tick in the sheet would have been stored as the words
+    # "TRUE" inside the session outline, and the checkbox would have stayed off
+    # on every imported row.
+    "added to agenda":                                  "added_to_agenda",
+    "slot recommendation from mr":                      "slot_recommendation_mr",
+    # The label the CSV export now writes for this column. Without this entry the
+    # export stopped re-importing, which tests_extras.py asserts as an invariant
+    # and duly caught. All three spellings reach the same column, so an export
+    # from any version of the app still lands.
+    "internal slot note (mr)":                          "slot_recommendation_mr",
+    "sales pitch factor (low score = more commercial)": "sales_pitch_factor",
 }
+
+# Tracker columns that are DERIVED, so a paste of the whole sheet must neither
+# store them nor report them as mistakes. Read from the event catalogue and the
+# bookings pipeline instead — see
+# ProposalSubmissionViewSet._annotate_tracker_context.
+#
+# THEY ARE DISCARDED SILENTLY, which is the one place this module departs from
+# build_header_mapper's "report, never silently drop" rule, and it is deliberate:
+# these are not mistyped headers, they are columns whose value has another owner.
+# The consequence to know about is that a sheet whose Event Date disagrees with
+# the catalogue loses its version on import, and the grid then shows the
+# catalogue's. That is the intended direction; the catalogue is the source of
+# truth for an event's date and status, and Bookings for a booking.
+#
+# Production Executive and SPEX Manager belong here for the same reason as the
+# rest: they are the event's AGENDA team and SPEX team, maintained on the event
+# in the catalogue, so a value pasted against one proposal row is a copy of
+# somebody else's column.
+DERIVED_HEADERS = frozenset([
+    "event date", "event status", "production executive", "spex manager",
+    "booking date", "payment date", "booking status by se",
+])
 
 # Model field names are accepted verbatim too, so an export → import round trip
 # works whichever header style the file carries.
@@ -85,12 +156,33 @@ FIELD_TO_LABEL = {
     "linkedin_followers": "LinkedIn Followers",
     "speaker_slot_status": "Speaker Slot Status",
     "sponsorship_status": "Sponsorship Status",
-    "spex_remarks": "SpEx Remarks", "agenda_slot": "Agenda Slot",
+    "spex_remarks": "SpEx Remarks",
+    "agenda_slot": "Slot Recommendation by MRE",
+    "speaking_slot_assignment": "Speaking Slot Assignment",
     "revenue_possibility": "Revenue Possibility",
     "internal_footnotes_mr": "Internal Footnotes (MR)",
-    "slot_recommendation_mr": "Slot Recommendation by MR",
+    # NOT "Slot Recommendation by MR". agenda_slot exports as "Slot Recommendation
+    # by MRE", and two adjacent CSV headers differing by a single letter, pointing
+    # at two unrelated columns, is a trap for anyone editing the file by hand. The
+    # importer still accepts the old spelling, so an existing export re-imports
+    # unchanged.
+    "slot_recommendation_mr": "Internal Slot Note (MR)",
     "agenda_addition": "Agenda Addition",
+    "panel_approached": "Panel Approached?",
+    "panel_topic": "Panel Topic",
+    "panel_status": "Panel Status",
+    "speaker_slot_reoffered": "Speaker Slot Re-Offered",
+    "risk_assessment_live": "Risk Assessment (Live)",
+    "added_to_agenda": "Added to Agenda",
 }
+
+# Columns that are NOT text and are therefore coerced individually rather than
+# through the text_fields pass in classify_rows. Named once because that pass and
+# the payload build both have to skip exactly this set, and they sat as two
+# hand-kept copies of the same tuple.
+NON_TEXT_FIELDS = (
+    "submission_date", "qc_score", "linkedin_followers", "added_to_agenda",
+)
 
 MR_COLUMNS = ("slot_recommendation_mr", "internal_footnotes_mr")
 
@@ -112,7 +204,21 @@ MAX_URL_LEN = 500
 # paper_review/importer.py — see this module's docstring. They are imported at
 # the top and re-exported via __all__, so nothing that reads them from here
 # changes.
-map_headers = build_header_mapper(ZOHO_HEADERS, MODEL_FIELDS)
+_map_headers = build_header_mapper(ZOHO_HEADERS, MODEL_FIELDS)
+
+
+def map_headers(columns):
+    """
+    The shared mapper, with the derived tracker columns dropped from the
+    unrecognised list rather than reported — see DERIVED_HEADERS.
+
+    Wrapped here instead of teaching build_header_mapper a third argument:
+    paper_review uses the same builder and has no derived columns, so the
+    behaviour belongs to this app.
+    """
+    mapping, unrecognised = _map_headers(columns)
+    return mapping, [c for c in unrecognised
+                     if clean_header(c) not in DERIVED_HEADERS]
 
 # Local aliases for the two private coercer names this module's own code uses.
 _as_text = as_text
@@ -158,8 +264,22 @@ def classify_rows(rows, mapping, user, existing_pairs):
         text_fields = {
             f: _as_text(values.get(f))
             for f in MODEL_FIELDS
-            if f not in ("submission_date", "qc_score", "linkedin_followers")
+            if f not in NON_TEXT_FIELDS
         }
+
+        # added_to_agenda is a checkbox in the tracker, so the cell holds
+        # something like TRUE/Yes/1 rather than prose. as_bool is the shared
+        # coercer paper_review/importer.py already uses for its own `nos`
+        # checkbox; a blank cell is False, and anything unrecognisable is a row
+        # ERROR rather than a silent False, because "we could not read this" and
+        # "this speaker is not on the agenda" are different answers.
+        added, added_error = as_bool(values.get("added_to_agenda"))
+        if added_error:
+            errors.append({
+                "field": FIELD_TO_LABEL["added_to_agenda"],
+                "problem": added_error,
+                "value": _as_text(values.get("added_to_agenda")),
+            })
 
         # ── cells that arrived as an anchor tag ───────────────────────────────
         # Zoho writes several columns as HTML, so a LinkedIn cell can arrive as
@@ -316,12 +436,12 @@ def classify_rows(rows, mapping, user, existing_pairs):
         # rows, so a stale-hash comparison never depends on ERROR-row content.
         if classification != ERROR:
             payload = {f: text_fields.get(f, "") for f in MODEL_FIELDS
-                       if f not in ("submission_date", "qc_score",
-                                    "linkedin_followers")}
+                       if f not in NON_TEXT_FIELDS}
             payload["event_code"] = resolved_code
             payload["submission_date"] = parsed_date.isoformat() if parsed_date else None
             payload["qc_score"] = numbers.get("qc_score")
             payload["linkedin_followers"] = numbers.get("linkedin_followers")
+            payload["added_to_agenda"] = added
             entry["_payload"] = payload
 
         plan.append(entry)

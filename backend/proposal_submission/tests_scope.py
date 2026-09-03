@@ -321,7 +321,7 @@ class DetailScopeTests(ScopeBase):
         self.client.force_authenticate(user=self.mr_biu)
         r = self.client.post(
             f"{LIST}bulk_update/",
-            {"ids": [self.p_afs.id], "field": "qc_grade", "commit": False},
+            {"ids": [self.p_afs.id], "field": "speaker_slot_status", "commit": False},
             format="json")
         self.assertEqual(r.status_code, 404, r.content)
 
@@ -330,30 +330,30 @@ class DetailScopeTests(ScopeBase):
         self.client.force_authenticate(user=self.mr_biu)
         r = self.client.post(
             f"{LIST}bulk_update/",
-            {"ids": [self.p_biu.id, self.p_afs.id], "field": "qc_grade",
-             "commit": False},
+            {"ids": [self.p_biu.id, self.p_afs.id],
+             "field": "speaker_slot_status", "commit": False},
             format="json")
         self.assertEqual(r.status_code, 404, r.content)
         self.p_biu.refresh_from_db()
-        self.assertEqual(self.p_biu.qc_grade, "")
+        self.assertEqual(self.p_biu.speaker_slot_status, "")
 
     def test_bulk_update_in_scope_still_works(self):
         self.client.force_authenticate(user=self.mr_biu)
         preview = self.client.post(
             f"{LIST}bulk_update/",
-            {"ids": [self.p_biu.id], "field": "qc_grade", "value": "A",
+            {"ids": [self.p_biu.id], "field": "speaker_slot_status", "value": "Confirmed",
              "commit": False},
             format="json")
         self.assertEqual(preview.status_code, 200, preview.content)
         self.assertEqual(preview.data["permitted"], 1)
         commit = self.client.post(
             f"{LIST}bulk_update/",
-            {"ids": [self.p_biu.id], "field": "qc_grade", "value": "A",
+            {"ids": [self.p_biu.id], "field": "speaker_slot_status", "value": "Confirmed",
              "commit": True, "plan_hash": preview.data["plan_hash"]},
             format="json")
         self.assertEqual(commit.status_code, 200, commit.content)
         self.p_biu.refresh_from_db()
-        self.assertEqual(self.p_biu.qc_grade, "A")
+        self.assertEqual(self.p_biu.speaker_slot_status, "Confirmed")
 
     def test_unassigned_user_gets_404_on_every_row(self):
         self.client.force_authenticate(user=self.unassigned)

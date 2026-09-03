@@ -5,13 +5,51 @@ import RichTextField from '../../components/RichTextField';
 import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
 import {
-  PARTICIPATION_TYPES, QC_GRADES, SPEAKER_SLOT_STATUSES, SPONSORSHIP_STATUSES, REVENUE_POSSIBILITY,
+  PARTICIPATION_TYPES, QC_GRADE_TONE, SPEAKER_SLOT_STATUSES, SPONSORSHIP_STATUSES,
+  REVENUE_POSSIBILITY, PANEL_APPROACHED, SLOT_REOFFER_STATUSES, RISK_LEVELS,
+  PAPER_SESSION_OPTIONS, STATUS_TONE,
 } from '../../lib/constants';
+import { Dot } from '../../components/Badge';
+import { fdate } from '../../lib/helpers';
 import * as proposalApi from '../../api/proposalSubmission';
 import { apiErrorMessage } from '../../api/client';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
+
+/**
+ * A value the form SHOWS but does not own.
+ *
+ * Same treatment as proposal score and grade on PaperReviewFields.jsx: rendered
+ * with the input's own styling so it lines up in the grid, on the muted surface
+ * so it reads as inert, and with no onChange, no name and no id, so it is not a
+ * control at all. Displaying beats omitting — the team needs these values while
+ * working a row — but every one of them is read-only on the serializer, and a box
+ * that silently discards what you type into it is worse than no box.
+ */
+function ReadOut({ label, hint, children }) {
+  return (
+    <div className="fd">
+      <label className="fd-l">{label}</label>
+      <div className="in" style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-2)', color: 'var(--text-2)' }}>
+        {children ?? <span className="dim">—</span>}
+      </div>
+      {hint ? <span style={{ fontSize: 10, color: 'var(--text-4)' }}>{hint}</span> : null}
+    </div>
+  );
+}
+
+// Everything the API returns but will not accept back. The MRE pair comes from
+// the paper review rubric; the rest are annotations read from the event
+// catalogue and from Bookings.
+const READ_ONLY_KEYS = [
+  'qc_grade', 'qc_score',
+  'event_date', 'event_status', 'production_executive', 'spex_manager',
+  'booking_date', 'payment_date', 'booking_status_se',
+  'event_name', 'duplicate_count', 'qc_score_stale', 'source_paper_review',
+  'import_batch_id', 'created_at', 'updated_at',
+  'created_by', 'updated_by', 'created_by_name', 'updated_by_name',
+];
 
 const BLANK = {
   event_code: '', submission_date: '', participation_type: '',
@@ -19,7 +57,9 @@ const BLANK = {
   qc_grade: '', qc_score: '', presentation_theme: '', sales_pitch_factor: '',
   linkedin_speaker: '', linkedin_company: '', linkedin_followers: '',
   speaker_slot_status: '', sponsorship_status: '', spex_remarks: '',
-  agenda_slot: '', revenue_possibility: '',
+  agenda_slot: '', speaking_slot_assignment: '', revenue_possibility: '',
+  panel_approached: '', panel_topic: '', panel_status: '',
+  speaker_slot_reoffered: '', risk_assessment_live: '', added_to_agenda: false,
   internal_footnotes_mr: '', slot_recommendation_mr: '', agenda_addition: '',
 };
 
@@ -47,10 +87,15 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
     setSaving(true);
     const payload = {
       ...form,
-      qc_score: form.qc_score === '' ? null : +form.qc_score,
       linkedin_followers: form.linkedin_followers === '' ? null : +form.linkedin_followers,
       submission_date: form.submission_date || null,
     };
+    // Read-only on the serializer, and dropped rather than left in. On the edit
+    // path `form` is {...BLANK, ...proposal}, so every one of these arrives from
+    // the GET and would be posted straight back; sending them implies the client
+    // owns values it does not. Same reasoning, and the same `delete`, as
+    // buildPayload in paperReview/PaperReviewFields.jsx.
+    READ_ONLY_KEYS.forEach((k) => { delete payload[k]; });
     try {
       if (isNew) await proposalApi.create(payload);
       else await proposalApi.update(proposal.id, payload);
@@ -123,13 +168,20 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="star" size={13} />Quality &amp; content</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">QC grade</label>
-            <Select value={form.qc_grade} placeholder="— Select —" options={QC_GRADES} onChange={setSel('qc_grade')} />
-          </div>
-          <div className="fd">{/* No upper bound: the model deliberately imposes none, because the
-                  scale of this score is unknown (see proposal_submission/models.py).
-                  Lower bound only, matching its MinValueValidator(0). */}
-              <label className="fd-l">QC score</label><NumField min={0} value={form.qc_score} onChange={set('qc_score')} /></div>
+          {/* MRE OUTPUT, not input. Both are produced by the paper review: score
+              is summed from the six-criterion rubric and grade is derived from
+              the score, server-side on every save. Typing either here would put
+              a number on the row that no rubric produced, and it would make the
+              qc_score_stale flag — which exists to show where a proposal and its
+              review have diverged — impossible to read. Read-only on the
+              serializer too (MRE_FIELDS), so these were boxes that discarded
+              what you typed. */}
+          <ReadOut label="QC score" hint="From the paper review rubric">
+            {form.qc_score === '' || form.qc_score == null ? null : form.qc_score}
+          </ReadOut>
+          <ReadOut label="QC grade" hint="Derived from the score">
+            {form.qc_grade ? <Dot tone={QC_GRADE_TONE[form.qc_grade] || 'neutral'}>{form.qc_grade}</Dot> : null}
+          </ReadOut>
           <div className="fd" style={{ gridColumn: '3/-1' }}><label className="fd-l">Presentation theme</label><input className="in" value={form.presentation_theme} onChange={set('presentation_theme')} /></div>
           <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">Sales pitch factor</label><input className="in" value={form.sales_pitch_factor} onChange={set('sales_pitch_factor')} /></div>
         </div>
@@ -146,8 +198,69 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
           <div className="fd"><label className="fd-l">Revenue possibility</label>
             <Select value={form.revenue_possibility} placeholder="— Select —" options={REVENUE_POSSIBILITY} onChange={setSel('revenue_possibility')} />
           </div>
-          <div className="fd"><label className="fd-l">Agenda slot</label><input className="in" placeholder="e.g. Day 1, Afternoon Session" value={form.agenda_slot} onChange={set('agenda_slot')} /></div>
+          {/* TWO fields, the same ten slots behind each. agenda_slot is the MRE's
+              recommendation, which the bridge writes here from the paper review;
+              speaking_slot_assignment is what the agenda team decides. Both left
+              EDITABLE, unlike QC score and grade: nothing here was asked to be
+              blocked, and a recommendation the team cannot correct on a manually
+              created row is worse than one they can. */}
+          <div className="fd"><label className="fd-l">Slot recommendation by MRE</label>
+            <Select value={form.agenda_slot} placeholder="— Select —" options={PAPER_SESSION_OPTIONS} onChange={setSel('agenda_slot')} />
+          </div>
+          <div className="fd"><label className="fd-l">Speaking slot assignment</label>
+            <Select value={form.speaking_slot_assignment} placeholder="— Select —" options={PAPER_SESSION_OPTIONS} onChange={setSel('speaking_slot_assignment')} />
+          </div>
+          {/* A checkbox, and a different question from the Agenda addition
+              section below: that is the session outline, this is whether the
+              speaker reached the published agenda. */}
+          <div className="fd" style={{ display: 'flex', alignItems: 'center', gap: 7, alignSelf: 'end', paddingBottom: 6 }}>
+            <input type="checkbox" className="ck" id="ps-added" name="added_to_agenda"
+              checked={!!form.added_to_agenda}
+              onChange={(e) => setForm((f) => ({ ...f, added_to_agenda: e.target.checked }))} />
+            <label className="fd-l" htmlFor="ps-added" style={{ marginBottom: 0 }}>Added to agenda</label>
+          </div>
           <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">SpEx remarks</label><input className="in" value={form.spex_remarks} onChange={set('spex_remarks')} /></div>
+        </div>
+      </div>
+      <div className="fs">
+        <div className="fs-t"><Icon name="users" size={13} />Panel &amp; risk</div>
+        {/* Three Selects and two text boxes, as specified. Panel status and panel
+            topic are free text by decision, not by default, so they stay inputs
+            however tempting a dropdown looks beside the other three.
+
+            Select, not a checkbox, for Panel approached. It is the yes/no field
+            asked for, and it keeps a THIRD state that a checkbox cannot hold: a
+            blank means nobody has been approached yet, where an unticked box
+            would assert "No" on every row the sheet imported empty. */}
+        <div className="fg c4">
+          <div className="fd"><label className="fd-l">Panel approached?</label>
+            <Select value={form.panel_approached} placeholder="— Select —" options={PANEL_APPROACHED} onChange={setSel('panel_approached')} />
+          </div>
+          <div className="fd"><label className="fd-l">Speaker slot re-offered</label>
+            <Select value={form.speaker_slot_reoffered} placeholder="— Select —" options={SLOT_REOFFER_STATUSES} onChange={setSel('speaker_slot_reoffered')} />
+          </div>
+          <div className="fd"><label className="fd-l">Risk assessment (live)</label>
+            <Select value={form.risk_assessment_live} placeholder="— Select —" options={RISK_LEVELS} onChange={setSel('risk_assessment_live')} />
+          </div>
+          <div className="fd"><label className="fd-l">Panel status</label><input className="in" value={form.panel_status} onChange={set('panel_status')} /></div>
+          <div className="fd" style={{ gridColumn: '1/-1' }}><label className="fd-l">Panel topic</label><input className="in" value={form.panel_topic} onChange={set('panel_topic')} /></div>
+        </div>
+      </div>
+      {/* Read straight from Bookings, matched to this speaker on event code and
+          email address. Shown here because the team works a row in one place, and
+          an empty Booking date beside a Confirmed slot is the thing they are
+          looking for. Not editable, and not editable ANYWHERE on this screen:
+          Bookings owns these three values, and a second place to change them
+          would be a second answer to the same question. Blank means this speaker
+          has no booking on this event yet. */}
+      <div className="fs">
+        <div className="fs-t"><Icon name="download" size={13} />Booking &nbsp;<span style={{ fontWeight: 400, color: 'var(--text-4)', fontSize: 11 }}>from Bookings, read-only</span></div>
+        <div className="fg c4">
+          <ReadOut label="Booking date">{form.booking_date ? fdate(form.booking_date) : null}</ReadOut>
+          <ReadOut label="Payment date">{form.payment_date ? fdate(form.payment_date) : null}</ReadOut>
+          <ReadOut label="Booking status by SE">
+            {form.booking_status_se ? <Dot tone={STATUS_TONE[form.booking_status_se] || 'neutral'}>{form.booking_status_se}</Dot> : null}
+          </ReadOut>
         </div>
       </div>
       <div className="fs">

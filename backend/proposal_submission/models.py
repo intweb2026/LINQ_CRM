@@ -9,9 +9,9 @@ research tickets: who is pitching, how Market Research graded them, which slot
 they are up for, and where the speaker slot and the sponsorship each stand.
 
 WHY THE SELECT FIELDS HAVE NO choices=
-participation_type, qc_grade, speaker_slot_status, sponsorship_status and
-revenue_possibility are all dropdowns in Zoho, but the real picklist values were
-not legible in the reference screenshots. They are plain CharFields here, with
+participation_type, qc_grade, speaker_slot_status, sponsorship_status,
+revenue_possibility and the four panel/risk tracker columns are all dropdowns in
+the source sheet, but the real picklist values were never confirmed. They are plain CharFields here, with
 the candidate options offered by the frontend only. That is deliberate: a wrong
 guess baked into choices= rejects a legitimate value with a 400 and turns every
 correction into a migration, and it would make a historical Zoho import fail on
@@ -76,10 +76,63 @@ class ProposalSubmission(models.Model):
     sponsorship_status  = models.CharField(max_length=30, blank=True, default="")
     spex_remarks        = models.TextField(blank=True, default="")
 
-    # Free text in the reference data ("Day 1, Afternoon Session"), not a
-    # structured date/time.
+    # ── Panel track ───────────────────────────────────────────────────────────
+    # The agenda tracker's "Panel" header group. A speaker turned down for a solo
+    # slot is routinely offered a panel seat instead; that is a SEPARATE decision
+    # with its own topic, so it cannot be folded into speaker_slot_status.
+    #
+    # panel_approached reads as a yes/no question in the sheet, but it is stored
+    # as text rather than a BooleanField on purpose: a tracker column of this
+    # shape carries a third, not-yet-asked state, and a boolean flattens "no" and
+    # "not asked" into the same False. Same no-choices= reasoning as the select
+    # fields above; see the module docstring.
+    panel_approached = models.CharField(max_length=20, blank=True, default="")
+    panel_topic      = models.CharField(max_length=255, blank=True, default="")
+    panel_status     = models.CharField(max_length=30, blank=True, default="")
+
+    # A slot that was declined and then put back on the table. Distinct from
+    # speaker_slot_status, which says where the slot stands NOW and not whether it
+    # has been offered more than once.
+    speaker_slot_reoffered = models.CharField(max_length=30, blank=True, default="")
+
+    # "Risk Assesment (Live)" in the tracker, spelled correctly here; the
+    # importer accepts the sheet's spelling. 100 rather than the 20-30 the
+    # dropdown-shaped columns use, because the vocabulary is unconfirmed and a
+    # 30-char column would reject the import outright if this turns out to be a
+    # short note rather than a picklist. A wide varchar costs nothing in
+    # Postgres; narrowing later is the cheap direction.
+    risk_assessment_live = models.CharField(max_length=100, blank=True, default="")
+
+    # THE MRE's RECOMMENDATION, not the assignment. This is where
+    # paper_review/proposal_bridge.py writes PaperReview.session_location_on_agenda,
+    # and all 1,877 populated rows hold one of the ten session slots, so the column
+    # is the paper review's answer to "where should this talk go".
+    #
+    # The COLUMN NAME is left alone deliberately. Renaming it to
+    # slot_recommendation_mre would touch the bridge's FIELD_MAP, the importer's
+    # header table, the filter registry, the mass-update registry, every test that
+    # names it and a data migration, to change a string the user never sees; the
+    # display label carries the meaning instead. Not to be confused with
+    # slot_recommendation_mr below, which is MR's free-text NOTE and is stripped
+    # from the payload for anyone outside MR.
     agenda_slot         = models.CharField(max_length=150, blank=True, default="")
-    revenue_possibility = models.CharField(max_length=20, blank=True, default="")
+
+    # THE AGENDA TEAM'S DECISION, and a separate fact from the recommendation
+    # above. The two disagree whenever the team moves a talk, which is the case
+    # the tracker exists to make visible; one column could not show both the
+    # suggestion and what was actually done with it.
+    #
+    # Same width and same vocabulary as agenda_slot, so a recommendation can be
+    # accepted by copying it across without truncation.
+    speaking_slot_assignment = models.CharField(max_length=150, blank=True, default="")
+
+    # 50, not the original 20. The confirmed vocabulary includes
+    # "Genuine clasg(INV sent)" at 23 characters and "Withdrawn before INV" at
+    # exactly 20, so the old width could not store one value and had no room
+    # above another. A too-narrow column here is not a validation error, it is a
+    # psycopg DataError inside import_commit's transaction that rolls back the
+    # whole 500-row chunk — see accounts/import_common.py:column_errors.
+    revenue_possibility = models.CharField(max_length=50, blank=True, default="")
 
     # ── Internal MR notes ─────────────────────────────────────────────────────
     internal_footnotes_mr  = models.TextField(blank=True, default="")
@@ -90,6 +143,13 @@ class ProposalSubmission(models.Model):
     # one blob and rendered preformatted. If those tags turn out to be a separate
     # computed field, an industry_tags column can be added without touching this.
     agenda_addition = models.TextField(blank=True, default="")
+
+    # A CHECKBOX, and a different fact from agenda_addition directly above.
+    # agenda_addition is the session outline, prose the team writes; this records
+    # whether the speaker actually made it onto the published agenda. A row can
+    # easily have one without the other, in both directions, so they cannot share
+    # a column.
+    added_to_agenda = models.BooleanField(default=False, blank=True)
 
     # ── Provenance ────────────────────────────────────────────────────────────
     # Set ONLY on rows auto-created from a paper review (see

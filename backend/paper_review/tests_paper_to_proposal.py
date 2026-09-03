@@ -50,12 +50,19 @@ class MappingTests(_Base):
         self.assertEqual(proposal.presentation_theme, "terminal and rail environment")
         self.assertEqual(proposal.created_by, self.user)
 
-    def test_the_eight_zoho_blanks_stay_blank(self):
+    def test_the_zoho_blanks_stay_blank(self):
+        """
+        Compared against each field's OWN default, not against "". The list now
+        includes added_to_agenda, a BooleanField whose untouched value is False,
+        and `False == ""` is not true in Python — asserting the empty string
+        would have failed on a field that is behaving correctly.
+        """
         self.create_review()
         proposal = ProposalSubmission.objects.get()
         for field in LEFT_BLANK:
             with self.subTest(field=field):
-                self.assertEqual(getattr(proposal, field), "")
+                default = ProposalSubmission._meta.get_field(field).get_default()
+                self.assertEqual(getattr(proposal, field), default)
 
     def test_linkedin_company_is_mapped_although_zoho_omits_it(self):
         """The documented divergence — Zoho's omission is an oversight, not a rule."""

@@ -8,6 +8,18 @@ import { htmlToText } from '../lib/richText';
 import {
   PARTICIPATION_TYPES, QC_GRADES, QC_GRADE_TONE, SPEAKER_SLOT_STATUSES, SPEAKER_SLOT_TONE,
   SPONSORSHIP_STATUSES, SPONSORSHIP_TONE, REVENUE_POSSIBILITY, REVENUE_TONE,
+  // The two derived status columns have KNOWN vocabularies, unlike the panel and
+  // risk columns below, because they are read from the event catalogue and the
+  // bookings pipeline rather than typed here. Reused rather than restated; both
+  // pairs already back the Events and Bookings grids.
+  EVENT_STATUSES, EV_TONE, PAYMENT_STATUSES, STATUS_TONE,
+  PANEL_APPROACHED, PANEL_APPROACHED_TONE, SLOT_REOFFER_STATUSES, SLOT_REOFFER_TONE,
+  RISK_LEVELS, RISK_TONE,
+  // The SAME list the paper review form offers. agenda_slot is where the bridge
+  // writes PaperReview.session_location_on_agenda, and all ten distinct values
+  // stored in this column are exactly that vocabulary, so a second list here
+  // would be a second thing to keep in step with the data.
+  PAPER_SESSION_OPTIONS,
 } from '../lib/constants';
 import * as proposalApi from '../api/proposalSubmission';
 import { useFetch } from '../hooks/useFetch';
@@ -63,6 +75,20 @@ const PROPOSAL_COLS = [
      every row. The status columns keep theirs; those lists are constants
      rather than a scan of the data. */
   { key: 'event_code', serverField: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
+  /* READ ONLY, and not stored on the proposal at all — both are annotated from
+     the event catalogue by ProposalSubmissionViewSet._annotate_tracker_context.
+     They carry serverField and serverOrdering like every other column because
+     that annotation is real SQL: the catalogue is the source of truth for an
+     event's date and status, so editing them here would be editing a copy. */
+  { key: 'event_date', serverField: 'event_date', serverOrdering: 'event_date', label: 'Event Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'event_status', serverField: 'event_status', serverOrdering: 'event_status', label: 'Event Status', group: 'id', cell: (v) => (v ? <Dot tone={EV_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => EVENT_STATUSES },
+  /* Also read from the catalogue: the tracker's Production Executive is the event's
+     AGENDA team and its SPEX Manager is the SPEX team. NO `opts` — these are free-text
+     team names maintained on the event, so a pinned list here would go stale the first
+     time somebody joins. Both are registered filter_spec fields, so a text condition
+     on either is evaluated by the database over every row. */
+  { key: 'production_executive', serverField: 'production_executive', serverOrdering: 'production_executive', label: 'Production Executive', group: 'id', cell: (v) => (v ? <Who name={v} avatar={false} /> : <span className="dim">—</span>) },
+  { key: 'spex_manager', serverField: 'spex_manager', serverOrdering: 'spex_manager', label: 'SPEX Manager', group: 'id', cell: (v) => (v ? <Who name={v} avatar={false} /> : <span className="dim">—</span>) },
   { key: 'submission_date', serverField: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
   { key: 'participation_type', serverField: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },
   // Name only — Company Name has its own column; see PaperReviewPage.
@@ -80,19 +106,50 @@ const PROPOSAL_COLS = [
   { key: 'qc_score', serverField: 'qc_score', serverOrdering: 'qc_score', label: 'QC Score', group: 'qc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : nf(v)) },
   { key: 'presentation_theme', serverField: 'presentation_theme', serverOrdering: 'presentation_theme', label: 'Presentation Theme', group: 'qc' },
   { key: 'sales_pitch_factor', serverField: 'sales_pitch_factor', serverOrdering: 'sales_pitch_factor', label: 'Sales Pitch Factor', group: 'qc' },
-  { key: 'agenda_slot', serverField: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Agenda Slot', group: 'qc' },
+  /* TWO slot columns, and the pair is the point: agenda_slot is what the MRE
+     recommended on the paper review, speaking_slot_assignment is what the agenda
+     team actually did. They agree on most rows, and the ones where they differ are
+     what this grid is for. Same ten options behind both. */
+  { key: 'agenda_slot', serverField: 'agenda_slot', serverOrdering: 'agenda_slot', label: 'Slot Recommendation by MRE', group: 'qc', cell: (v) => v || <span className="dim">—</span>, opts: () => PAPER_SESSION_OPTIONS },
+  { key: 'speaking_slot_assignment', serverField: 'speaking_slot_assignment', serverOrdering: 'speaking_slot_assignment', label: 'Speaking Slot Assignment', group: 'qc', cell: (v) => v || <span className="dim">—</span>, opts: () => PAPER_SESSION_OPTIONS },
+  /* A CHECKBOX, and a different question from Agenda Addition beside it: that one
+     is the session outline, this is whether the speaker reached the published
+     agenda. Filter options are the raw booleans the backend parses, labelled for
+     the reader — same treatment as NOS? on the Paper Review grid. */
+  { key: 'added_to_agenda', serverField: 'added_to_agenda', serverOrdering: 'added_to_agenda', label: 'Added to Agenda', group: 'qc',
+    cell: (v) => (v ? <span className="tg bg-teal">Yes</span> : <span className="dim">No</span>),
+    opts: () => ['true', 'false'], optLabel: (v) => (v === 'true' ? 'Yes' : 'No') },
   { key: 'agenda_addition', serverField: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'qc', cell: proseCell },
   { key: 'speaker_slot_status', serverField: 'speaker_slot_status', serverOrdering: 'speaker_slot_status', label: 'Speaker Slot Status', group: 'st', cell: (v) => (v ? <Dot tone={SPEAKER_SLOT_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPEAKER_SLOT_STATUSES },
+  /* The tracker's panel track. Panel Approached? and Speaker Slot Re-Offered carry
+     `opts` because their vocabularies are CONFIRMED; Panel Topic and Panel Status are
+     free text and carry none, which is why neither gets a Dot either. Every one is a
+     registered filter_spec field, so a condition on the two text columns is still
+     evaluated by the database over every row rather than over the loaded page. */
+  { key: 'panel_approached', serverField: 'panel_approached', serverOrdering: 'panel_approached', label: 'Panel Approached?', group: 'st', cell: (v) => (v ? <Dot tone={PANEL_APPROACHED_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => PANEL_APPROACHED },
+  { key: 'panel_topic', serverField: 'panel_topic', serverOrdering: 'panel_topic', label: 'Panel Topic', group: 'st' },
+  { key: 'panel_status', serverField: 'panel_status', serverOrdering: 'panel_status', label: 'Panel Status', group: 'st' },
+  { key: 'speaker_slot_reoffered', serverField: 'speaker_slot_reoffered', serverOrdering: 'speaker_slot_reoffered', label: 'Speaker Slot Re-Offered', group: 'st', cell: (v) => (v ? <Dot tone={SLOT_REOFFER_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SLOT_REOFFER_STATUSES },
   { key: 'sponsorship_status', serverField: 'sponsorship_status', serverOrdering: 'sponsorship_status', label: 'Sponsorship Status', group: 'st', cell: (v) => (v ? <Dot tone={SPONSORSHIP_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => SPONSORSHIP_STATUSES },
   { key: 'revenue_possibility', serverField: 'revenue_possibility', serverOrdering: 'revenue_possibility', label: 'Revenue Possibility', group: 'st', cell: (v) => (v ? <Dot tone={REVENUE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => REVENUE_POSSIBILITY },
   { key: 'spex_remarks', serverField: 'spex_remarks', serverOrdering: 'spex_remarks', label: 'SpEx Remarks', group: 'st' },
+  { key: 'risk_assessment_live', serverField: 'risk_assessment_live', serverOrdering: 'risk_assessment_live', label: 'Risk Assessment (Live)', group: 'st', cell: (v) => (v ? <Dot tone={RISK_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => RISK_LEVELS },
   { key: 'internal_footnotes_mr', serverField: 'internal_footnotes_mr', label: 'Internal Footnotes (MR)', group: 'mr' },
   { key: 'slot_recommendation_mr', serverField: 'slot_recommendation_mr', label: 'Slot Recommendation by MR', group: 'mr' },
+  /* READ ONLY, matched to a book_delegates row on (event_code, lower(email)) —
+     the PERSON, not the invoice contact, who is often somebody in accounts who
+     never spoke. Blank until the speaker actually books, which is the useful
+     signal here: an empty Booking Date on a Confirmed slot is a speaker who has
+     not paid. Not editable, because Bookings owns these three values. */
+  { key: 'booking_date', serverField: 'booking_date', serverOrdering: 'booking_date', label: 'Booking Date', type: 'date', group: 'bk', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'payment_date', serverField: 'payment_date', serverOrdering: 'payment_date', label: 'Payment Date', type: 'date', group: 'bk', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
+  { key: 'booking_status_se', serverField: 'booking_status_se', serverOrdering: 'booking_status_se', label: 'Booking Status by SE', group: 'bk', cell: (v) => (v ? <Dot tone={STATUS_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => PAYMENT_STATUSES },
 ];
 
 const PROPOSAL_GROUPS = [
   { key: 'id', label: 'Identification' }, { key: 'sp', label: 'Speaker & company' }, { key: 'qc', label: 'Quality & content' },
   { key: 'st', label: 'Status & revenue' }, { key: 'mr', label: 'Internal notes' },
+  { key: 'bk', label: 'Booking' },
 ];
 const PROPOSAL_HIDDEN = ['internal_footnotes_mr', 'slot_recommendation_mr'];
 

@@ -104,7 +104,13 @@ class CrudTests(_Base):
         self.assertEqual(r.status_code, 201, r.content)
         p = ProposalSubmission.objects.get(id=r.data["id"])
         self.assertEqual(p.speaker_name, "Eli Jasso")
-        self.assertEqual(p.qc_score, 27)
+        # self.payload() carries qc_score=27 and qc_grade="B", and NEITHER is
+        # stored: both are read-only now, because the paper review rubric
+        # produces them. Asserted here rather than only in tests_tracker.py, so
+        # the field that used to be this test's exemplar of "persists every
+        # field" cannot quietly become writable again. See serializers.MRE_FIELDS.
+        self.assertIsNone(p.qc_score)
+        self.assertEqual(p.qc_grade, "")
         self.assertEqual(p.linkedin_followers, 417)
         self.assertEqual(p.agenda_slot, "Day 1, Afternoon Session")
         self.assertEqual(p.created_by, self.user)
@@ -189,12 +195,17 @@ class ValidationTests(_Base):
         self.assertIn("email", r.data)
 
     def test_negative_numbers_are_rejected(self):
-        for field in ("qc_score", "linkedin_followers"):
-            with self.subTest(field=field):
-                r = self.client.post(self.LIST, self.payload(**{field: -1}),
-                                     format="json")
-                self.assertEqual(r.status_code, 400)
-                self.assertIn(field, r.data)
+        """
+        linkedin_followers only. qc_score was here too until it became read-only,
+        and a read-only field is IGNORED rather than rejected, so a -1 there now
+        returns 201 with the column untouched — which
+        test_create_returns_201_and_persists_every_field asserts directly. Keeping
+        it here would have meant asserting a 400 the API is right not to give.
+        """
+        r = self.client.post(self.LIST, self.payload(linkedin_followers=-1),
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("linkedin_followers", r.data)
 
     def test_null_numbers_are_accepted(self):
         r = self.client.post(

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from django.utils import timezone
 from rest_framework import serializers
 
+from accounts.import_common import as_url
 from events.name_lookup import EventNameMixin
 from webhooks.event_resolver import resolve_event_code
 from .access import may_see_mr_fields, may_use_event_code, permitted_event_codes
@@ -52,11 +53,40 @@ def business_today():
 EDITABLE_FIELDS = [
     "event_code", "submission_date", "participation_type",
     "speaker_name", "email", "company_name",
-    "qc_grade", "qc_score", "sales_pitch_factor", "presentation_theme",
+    "sales_pitch_factor", "presentation_theme",
     "linkedin_speaker", "linkedin_company", "linkedin_followers",
     "speaker_slot_status", "sponsorship_status", "spex_remarks",
-    "agenda_slot", "revenue_possibility",
+    "agenda_slot", "speaking_slot_assignment", "revenue_possibility",
+    "panel_approached", "panel_topic", "panel_status",
+    "speaker_slot_reoffered", "risk_assessment_live",
+    "added_to_agenda",
     "internal_footnotes_mr", "slot_recommendation_mr", "agenda_addition",
+]
+
+# The MRE columns. They are the paper review's OUTPUT — PaperReview.proposal_score
+# is summed from the six-criterion rubric and grade is derived from it, both
+# server-side on every save — so a proposal is a place they are READ, never
+# authored. Typing a grade here would put a number on the row that no rubric
+# produced, and the qc_score_stale flag exists precisely to surface where the two
+# have drifted; letting the proposal be edited would make that flag unreadable.
+#
+# WHO CAN STILL WRITE THEM, and why that is not a hole:
+#   * paper_review/proposal_bridge.py, through serializer.save(**kwargs), exactly
+#     as it already passes created_by and source_paper_review. Read-only means
+#     "not from a client payload", not "immutable".
+#   * the importer, which writes the model directly and must keep carrying QC
+#     from the sheet, or a historical load would arrive ungraded.
+# Both are server-side and neither takes the value from a request body.
+MRE_FIELDS = ("qc_grade", "qc_score")
+
+# Tracker columns read from the event catalogue and the bookings pipeline, not
+# stored here. Annotated by ProposalSubmissionViewSet._annotate_tracker_context
+# and rendered by the _Annotated* fields below. views.py imports this list rather than
+# keeping a second copy; it lives HERE because views already imports from this
+# module and the reverse would be circular.
+DERIVED_FIELDS = [
+    "event_date", "event_status", "production_executive", "spex_manager",
+    "booking_date", "payment_date", "booking_status_se",
 ]
 
 READ_ONLY_FIELDS = [
@@ -69,7 +99,77 @@ READ_ONLY_FIELDS = [
     "source_paper_review", "qc_score_stale",
     # C4 — set only by import/commit/, never by the client; see views.py.
     "import_batch_id",
+    *DERIVED_FIELDS,
+    *MRE_FIELDS,
 ]
+
+
+class _LinkField(serializers.URLField):
+    """
+    A link column that takes anchor markup and stores the address inside it.
+
+    WHY to_internal_value AND NOT validate_<field>
+    URLValidator runs inside to_internal_value, and `<a href="…">…</a>` is not a
+    valid URL, so a validate_ hook is never reached — the request 400s first with
+    "Enter a valid URL" on a cell whose address is sitting right there in the tag.
+    Unwrapping has to happen before the validator, which means the field.
+
+    WHY THIS EXISTS AT ALL
+    Every other place data enters this module already tolerates anchor markup:
+    the importer runs these two columns through as_url (importer.py URL_FIELDS),
+    ExtLink in the frontend resolves it for display, and migration 0008 cleaned
+    1,876 stored rows of it. The serializer was the one entrance without that
+    tolerance, so a value the CSV importer accepts happily was rejected when the
+    same text was pasted into the form.
+
+    as_url is shared, not reimplemented — it owns the quoting variations, the
+    entity decoding, and the rule that text which is not a link at all passes
+    through untouched.
+    """
+
+    def to_internal_value(self, data):
+        cleaned, error = as_url(data)
+        if error:
+            raise serializers.ValidationError(f"This link {error}.")
+        return super().to_internal_value(cleaned)
+
+
+class _AnnotationMixin:
+    """
+    Reads a queryset annotation, and None when there is not one.
+
+    Same contract as get_duplicate_count / get_qc_score_stale, which return None
+    on create, duplicate and any other path where the instance never went through
+    get_queryset. This exists instead of five more SerializerMethodField pairs
+    because all five getters would have been the identical getattr.
+
+    get_attribute is what needs overriding, and only that: the default walks the
+    model's attributes and raises on a name the model does not define, and none of
+    these five are columns. Serializer.to_representation short-circuits a None
+    before calling the field, so the concrete classes below never see one.
+    """
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("read_only", True)
+        super().__init__(**kwargs)
+
+    def get_attribute(self, instance):
+        return getattr(instance, self.field_name, None)
+
+
+class _AnnotatedDate(_AnnotationMixin, serializers.DateField):
+    """
+    A date annotation, rendered the way every other date on this serializer is.
+
+    NOT a bare Field. A plain passthrough returns the datetime.date object
+    itself, which the JSON renderer happens to ISO-format on the way out but
+    leaves as a date in serializer.data — so the same field read two ways gave
+    two types, and submission_date beside it gave a string either way.
+    """
+
+
+class _AnnotatedText(_AnnotationMixin, serializers.CharField):
+    """A text annotation. CharField, so a None stays None rather than becoming ''."""
 
 
 class ProposalSubmissionSerializer(EventNameMixin, serializers.ModelSerializer):
@@ -97,6 +197,22 @@ class ProposalSubmissionSerializer(EventNameMixin, serializers.ModelSerializer):
     # makes that visible instead. None on create/duplicate responses, where the
     # instance never went through get_queryset — see get_qc_score_stale.
     qc_score_stale = serializers.SerializerMethodField()
+
+    # required=False / allow_blank mirror the model's blank=True, default="",
+    # which is what ModelSerializer would have inferred; declaring the field
+    # explicitly means restating them. max_length matches the column.
+    linkedin_speaker = _LinkField(required=False, allow_blank=True, max_length=500)
+    linkedin_company = _LinkField(required=False, allow_blank=True, max_length=500)
+
+    # The tracker's read-only context columns. See DERIVED_FIELDS and
+    # _AnnotationMixin above; every one is annotated in the viewset.
+    event_date           = _AnnotatedDate()
+    event_status         = _AnnotatedText()
+    production_executive = _AnnotatedText()
+    spex_manager         = _AnnotatedText()
+    booking_date         = _AnnotatedDate()
+    payment_date         = _AnnotatedDate()
+    booking_status_se    = _AnnotatedText()
 
     class Meta:
         model  = ProposalSubmission
@@ -236,12 +352,12 @@ class ProposalSubmissionSerializer(EventNameMixin, serializers.ModelSerializer):
             raise serializers.ValidationError("Speaker name is required.")
         return name
 
-    def validate_qc_score(self, value):
-        # The frontend coerces empty inputs to null, so "" never arrives; this
-        # guards direct API callers only.
-        if value is not None and value < 0:
-            raise serializers.ValidationError("QC score cannot be negative.")
-        return value
+    # validate_qc_score is GONE, not moved. qc_score is read-only now (see
+    # MRE_FIELDS), so DRF discards a client-supplied value before any field
+    # validator could run and the method was unreachable. The floor itself is
+    # unchanged and still enforced where writes actually happen: the model's
+    # MinValueValidator(0), which the importer's column checks and the mass-update
+    # builder both read.
 
     def validate_linkedin_followers(self, value):
         if value is not None and value < 0:

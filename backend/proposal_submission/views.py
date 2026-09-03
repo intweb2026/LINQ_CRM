@@ -24,7 +24,7 @@ from django.db import transaction
 from django.db.models import (
     BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When,
 )
-from django.db.models.functions import Coalesce, Lower
+from django.db.models.functions import Coalesce, Lower, NullIf
 from django.http import StreamingHttpResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
@@ -33,6 +33,9 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from accounts.audit import log_module_wipe, reclaim_after_wipe
+from book_delegate.models import BookDelegate
+from book_event.models import BookEvent
+from events.models import Event
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
 from accounts.import_common import catalogue_notice
 from accounts.crm_permissions import crm_permission
@@ -51,7 +54,9 @@ from .importer import (
     summarise,
 )
 from .models import ProposalSubmission
-from .serializers import MR_ONLY_FIELDS, ProposalSubmissionSerializer
+from .serializers import (
+    DERIVED_FIELDS, MR_ONLY_FIELDS, MRE_FIELDS, ProposalSubmissionSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +73,76 @@ BUSINESS_FIELDS = [
     "qc_grade", "qc_score", "sales_pitch_factor", "presentation_theme",
     "linkedin_speaker", "linkedin_company", "linkedin_followers",
     "speaker_slot_status", "sponsorship_status", "spex_remarks",
-    "agenda_slot", "revenue_possibility",
+    "agenda_slot", "speaking_slot_assignment", "revenue_possibility",
+    "panel_approached", "panel_topic", "panel_status",
+    "speaker_slot_reoffered", "risk_assessment_live", "added_to_agenda",
     "internal_footnotes_mr", "slot_recommendation_mr", "agenda_addition",
 ]
+
+# Display labels for the tracker columns, shared by the mass-update and
+# filter-builder registries. Only the fields whose auto-generated title is wrong
+# are listed; build_filter_spec_fields turns panel_topic into "Panel Topic"
+# unaided, but it cannot know about the question mark, the hyphen or the
+# parenthetical, and those three are how the sheet names them.
+# Confirmed picklists for three of the five tracker columns. The model still
+# carries no choices= — see its docstring for why that is deliberate — so this
+# allow-list is the only value safety a mass update has, exactly as it is for
+# qc_grade and speaker_slot_status. panel_topic and panel_status stay free text.
+#
+# MIRRORED in frontend/src/lib/constants.js, which is where the form's dropdowns
+# read them. Two copies across two languages is the existing arrangement for
+# every other picklist in this module; a shared source would mean serving them
+# from an endpoint the form would have to wait on.
+PANEL_APPROACHED = ["Yes", "No"]
+RISK_LEVELS = ["High Risk", "Medium Risk", "Low Risk"]
+
+# One list behind TWO columns. sponsorship_status and speaker_slot_reoffered are
+# the same outreach pipeline asked about two different things, and the business
+# gave identical values for both. Split them the moment either gains a value the
+# other does not; a second copy today is only the one that goes stale.
+APPROACH_STATUSES = [
+    "Approached", "In Talks", "Declined", "Accepted", "Non Responsive",
+]
+
+SPEAKER_SLOT_STATUSES = [
+    "Pending 6", "Pending MR", "Standby", "Confirmed", "Panelist",
+    "Divert to Panelist", "NOS", "Cancelled", "Withdrawn", "Declined/Extra",
+    "PBST", "Pending Panelist", "Under Review",
+]
+
+# Not a low/medium/high scale; these name HOW the revenue lands.
+REVENUE_POSSIBILITY = [
+    "Invoiced", "SPEX", "SPP", "Free", "Paid", "Withdrawn before INV",
+    "Genuine clash(INV sent)", "Travel support",
+]
+
+# agenda_slot's vocabulary IS the paper review's session list — the bridge maps
+# PaperReview.session_location_on_agenda straight into this column, and all ten
+# distinct values stored here are exactly that list. Kept in step with
+# frontend/src/lib/constants.js PAPER_SESSION_OPTIONS, which
+# paper_review/tests_session_options.py asserts against the live data.
+AGENDA_SLOT_OPTIONS = [
+    "Day 1, Opening Session",
+    "Day 1, Morning Session",
+    "Day 1, Afternoon Opening Session",
+    "Day 1, Afternoon Session",
+    "Day 1, Closing Session",
+    "Day 2, Opening Session",
+    "Day 2, Morning Session",
+    "Day 2, Afternoon Opening Session",
+    "Day 2, Afternoon Session",
+    "Day 2, Closing Session",
+]
+
+TRACKER_LABELS = {
+    # agenda_slot's label carries the meaning its column name does not; see the
+    # note on the model field for why the column was not renamed.
+    "agenda_slot": "Slot Recommendation by MRE",
+    "speaking_slot_assignment": "Speaking Slot Assignment",
+    "panel_approached": "Panel Approached?",
+    "speaker_slot_reoffered": "Speaker Slot Re-Offered",
+    "risk_assessment_live": "Risk Assessment (Live)",
+}
 
 
 class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
@@ -107,7 +179,17 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
 
     search_fields = [
         "speaker_name", "email", "company_name", "event_code",
-        "presentation_theme", "agenda_slot", "spex_remarks",
+        "presentation_theme", "agenda_slot", "speaking_slot_assignment",
+        "spex_remarks",
+        # panel_topic is the one new tracker column holding prose worth
+        # searching. The panel and risk STATUS columns are dropdown-shaped and
+        # have header filters instead; a substring search over them would match
+        # nothing a filter cannot match better.
+        #
+        # speaking_slot_assignment sits beside agenda_slot deliberately: the two
+        # hold the same ten session slots, and a search that found one twin and
+        # not the other reads as broken.
+        "panel_topic",
     ]
     # Every column the table renders EXCEPT the two MR-restricted ones, so a
     # header click sorts over the whole set rather than the fifty rows on screen.
@@ -127,12 +209,27 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         "linkedin_followers", "created_at", "updated_at",
         "linkedin_speaker", "linkedin_company", "duplicate_count",
         "presentation_theme", "sales_pitch_factor", "agenda_slot",
-        "agenda_addition", "spex_remarks",
+        "speaking_slot_assignment", "agenda_addition", "spex_remarks",
+        "panel_approached", "panel_topic", "panel_status",
+        "speaker_slot_reoffered", "risk_assessment_live", "added_to_agenda",
+        # Annotated in get_queryset, so an ORDER BY on them is real SQL rather
+        # than a sort of the page already fetched.
+        *DERIVED_FIELDS,
     ]
     ordering = ["-submission_date"]
     # submission_date is nullable and this default sorts DESC, where Postgres
     # puts NULLs FIRST — the undated rows led the list. See accounts/ordering.py.
-    nulls_last_ordering_fields = ["submission_date"]
+    #
+    # The three derived dates join the list for exactly the same reason, and they
+    # are null far more often: a proposal has an event date only if its code
+    # resolves, and a booking date only once the speaker actually books.
+    # EVERY derived column, not only the dates. All seven are Subqueries that
+    # return NULL when nothing matches, and Postgres sorts NULLs FIRST on a DESC
+    # ordering, so without this a descending sort on Booking Status by SE leads
+    # with every speaker who has not booked. The four text ones were missed on
+    # the first pass while the three dates were handled, which is the same bug
+    # the submission_date note above describes.
+    nulls_last_ordering_fields = ["submission_date", *DERIVED_FIELDS]
 
     # ── Mass update ───────────────────────────────────────────────────────────
     # ProposalSubmission has no parent FK, so every row is independent: no
@@ -155,6 +252,12 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         exclude=(
             "event_code", "speaker_name", "email", "company_name",
             "source_paper_review",
+            # MRE output, read-only on the serializer for the reasons given at
+            # serializers.py MRE_FIELDS. Excluded here too, or mass update would
+            # be the one door left open to overwrite a rubric-derived score on a
+            # thousand rows at once — the widest possible version of the edit the
+            # detail form now refuses.
+            *MRE_FIELDS,
         ),
         # The choice lists mirror the frontend placeholders. Because the model
         # has no choices= at the DB level (see the module docstring — the real
@@ -162,11 +265,21 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         # safety these fields have; nothing at the database or model layer will
         # catch a bad value. participation_type is deliberately absent: its
         # vocabulary is unknown, so it stays free text rather than being guessed.
+        # All CONFIRMED by the business now, replacing four lists inferred from
+        # screenshots. qc_grade is gone from this dict because the column is gone
+        # from the whitelist entirely. panel_status and panel_topic are absent
+        # because both are free text by decision.
         choices={
-            "qc_grade":            ["A", "B", "B+", "C", "D", "E"],
-            "speaker_slot_status": ["Pending", "Confirmed", "Declined", "Waitlisted"],
-            "sponsorship_status":  ["Pending", "Confirmed", "Declined", "Not Applicable"],
-            "revenue_possibility": ["Low", "Medium", "High"],
+            "speaker_slot_status":    SPEAKER_SLOT_STATUSES,
+            "sponsorship_status":     APPROACH_STATUSES,
+            "revenue_possibility":    REVENUE_POSSIBILITY,
+            # Both slot columns take the same ten values: one is what the MRE
+            # recommended, the other what the agenda team assigned.
+            "agenda_slot":              AGENDA_SLOT_OPTIONS,
+            "speaking_slot_assignment": AGENDA_SLOT_OPTIONS,
+            "panel_approached":         PANEL_APPROACHED,
+            "speaker_slot_reoffered":   APPROACH_STATUSES,
+            "risk_assessment_live":     RISK_LEVELS,
         },
         labels={
             "qc_grade": "QC Grade",
@@ -177,6 +290,7 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
             "spex_remarks": "SPEX Remarks",
             "internal_footnotes_mr": "Internal Footnotes (MR)",
             "slot_recommendation_mr": "Slot Recommendation (MR)",
+            **TRACKER_LABELS,
         },
     )
     bulk_update_parent_path = None          # no parent — row writes only
@@ -208,6 +322,44 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
             "spex_remarks": "SPEX Remarks",
             "internal_footnotes_mr": "Internal Footnotes (MR)",
             "slot_recommendation_mr": "Slot Recommendation (MR)",
+            **TRACKER_LABELS,
+        },
+        # The five derived columns. They carry NO `expression`: each is already
+        # annotated under this exact name by _annotate_tracker_context, and
+        # FilterSpecMixin._path_for falls through to the bare key when a config
+        # declares neither `expression` nor `resolved` — so the criterion lands on
+        # the annotation and is evaluated by the database over every row.
+        #
+        # Registering them is what lets the grid declare `serverField` on these
+        # columns. Without an entry here, DataTable is denied by default and
+        # re-applies the condition in the BROWSER over the rows already fetched,
+        # which is the exact bug the comment at the top of PROPOSAL_COLS records.
+        extra={
+            "event_date":   {"type": "date", "label": "Event Date",
+                             "nullable": True},
+            "event_status": {"type": "text", "label": "Event Status",
+                             "nullable": True,
+                             "choices": [c[0] for c in Event.Status.choices]},
+            # No `choices` on these two. They hold free-text team names off the
+            # event, and the catalogue is where that vocabulary is maintained;
+            # pinning a list here would go stale the first time somebody joins.
+            "production_executive": {"type": "text",
+                                     "label": "Production Executive",
+                                     "nullable": True},
+            "spex_manager": {"type": "text", "label": "SPEX Manager",
+                             "nullable": True},
+            "booking_date": {"type": "date", "label": "Booking Date",
+                             "nullable": True},
+            "payment_date": {"type": "date", "label": "Payment Date",
+                             "nullable": True},
+            "booking_status_se": {
+                "type": "text", "label": "Booking Status by SE",
+                "nullable": True,
+                # The delegate override and the invoice column are both plain
+                # CharFields carrying BookEvent.PaymentStatus values, so the
+                # resolved value's vocabulary is that one.
+                "choices": [c[0] for c in BookEvent.PaymentStatus.choices],
+            },
         },
     )
 
@@ -232,7 +384,8 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         """
         qs = ProposalSubmission.objects.select_related("created_by", "updated_by")
         qs = scope_queryset(qs, self.request.user)
-        return self._annotate_stale_qc_score(self._annotate_duplicates(qs))
+        qs = self._annotate_stale_qc_score(self._annotate_duplicates(qs))
+        return self._annotate_tracker_context(qs)
 
     def _annotate_duplicates(self, qs):
         """
@@ -262,6 +415,106 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
             duplicate_count=Coalesce(
                 Subquery(peers, output_field=IntegerField()), Value(0)
             )
+        )
+
+    def _annotate_tracker_context(self, qs):
+        """
+        The five tracker columns that are NOT stored on this model: two read from
+        the event catalogue, three from the bookings pipeline. The agenda team
+        works one grid, so these belong beside the proposal rather than in two
+        other tabs.
+
+        CORRELATED SUBQUERIES, matching _annotate_duplicates above. The
+        alternative is a SerializerMethodField doing a lookup per row, which this
+        page cannot afford — it fetches 1,000 rows at a time. They are also what
+        makes these columns SORTABLE and FILTERABLE at all: a method field cannot
+        appear in an ORDER BY, so an Event Date header would have sorted the rows
+        already on screen and nothing else.
+
+        MATCHED EXACTLY ON event_code, AND THAT IS A MEASURED DECISION.
+        This used __iexact, on the theory that imported rows might differ from
+        the catalogue in case. They do not: zero of the 1,877 stored rows differ
+        from their catalogue entry by case alone, because every write path
+        resolves through the event resolver and stores the catalogue's own
+        spelling, and access.py's row scope already compares this column with an
+        exact __in, so a case-mismatched row is invisible to a scoped user
+        anyway. What __iexact did buy was UPPER() on both sides, which no btree
+        index can answer.
+
+        EMAIL STAYS CASE-INSENSITIVE, the opposite call for the opposite reason:
+        72 real proposal/delegate pairs match only once case is folded, against
+        449 that match exactly, so an exact comparison would silently drop 14% of
+        the bookings this column exists to show. It is made fast instead by
+        book_delegates_event_email_idx, the (event_code, lower(email)) functional
+        index added for this join, which is the same shape as proposal_dupe_idx.
+
+        BOOKING DATE IS booked_on, NOT A COALESCE SPELLED OUT HERE.
+        book_delegates.booked_on already holds COALESCE(request_date,
+        invoice_date), denormalised and indexed precisely so this value does not
+        need a join to compute — see the long note on that column. The payment
+        pair does need the resolution, and it is the SAME expression as
+        book_delegate/views.py and accounts/filter_spec.py._resolved_expression:
+        COALESCE(NULLIF(override, ''), invoice column). A delegate may carry its
+        own payment status, and reading the invoice's would show a value the
+        Bookings screen does not.
+
+        MATCHED ON THE PERSON, at book_delegates rather than book_events. A
+        speaker who books is a DELEGATE; the invoice contact is often somebody in
+        accounts who never spoke. Both event_code and email are indexed there.
+
+        SCOPE. No extra RBAC filter is applied to the booking subqueries, and none
+        is needed: they are correlated on OuterRef("event_code"), and the outer
+        row has already passed scope_queryset, so nothing resolves for an event
+        this user may not see.
+
+        ponytail: seven correlated subqueries per row, because Django takes one
+        value per Subquery. The cost is real and was MEASURED, not assumed: the
+        four event columns probe a 244-row table, and the three booking columns
+        are served by book_delegates_event_email_idx. The first version of this
+        method asserted "each is an index probe" while both of its predicates
+        defeated their indexes and one page took 10.3 seconds, so do not re-add
+        __iexact or drop that index without re-running the timing. If it ever
+        does measure slow again, the upgrade is one materialised view keyed on
+        (event_code, lower(email)), not more annotations.
+        """
+        events = Event.objects.filter(event_code=OuterRef("event_code"))
+        # The two team columns, confirmed against the business: the tracker's
+        # "Production Executive" is the AGENDA team, which this catalogue calls
+        # event_management_team, and its "SPEX Manager" is spex_team. Both are
+        # plain name text on the event, not user FKs, so they are read exactly as
+        # the Events screen shows them and nothing here tries to resolve a
+        # person. If either mapping is ever corrected it is a one-line change
+        # here and nowhere else.
+        # Latest booking first. A speaker can appear on more than one delegate row
+        # for one event (a correction, or a second ticket), and the tracker asks
+        # "has this person booked", so the most recent row is the answer.
+        bookings = (
+            BookDelegate.objects
+            .annotate(_bk_email=Lower("email"))
+            .filter(event_code=OuterRef("event_code"),
+                    _bk_email=Lower(OuterRef("email")))
+            .order_by("-booked_on", "-id")
+        )
+        return qs.annotate(
+            event_date=Subquery(events.values("event_date")[:1]),
+            event_status=Subquery(events.values("status")[:1]),
+            production_executive=Subquery(
+                events.values("event_management_team")[:1]),
+            spex_manager=Subquery(events.values("spex_team")[:1]),
+            booking_date=Subquery(bookings.values("booked_on")[:1]),
+            payment_date=Subquery(
+                bookings.annotate(
+                    _bk_pay_date=Coalesce(
+                        "delegate_payment_date", "invoice__payment_date")
+                ).values("_bk_pay_date")[:1]
+            ),
+            booking_status_se=Subquery(
+                bookings.annotate(
+                    _bk_pay_status=Coalesce(
+                        NullIf("delegate_payment_status", Value("")),
+                        "invoice__payment_status")
+                ).values("_bk_pay_status")[:1]
+            ),
         )
 
     def _annotate_stale_qc_score(self, qs):
@@ -432,6 +685,14 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
     OPTION_FIELDS = (
         "participation_type", "qc_grade", "speaker_slot_status",
         "sponsorship_status", "revenue_possibility",
+        # The three confirmed tracker dropdowns. Fed from STORED values like the
+        # five above, not from the constants: a column whose confirmed list and
+        # whose data disagree is a filter that cannot reach existing rows, and
+        # the imported sheet is the thing most likely to disagree.
+        "panel_approached", "speaker_slot_reoffered", "risk_assessment_live",
+        # Dropdowns as of the vocabulary confirmation, so their filters offer the
+        # ten session slots the data actually holds rather than a text box.
+        "agenda_slot", "speaking_slot_assignment",
     )
 
     def _distinct_option_values(self):

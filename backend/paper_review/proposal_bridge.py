@@ -36,7 +36,9 @@ from django.db.models import CharField, TextField
 
 from proposal_submission.access import scope_queryset
 from proposal_submission.models import ProposalSubmission
-from proposal_submission.serializers import ProposalSubmissionSerializer
+from proposal_submission.serializers import (
+    MRE_FIELDS, ProposalSubmissionSerializer,
+)
 
 from .models import PaperReview
 
@@ -65,6 +67,23 @@ LEFT_BLANK = (
     "participation_type", "sales_pitch_factor", "speaker_slot_status",
     "sponsorship_status", "spex_remarks", "revenue_possibility",
     "internal_footnotes_mr", "slot_recommendation_mr",
+    # The agenda tracker's own columns. A paper review records how the ABSTRACT
+    # scored; whether the speaker was then offered a panel seat, re-offered a
+    # declined slot, or judged a live risk are decisions the agenda team takes
+    # afterwards, and none of them has a source on the review to copy from. Blank
+    # is the correct starting state, not a gap in the mapping.
+    "panel_approached", "panel_topic", "panel_status",
+    "speaker_slot_reoffered", "risk_assessment_live",
+    # A checkbox, so its untouched value is False rather than "" — see the
+    # blankness assertion in tests_paper_to_proposal.py, which compares against
+    # each field's own default for exactly this reason. Whether a speaker reached
+    # the published agenda is decided long after the paper is scored.
+    "added_to_agenda",
+    # The agenda team's slot ASSIGNMENT. The review's recommendation is mapped,
+    # into agenda_slot, by FIELD_MAP above; what the team then does with that
+    # recommendation is theirs to record, and pre-filling it would erase the
+    # distinction between "suggested" and "assigned" on the very first save.
+    "speaking_slot_assignment",
 )
 
 
@@ -112,8 +131,28 @@ def narrower_targets():
 
 
 def build_payload(review):
-    """The mapped values, as the proposal serializer's `data`."""
-    return {target: getattr(review, source) for target, source in FIELD_MAP}
+    """
+    The mapped values a CLIENT payload may carry, as the serializer's `data`.
+
+    MRE_FIELDS are held back — qc_grade and qc_score are read-only on the
+    proposal serializer now, so leaving them here would mean DRF silently
+    discarded them and every generated proposal arrived ungraded. They are passed
+    to serializer.save() instead; see build_server_values and the call site.
+    """
+    return {target: getattr(review, source) for target, source in FIELD_MAP
+            if target not in MRE_FIELDS}
+
+
+def build_server_values(review):
+    """
+    The mapped values that only the SERVER may set, as serializer.save() kwargs.
+
+    Read from the same FIELD_MAP as build_payload, so the pair covers the mapping
+    exactly once between them and the drift guard in
+    tests_paper_to_proposal.py still reads one definition.
+    """
+    return {target: getattr(review, source) for target, source in FIELD_MAP
+            if target in MRE_FIELDS}
 
 
 def duplicate_peer_count(proposal, user):
@@ -161,9 +200,12 @@ def create_proposal_for_review(review, request):
         )
 
     # created_by / source_paper_review are read-only on the serializer and are
-    # passed here, the same way the proposal viewset stamps created_by.
+    # passed here, the same way the proposal viewset stamps created_by. The MRE
+    # pair joins them for the same reason: the rubric produced those numbers, so
+    # they are the server's to write and never a client's.
     proposal = serializer.save(
         created_by=request.user, source_paper_review=review,
+        **build_server_values(review),
     )
 
     # A4. The review's event_code was already resolved to the catalogue's

@@ -190,12 +190,64 @@ export const PARTICIPATION_TYPES = ['Speaker', 'Sponsor', 'Speaker & Sponsor', '
 // imported rows actually hold.
 export const QC_GRADES = ['A', 'B', 'B+', 'C', 'D', 'E'];
 export const QC_GRADE_TONE = { A: 'green', B: 'blue', 'B+': 'blue', C: 'amber', D: 'red', E: 'red' };
-export const SPEAKER_SLOT_STATUSES = ['Pending', 'Confirmed', 'Declined', 'Waitlisted'];
-export const SPEAKER_SLOT_TONE = { Pending: 'amber', Confirmed: 'green', Declined: 'red', Waitlisted: 'slate' };
-export const SPONSORSHIP_STATUSES = ['Pending', 'Confirmed', 'Declined', 'Not Applicable'];
-export const SPONSORSHIP_TONE = { Pending: 'amber', Confirmed: 'green', Declined: 'red', 'Not Applicable': 'slate' };
-export const REVENUE_POSSIBILITY = ['Low', 'Medium', 'High'];
-export const REVENUE_TONE = { Low: 'slate', Medium: 'amber', High: 'green' };
+// CONFIRMED vocabularies, replacing the four-value list inferred from a
+// screenshot. Safe to replace outright: speaker_slot_status was empty on all
+// 1,876 stored rows, so no value became unselectable. That check is not optional
+// here — see paper_review/tests_session_options.py, where a short option list
+// silently REWROTE 941 rows on save, because a picker renders nothing for a
+// stored value it does not recognise.
+export const SPEAKER_SLOT_STATUSES = [
+  'Pending 6', 'Pending MR', 'Standby', 'Confirmed', 'Panelist',
+  'Divert to Panelist', 'NOS', 'Cancelled', 'Withdrawn', 'Declined/Extra',
+  'PBST', 'Pending Panelist', 'Under Review',
+];
+export const SPEAKER_SLOT_TONE = {
+  'Pending 6': 'amber', 'Pending MR': 'amber', 'Pending Panelist': 'amber',
+  'Under Review': 'amber', Standby: 'slate', PBST: 'slate',
+  Confirmed: 'green', Panelist: 'green', 'Divert to Panelist': 'blue',
+  NOS: 'red', Cancelled: 'red', Withdrawn: 'red', 'Declined/Extra': 'red',
+};
+
+// ONE list behind two columns, because sponsorship status and speaker slot
+// re-offered are the same outreach pipeline asked about two different things,
+// and the business gave the identical five values for both. Split them into two
+// arrays the moment either gains a value the other does not have; until then a
+// second copy is just the one that goes stale.
+export const APPROACH_STATUSES = ['Approached', 'In Talks', 'Declined', 'Accepted', 'Non Responsive'];
+export const APPROACH_TONE = { Approached: 'blue', 'In Talks': 'amber', Declined: 'red', Accepted: 'green', 'Non Responsive': 'slate' };
+export const SPONSORSHIP_STATUSES = APPROACH_STATUSES;
+export const SPONSORSHIP_TONE = APPROACH_TONE;
+
+// Not a low/medium/high scale at all, which is what the screenshot suggested.
+// These name HOW the revenue lands, so the tones group by outcome: money in is
+// green, money expected is amber, money gone is red, and the internal categories
+// are neutral hues rather than a judgement.
+export const REVENUE_POSSIBILITY = [
+  'Invoiced', 'SPEX', 'SPP', 'Free', 'Paid', 'Withdrawn before INV',
+  'Genuine clash(INV sent)', 'Travel support',
+];
+export const REVENUE_TONE = {
+  Invoiced: 'green', Paid: 'green', 'Genuine clash(INV sent)': 'amber',
+  'Withdrawn before INV': 'red', SPEX: 'blue', SPP: 'violet',
+  Free: 'cyan', 'Travel support': 'teal',
+};
+
+// ── Agenda tracker ─────────────────────────────────────────────────────────
+// Unlike the lists above, these three are CONFIRMED by the business rather than
+// inferred from a screenshot. Mirrored in backend/proposal_submission/views.py,
+// which is where the mass-update allow-list reads them; the model itself still
+// carries no choices=, so an imported value outside these lists is stored and
+// displayed rather than rejected.
+//
+// PANEL_STATUS and panel topic are absent on purpose. Both are free text.
+export const PANEL_APPROACHED = ['Yes', 'No'];
+export const PANEL_APPROACHED_TONE = { Yes: 'green', No: 'slate' };
+// The same five values as SPONSORSHIP_STATUSES — see APPROACH_STATUSES above,
+// which both now read, so the pair cannot drift apart by accident.
+export const SLOT_REOFFER_STATUSES = APPROACH_STATUSES;
+export const SLOT_REOFFER_TONE = APPROACH_TONE;
+export const RISK_LEVELS = ['High Risk', 'Medium Risk', 'Low Risk'];
+export const RISK_TONE = { 'High Risk': 'red', 'Medium Risk': 'amber', 'Low Risk': 'green' };
 
 // ── Paper Review ──────────────────────────────────────────────────────────
 // Scoring rubric ported from the reference screenshots — six weighted
