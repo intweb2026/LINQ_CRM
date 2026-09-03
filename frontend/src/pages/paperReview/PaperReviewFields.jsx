@@ -19,14 +19,14 @@ import { PAPER_REVIEW_CRITERIA, PAPER_REVIEW_MAX_SCORE, PAPER_GRADE_TONE, PAPER_
  * post to serializers with the same REQUIRED_FIELDS, so the pre-flight checks
  * have to agree.
  *
- * speaker_email_ref / research_email_ref are SHOWN BUT NOT EDITABLE. They are
+ * speaker_email_ref / research_email_ref are NOT in this form at all. They are
  * OUTPUTS: the backend fills them with the addresses the production-team
  * notification actually resolved at send time (paper_review/notifications.py),
- * and they are read-only on the serializer. They were absent entirely until the
- * form was checked against the Zoho layout, which carries both; they are back as
- * read-only boxes, alongside proposal score and grade, and NOT as inputs.
- * Offering them as inputs meant a typed address was silently discarded on save,
- * and paper_review/tests_notification.py still asserts they never become one.
+ * and they are read-only on the serializer. They are still on the model, the
+ * API and the table's column picker (hidden by default) — only the form boxes
+ * are gone, because a reviewer has nothing to do with them. Never add them back
+ * as inputs: a typed address is silently discarded on save, and
+ * paper_review/tests_notification.py asserts they never become one.
  */
 export const BLANK = {
   paper_submission_date: '', event_code: '',
@@ -149,17 +149,6 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
     <label className="fd-l" htmlFor={'pr-' + k}>{text}{req ? <span className="req">*</span> : null}</label>
   );
 
-  // Server-owned values, shown with .in-ro, the same locked-field class
-  // TicketFormModal uses. No id, no name, no onChange: nothing here is part of
-  // the payload.
-  const ro = (text, value) => (
-    <div className="fd">
-      <label className="fd-l">{text}</label>
-      <div className="in-ro">{value || <span className="dim">—</span>}</div>
-      <span style={{ fontSize: 10, color: 'var(--text-4)' }}>Set when the notification sends</span>
-    </div>
-  );
-
   // A plain function, not a component. Declared as a component, this would be a
   // NEW component type on every render, so React would unmount and remount the
   // select each time anything else in the form changed, dropping its focus.
@@ -181,8 +170,6 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd">{lab('event_code', 'Event code', true)}
             {picker('event_code', EVENTS.map((e) => e.event_code))}
           </div>
-          {ro('Speaker email ref', form.speaker_email_ref)}
-          {ro('Research email ref', form.research_email_ref)}
         </div>
       </div>
       <div className="fs">
