@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.bulk_update import BulkUpdateMixin, build_bulk_update_fields
+from accounts.spreadsheet_export import AdminExportMixin
 from accounts.filter_spec import FilterSpecMixin, build_filter_spec_fields
 from accounts.ordering import StableOrderingFilter
 from accounts.period_filter import PeriodFilterMixin
@@ -108,6 +109,22 @@ def _sales_executive_name():
     )
 
 
+def _export_discount_percent(row):
+    """
+    The stored FRACTION as the percent the table shows, for the export.
+
+    The same conversion _discount_percent() below does for filtering, and the
+    same one api/bookings.js fractionToPercent does for the cell: 0.20 reads as
+    20 on screen, so 0.20 in the file would be a column nobody could reconcile
+    with what they were looking at. Rounded to one decimal because 0.2 * 100 is
+    20.000000000000004 in binary floating point.
+    """
+    try:
+        return round(float(row.get("discount") or 0) * 100, 1)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _discount_percent():
     """
     The stored FRACTION as the percent the table shows.
@@ -124,9 +141,49 @@ def _discount_percent():
     )
 
 
-class BookDelegateViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
-                          RBACMixin, viewsets.ModelViewSet):
+class BookDelegateViewSet(AdminExportMixin, PeriodFilterMixin, FilterSpecMixin,
+                          BulkUpdateMixin, RBACMixin, viewsets.ModelViewSet):
     permission_classes = [crm_permission("bookings")]
+
+    # ── GET /api/delegates/export/ ────────────────────────────────────────────
+    # See accounts/spreadsheet_export.py. THE BOOKINGS TABLE'S COLUMNS, in its
+    # order, under its headings: this list mirrors `bkCols` in
+    # frontend/src/pages/BookingsPage.jsx one line at a time, and the field on
+    # the left is what api/bookings.js `toFrontend` reads for that cell. That is
+    # why the resolved effective_* twins are here and their raw invoice
+    # counterparts are not — the raw ones are not what the table displays.
+    #
+    # The Transfer column has no field behind it, it is a button, so it has no
+    # line here.
+    export_filename = "bookings"
+    export_sheet_name = "Bookings"
+    export_columns = (
+        ("effective_payment_status", "Payment Status"),
+        ("event_code", "Event Code"),
+        ("booking_code", "Booking Code"),
+        ("effective_request_date", "Request Date"),
+        ("effective_invoice_date", "Invoice Date"),
+        ("invoice_number", "Invoice Number"),
+        ("full_name", "Name"),
+        ("company_display", "Delegate Company"),
+        ("email", "Delegate Email"),
+        ("phone_number", "Direct Line"),
+        ("accounts_contact_email", "Accounts Contact"),
+        ("delegate_number", "Delegate Number"),
+        ("effective_paid_or_free", "Payable/Free"),
+        ("effective_payment_date", "Date Paid"),
+        ("effective_payment_type", "Payment Type"),
+        ("effective_ticket_tier", "Ticket Tier"),
+        ("discount", "Discount"),
+        ("add_ons", "Add-Ons"),
+        ("reference", "Ref"),
+        ("event_name", "Event Name"),
+        ("created_at", "Added Time"),
+        ("updated_at", "Modified Time"),
+        ("sales_executive_name", "Sales Executive"),
+        ("attendance", "Attendance - IN?"),
+    )
+    export_values = {"discount": lambda row: _export_discount_percent(row)}
     # Whose "all" cell widens these rows to every booking. See RBACMixin.
     rbac_module        = "bookings"
 

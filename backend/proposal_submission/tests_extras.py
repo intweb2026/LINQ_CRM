@@ -1,8 +1,11 @@
 """
 proposal_submission/tests_extras.py
 ────────────────────────────────────
-Import (A), duplicate detection (B), MR write paths (C), CSV export (E),
-distinct filter options (F) and the four scope-review items (G).
+Import (A), duplicate detection (B), MR write paths (C), distinct filter
+options (F) and the four scope-review items (G).
+
+E was a CSV export. It is gone; export lives on Bookings and Pre Event Docs
+and nowhere else.
 """
 from datetime import date, datetime, timezone as dt_timezone
 from unittest.mock import patch
@@ -764,101 +767,6 @@ class MRWritePathTests(_Base):
         self.assertEqual(
             ProposalSubmission.objects.get(id=r.data["id"]).internal_footnotes_mr,
             "legitimate notes")
-
-
-# ══ E. CSV EXPORT ════════════════════════════════════════════════════════════
-
-class ExportTests(_Base):
-    EXPORT = "/api/proposal-submissions/export/"
-
-    @classmethod
-    def setUpTestData(cls):
-        super().setUpTestData()
-        cls.mr = U.objects.create_user(
-            username="e_mr", password="x", email="emr@x.com",
-            role="market_research", team=cls.role)
-        assign_reviewer(cls.mr, cls.event, cls.other_event, junior=True)
-        ProposalSubmission.objects.create(
-            event_code="AFS - JS", speaker_name="Alpha", email="al@x.com",
-            submission_date=date(2026, 1, 1), qc_grade="A",
-            internal_footnotes_mr="hidden notes",
-            slot_recommendation_mr="hidden rec")
-        ProposalSubmission.objects.create(
-            event_code="BIUK - PM", speaker_name="Beta", email="be@x.com",
-            submission_date=date(2026, 2, 1), qc_grade="B")
-
-    def body(self, response):
-        return b"".join(response.streaming_content).decode("utf-8")
-
-    def test_export_streams_csv_with_a_filename(self):
-        self.client.force_authenticate(user=self.user)
-        r = self.client.get(self.EXPORT)
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r["Content-Type"], "text/csv")
-        self.assertIn("proposal-submissions.csv", r["Content-Disposition"])
-        self.assertTrue(hasattr(r, "streaming_content"))
-
-    def test_headers_are_zoho_labels_so_it_round_trips(self):
-        self.client.force_authenticate(user=self.mr)
-        header = self.body(self.client.get(self.EXPORT)).splitlines()[0]
-        for label in ("Event Code", "Email Address", "Speaker Name",
-                      "Slot Recommendation by MR", "Internal Footnotes (MR)"):
-            self.assertIn(label, header)
-        mapping, unknown = map_headers([h.strip() for h in header.split(",")])
-        self.assertEqual(unknown, [], "export headers must re-import cleanly")
-
-    def test_export_strips_mr_columns_for_non_mr(self):
-        self.client.force_authenticate(user=self.user)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertNotIn("Internal Footnotes (MR)", text)
-        self.assertNotIn("hidden notes", text)
-
-    def test_export_includes_mr_columns_for_mr(self):
-        self.client.force_authenticate(user=self.mr)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertIn("Internal Footnotes (MR)", text)
-        self.assertIn("hidden notes", text)
-
-    def test_export_respects_active_filters(self):
-        self.client.force_authenticate(user=self.user)
-        text = self.body(self.client.get(self.EXPORT, {"qc_grade": "A"}))
-        self.assertIn("Alpha", text)
-        self.assertNotIn("Beta", text)
-
-    def test_export_respects_search(self):
-        self.client.force_authenticate(user=self.user)
-        text = self.body(self.client.get(self.EXPORT, {"search": "Beta"}))
-        self.assertIn("Beta", text)
-        self.assertNotIn("Alpha", text)
-
-    def test_export_respects_ordering(self):
-        self.client.force_authenticate(user=self.user)
-        asc = self.body(self.client.get(self.EXPORT, {"ordering": "speaker_name"}))
-        desc = self.body(self.client.get(self.EXPORT, {"ordering": "-speaker_name"}))
-        self.assertLess(asc.index("Alpha"), asc.index("Beta"))
-        self.assertLess(desc.index("Beta"), desc.index("Alpha"))
-
-    def test_export_respects_rbac_scope(self):
-        scoped = U.objects.create_user(
-            username="e_scoped", password="x", email="es@x.com",
-            role="sales", team=self.role)
-        assign_reviewer(scoped, self.other_event, junior=True)       # BIUK only
-        self.client.force_authenticate(user=scoped)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertIn("Beta", text)
-        self.assertNotIn("Alpha", text)
-
-    def test_export_is_empty_for_an_unassigned_user(self):
-        nobody = U.objects.create_user(
-            username="e_none", password="x", email="en@x.com",
-            role="sales", team=self.role)
-        self.client.force_authenticate(user=nobody)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertEqual(len(text.strip().splitlines()), 1, "header only")
-
-    def test_export_denied_without_the_module(self):
-        self.client.force_authenticate(user=self.blind_user)
-        self.assertEqual(self.client.get(self.EXPORT).status_code, 403)
 
 
 # ══ F. DISTINCT FILTER OPTIONS ═══════════════════════════════════════════════

@@ -2,8 +2,10 @@
 paper_review/tests_parity.py
 ─────────────────────────────
 PART C — the machinery paper_review was missing relative to proposal_submission:
-duplicate detection (C1), bulk update (C2), CSV export (C3) and distinct filter
-options (C4).
+duplicate detection (C1), bulk update (C2) and distinct filter options (C4).
+
+C3 was a CSV export. It is gone; export lives on Bookings and Pre Event Docs
+and nowhere else.
 
 C2's load-bearing claim is the one worth reading first: bulk-updating ANY of the
 six criteria must recompute proposal_score on every affected row, because the
@@ -391,149 +393,6 @@ class BulkUpdateTests(_Base):
         self.assertIn("paper reviews", log.action)
         for pk in self.ids:
             self.assertIn(str(pk), log.details)
-
-
-# ══ C3. CSV EXPORT ═══════════════════════════════════════════════════════════
-
-class ExportTests(_Base):
-    EXPORT = "/api/paper-reviews/export/"
-
-    @classmethod
-    def setUpTestData(cls):
-        super().setUpTestData()
-        cls.mr = U.objects.create_user(
-            username="exp_mr", password="x", email="expmr@example.com",
-            role="market_research", team=cls.role)
-        assign_reviewer(cls.mr, cls.event, cls.other_event, junior=True)
-
-    def setUp(self):
-        self.client.force_authenticate(user=self.user)
-        # grade is DERIVED, so the ?grade=A filter below only finds this row if
-        # it actually scores one: 10+5+10+5+5+1 = 36/45 = 80%, the A boundary.
-        # Passing grade="A" here would be discarded by save().
-        make_review("AFS - JS", "Alpha",
-                    internal_footnotes="hidden notes",
-                    closeness_to_topic=10, closeness_to_region=5,
-                    clear_solution_to_challenges=10,
-                    case_study_results_examples=5, not_obvious_sales_pitch=5,
-                    company_profile_score=1,
-                    session_location_on_agenda="Day 1, Afternoon Session",
-                    theme="rail", nos=True, linkedin_followers=417)
-        # Unscored, so its derived grade is "" — which is what makes it the
-        # negative case for the ?grade=A filter.
-        make_review("BIUK - PM", "Beta")
-
-    def body(self, response):
-        return b"".join(response.streaming_content).decode("utf-8")
-
-    def test_export_streams_csv_with_a_filename(self):
-        r = self.client.get(self.EXPORT)
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r["Content-Type"], "text/csv")
-        self.assertIn("paper-reviews.csv", r["Content-Disposition"])
-        self.assertTrue(hasattr(r, "streaming_content"))
-
-    def test_headers_are_zoho_labels_and_reimport_cleanly(self):
-        """
-        The comma-bearing and apostrophe-bearing labels are the point: csv must
-        quote them, or "Case Study, Results, Examples (5)" splits into three
-        columns on re-import.
-        """
-        from paper_review.importer import map_headers
-        text = self.body(self.client.get(self.EXPORT, {}, **{}))
-        header_line = text.splitlines()[0]
-        self.assertIn('"Case Study, Results, Examples (5)"', header_line)
-
-        header = next(csv.reader(StringIO(header_line)))
-        self.assertIn("Case Study, Results, Examples (5)", header)
-        self.assertIn("Not an obvious 'Sales Pitch' (5)", header)
-
-        mapping, unknown = map_headers(header)
-        self.assertEqual(unknown, [], "export headers must re-import cleanly")
-
-    def test_round_trip_export_then_import_preserves_field_values(self):
-        """
-        C3's round-trip requirement, end to end: export as MR (so every column is
-        present), re-import, and compare the values that came back.
-        """
-        self.client.force_authenticate(user=self.mr)
-        text = self.body(self.client.get(self.EXPORT, {"search": "Alpha"}))
-        rows = list(csv.DictReader(StringIO(text)))
-        self.assertEqual(len(rows), 1)
-
-        source = PaperReview.objects.get(speaker_name="Alpha")
-
-        preview = self.client.post("/api/paper-reviews/import/preview/",
-                                   {"rows": rows}, format="json")
-        self.assertEqual(preview.status_code, 200, preview.content)
-        self.assertEqual(preview.data["unrecognised_columns"], [])
-
-        commit = self.client.post("/api/paper-reviews/import/commit/", {
-            "rows": rows, "plan_hash": preview.data["plan_hash"],
-            "import_batch_id": preview.data["import_batch_id"],
-            "filename": "round-trip.csv",
-        }, format="json")
-        self.assertEqual(commit.status_code, 201, commit.content)
-
-        clone = PaperReview.objects.get(id=commit.data["created_ids"][0])
-        for field in ("event_code", "speaker_name", "company_name", "email",
-                      "grade", "session_location_on_agenda", "theme",
-                      "internal_footnotes", "feedback_to_speaker",
-                      "linkedin_speaker", "linkedin_company",
-                      "linkedin_followers", "nos", "paper_submission_date",
-                      "proposal_score",
-                      *[f for f, _ in CRITERIA]):
-            with self.subTest(field=field):
-                self.assertEqual(getattr(clone, field), getattr(source, field))
-
-    def test_export_strips_internal_footnotes_for_a_non_mr_user(self):
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertNotIn("Internal Footnotes", text)
-        self.assertNotIn("hidden notes", text)
-
-    def test_export_includes_internal_footnotes_for_mr(self):
-        self.client.force_authenticate(user=self.mr)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertIn("Internal Footnotes", text)
-        self.assertIn("hidden notes", text)
-
-    def test_export_respects_active_filters(self):
-        text = self.body(self.client.get(self.EXPORT, {"grade": "A"}))
-        self.assertIn("Alpha", text)
-        self.assertNotIn("Beta", text)
-
-    def test_export_respects_search(self):
-        text = self.body(self.client.get(self.EXPORT, {"search": "Beta"}))
-        self.assertIn("Beta", text)
-        self.assertNotIn("Alpha", text)
-
-    def test_export_respects_ordering(self):
-        asc = self.body(self.client.get(self.EXPORT, {"ordering": "speaker_name"}))
-        desc = self.body(self.client.get(self.EXPORT, {"ordering": "-speaker_name"}))
-        self.assertLess(asc.index("Alpha"), asc.index("Beta"))
-        self.assertLess(desc.index("Beta"), desc.index("Alpha"))
-
-    def test_export_respects_rbac_scope(self):
-        scoped = U.objects.create_user(
-            username="exp_scoped", password="x", email="expscoped@example.com",
-            role="sales", team=self.role)
-        assign_reviewer(scoped, self.other_event, junior=True)            # BIUK only
-        self.client.force_authenticate(user=scoped)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertIn("Beta", text)
-        self.assertNotIn("Alpha", text)
-
-    def test_export_is_header_only_for_an_unassigned_user(self):
-        nobody = U.objects.create_user(
-            username="exp_none", password="x", email="expnone@example.com",
-            role="sales", team=self.role)
-        self.client.force_authenticate(user=nobody)
-        text = self.body(self.client.get(self.EXPORT))
-        self.assertEqual(len(text.strip().splitlines()), 1, "header only")
-
-    def test_export_denied_without_the_module(self):
-        self.client.force_authenticate(user=self.blind_user)
-        self.assertEqual(self.client.get(self.EXPORT).status_code, 403)
 
 
 # ══ C4. DISTINCT FILTER OPTIONS ══════════════════════════════════════════════

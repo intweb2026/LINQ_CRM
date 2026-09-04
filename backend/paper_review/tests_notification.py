@@ -990,10 +990,15 @@ class NotificationLogAlwaysWrittenTests(_Base):
         B5. They are outputs; offering them as INPUTS meant a typed address was
         silently dropped by the read-only serializer.
 
-        They are now DISPLAYED, because the Zoho layout carries both and the CRM
-        form was missing them, so "absent" is no longer the invariant; "never a
-        control" is. Rendered, but with no onChange, no name and no id, exactly
-        like proposal score and grade.
+        They were briefly DISPLAYED read-only, and this test pinned that. They
+        are now out of the form altogether — see the header comment in
+        PaperReviewFields.jsx, which points back here: they are outputs the
+        backend fills at send time, they stay on the model, the API and the
+        table's column picker, and a reviewer has nothing to do with them. So the
+        invariant is the one that never moved, "never a control", and it is
+        asserted the strongest way the current design allows: the name does not
+        occur in the form's CODE at all. Comments are stripped first, or this
+        test matches the very sentence explaining why the fields are absent.
 
         Asserted against the JSX for the same reason
         accounts/tests_pipeline_modules.py checks the module list there: a
@@ -1009,15 +1014,19 @@ class NotificationLogAlwaysWrittenTests(_Base):
                 / "paperReview" / "PaperReviewFields.jsx")
         if not form.exists():
             self.skipTest("frontend not present in this checkout")
+        import re
+
         src = form.read_text(encoding="utf-8")
+        code = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        code = re.sub(r"(?m)(?<!:)//.*$", "", code)
         for field in ("speaker_email_ref", "research_email_ref"):
             with self.subTest(field=field):
-                # Shown.
-                self.assertIn(f"form.{field}", src)
-                # Never a control.
-                self.assertNotIn(f"set('{field}')", src)
-                self.assertNotIn(f'name="{field}"', src)
-                self.assertNotIn(f'id="pr-{field}"', src)
+                self.assertNotIn(
+                    field, code,
+                    f"{field} is back in PaperReviewFields.jsx. It is an output "
+                    f"the backend resolves at send time and read-only on the "
+                    f"serializer, so anything typed into it is discarded on save.",
+                )
 
     def test_the_log_survives_deleting_its_review(self):
         rid = self.create_review().data["id"]

@@ -18,6 +18,7 @@ from accounts.user_resolution import AMBIGUOUS, NO_MATCH, UserResolver
 from book_event.booking_code import (
     DELEGATE, SPEAKER_SALES, SPEX, category_q, classify, speaker_q, spex_q,
 )
+from book_event.booking_code_canonical import DEFAULT_BOOKING_CODE
 
 User = get_user_model()
 
@@ -236,10 +237,32 @@ class BookingCodeQueryTests(TestCase):
         from book_event.models import BookEvent
         return set(BookEvent.objects.filter(q).values_list("booking_code", flat=True))
 
+    def _stored(self):
+        """
+        What the table actually HOLDS, which is not the corpus verbatim.
+
+        BookEvent.save() defaults a blank booking_code to
+        booking_code_canonical.DEFAULT_BOOKING_CODE, "Delegate", so the ""
+        row above is stored as "Delegate". Both tests below used to build their
+        Python answer from the raw corpus and their SQL answer from the table,
+        so they disagreed by exactly that row — reported as "'Delegate' in the
+        first set, '' in the second", which reads like a rule disagreement and
+        is not one: classify("") and classify("Delegate") both say delegate.
+
+        Comparing over the stored values keeps the property this class exists
+        for, the Q objects and classify() agreeing on every row the query can
+        ever see, and stops asserting that the model stores the string it was
+        given, which is another module's business and deliberately no longer
+        true.
+        """
+        from book_event.models import BookEvent
+        return set(BookEvent.objects.values_list("booking_code", flat=True))
+
     def test_the_exclusive_q_agrees_with_classify_on_every_corpus_row(self):
+        stored = self._stored()
         for category in (SPEX, SPEAKER_SALES, DELEGATE):
             from_db = self._codes(category_q(category))
-            from_py = {c for c in self.CORPUS if classify(c) == category}
+            from_py = {c for c in stored if classify(c) == category}
             self.assertEqual(from_db, from_py, f"disagreement on {category}")
 
     def test_the_exclusive_categories_partition_the_corpus(self):
@@ -248,7 +271,16 @@ class BookingCodeQueryTests(TestCase):
             rows = self._codes(category_q(category))
             self.assertFalse(seen & rows, "categories must not overlap")
             seen |= rows
-        self.assertEqual(seen, set(self.CORPUS))
+        self.assertEqual(seen, self._stored())
+
+    def test_a_blank_booking_code_is_still_a_delegate(self):
+        """
+        The row the two tests above used to disagree over. It reaches the table
+        as "Delegate" rather than "", and it must land in the delegate bucket
+        either way — a booking with no code is a delegate booking.
+        """
+        self.assertEqual(classify(""), DELEGATE)
+        self.assertIn(DEFAULT_BOOKING_CODE, self._codes(category_q(DELEGATE)))
 
     def test_the_overlapping_q_still_counts_a_hybrid_on_both(self):
         """views.py:181 documents this as intentional; only the rule changed."""

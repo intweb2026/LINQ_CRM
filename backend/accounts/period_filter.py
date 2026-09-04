@@ -220,7 +220,14 @@ class PeriodFilterMixin:
     #: selects that many. Omitted, a select-all taken inside a "Last 30 days"
     #: view would resolve every row of all time and hand the difference straight
     #: to a mass update, with the UI still showing the 30-day count.
-    period_actions = ("list", "ids")
+    #:
+    #: "export" is AdminExportMixin's (accounts/spreadsheet_export.py), and it
+    #: is here for the same reason and no other: the file has to hold the rows
+    #: the screen was showing when the button was pressed. Left out, an export
+    #: taken inside "Last 30 days" would quietly be an export of everything,
+    #: which is the failure mode nobody checks — the file opens, it has rows in
+    #: it, and it is wrong. Bookings is the only module with an export.
+    period_actions = ("list", "ids", "export")
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)

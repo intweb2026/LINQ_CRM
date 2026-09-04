@@ -317,6 +317,10 @@ export default function BookingsPage() {
         // live: the rows are READ from delegates/, but an invoice edit and the
         // import both write invoices/ — named here so those reach the table too.
         server={{ resource: bookingsApi.RESOURCE, mapRow: bookingsApi.fromApi, live: ['invoices'] }}
+        // Admin-only Export, to .xlsx, of whatever this table is filtered to.
+        // Opt-in per table; the endpoint behind it is
+        // BookDelegateViewSet.export_columns, which mirrors bkCols above.
+        exportable
         serverCriteria={serverCriteria}
         serverParams={{ period }}
         onServerReady={keepRefetch}

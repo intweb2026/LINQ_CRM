@@ -396,6 +396,64 @@ export async function fetchAllIds(resource, { filterSpec, search, params } = {})
 }
 
 /**
+ * GET {resource}/export/ — the CURRENT filter as an .xlsx file, saved by the browser.
+ *
+ * Admin-only, and the server says so. accounts/spreadsheet_export.py appends IsAdminRole
+ * to the module permission. The UI hides the button for everybody else, but the
+ * gate that matters is the one on the endpoint.
+ *
+ * Params are built exactly as fetchPage and fetchAllIds build them, for the same
+ * reason they are: all three must resolve the same rows, or the file holds a
+ * different set than the table it was taken from. `filterSpec` is RAW JSON —
+ * serializeParams encodes exactly once, and encoding here as well is the
+ * double-encoding bug that already shipped twice.
+ *
+ * NOT a plain <a href> or window.open, tempting as that is for a download. Auth
+ * here is an `Authorization: Token …` header (see the interceptor above), which
+ * a navigation cannot carry, so the browser would arrive unauthenticated and be
+ * bounced to the login page instead of downloading anything.
+ */
+export async function downloadExport(resource, { filterSpec, search, params, filename } = {}) {
+  const query = { ...(params || {}) };
+  if (filterSpec) query.filter_spec = filterSpec;
+  if (search) query.search = search;
+
+  let res;
+  try {
+    res = await http.get(`${resource}/export/`, { params: query, responseType: 'blob' });
+  } catch (err) {
+    // With responseType 'blob' the error BODY is a Blob too, so DRF's
+    // {"detail": "Admin role required."} reaches apiErrorMessage as an unreadable
+    // object and the user is told "Something went wrong" instead of the reason.
+    // Read it back into place before rethrowing.
+    const body = err?.response?.data;
+    if (body && typeof body.text === 'function') {
+      const text = await body.text().catch(() => '');
+      try { err.response.data = JSON.parse(text); } catch { err.response.data = text; }
+    }
+    throw err;
+  }
+
+  // The server names the file (Content-Disposition), so the name is decided in
+  // one place rather than guessed at each call site.
+  const disposition = res.headers?.['content-disposition'] || '';
+  const named = /filename="?([^";]+)"?/i.exec(disposition);
+  const name = named ? named[1] : (filename || `${String(resource).replace(/\//g, '-')}.xlsx`);
+
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick, not immediately: Safari cancels a download whose
+  // object URL is released in the same frame as the click.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  return name;
+}
+
+/**
  * Split `items` into arrays of at most `size`.
  *
  * Every bulk endpoint on this backend caps at 1000 ids per request

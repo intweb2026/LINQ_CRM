@@ -2,7 +2,7 @@
 paper_review/views.py
 ──────────────────────
 CRUD for the paper review form, the two Zoho workflows that fire on ADD, and the
-shared CRM machinery (import, mass update, compound filters, export) so this
+shared CRM machinery (import, mass update, compound filters) so this
 module behaves like Proposal Submission and Ticket Central rather than being a
 one-off.
 
@@ -30,13 +30,11 @@ IMPORT FIRES NEITHER WORKFLOW — see import_commit. A 400-row historical import
 must not send 400 emails and must not mint 400 proposal submissions, so it writes
 PaperReview rows directly and never touches perform_create.
 """
-import csv
 import uuid
 
 from django.db import transaction
 from django.db.models import Count, IntegerField, OuterRef, Subquery, Value
 from django.db.models.functions import Coalesce, Lower
-from django.http import StreamingHttpResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -146,7 +144,6 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     GET    /api/paper-reviews/{id}/       — retrieve
     PATCH  /api/paper-reviews/{id}/       — partial update
     DELETE /api/paper-reviews/{id}/       — hard delete
-    GET    /api/paper-reviews/export/     — streaming CSV
     GET    /api/paper-reviews/filter_options/
     GET    /api/paper-reviews/permitted_events/
     GET    /api/paper-reviews/filter_schema/
@@ -241,8 +238,8 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             "proposal_score", "grade",
         ),
         # The importer's column names, reused verbatim: a field must not be
-        # called one thing in the import wizard, the CSV header and the export,
-        # and something else in the mass-update picker. It already carries the
+        # called one thing in the import wizard and the CSV header, and
+        # something else in the mass-update picker. It already carries the
         # rubric maxima in the criterion labels ("Closeness to Topic (10)").
         labels=FIELD_TO_LABEL,
     )
@@ -321,8 +318,8 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
 
     def get_queryset(self):
         """
-        The single scope gate — list, retrieve, update, destroy, bulk_update and
-        export all inherit it, so a new action cannot forget it. select_related on
+        The single scope gate — list, retrieve, update, destroy and bulk_update
+        all inherit it, so a new action cannot forget it. select_related on
         the audit FKs: the serializer renders both display names, which would
         otherwise be two extra queries per row.
         """
@@ -617,55 +614,6 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         )
         return Response({"unrestricted": has_full_visibility(request.user),
                          "count": len(rows), "results": rows})
-
-    # ── CSV export (C3) ───────────────────────────────────────────────────────
-
-    @action(detail=False, methods=["get"], url_path="export")
-    def export(self, request):
-        """
-        GET /api/paper-reviews/export/ → streaming CSV.
-
-        Respects, in order: RBAC scope and the duplicate annotation
-        (get_queryset), the active filters/search/filter_spec and the current
-        ordering (filter_queryset — the same pipeline the list view uses), and MR
-        stripping for users who cannot read internal_footnotes. An export that
-        skipped any of those would be a data leak with a filename attached.
-
-        Headers are Zoho display labels so an export round-trips through the
-        importer unchanged. csv.writer quotes them where needed, which matters
-        here more than in proposal_submission: two paper-review labels contain
-        commas or apostrophes ("Case Study, Results, Examples (5)", "Not an
-        obvious 'Sales Pitch' (5)") and an unquoted comma would split one column
-        into three on re-import.
-        """
-        queryset = self.filter_queryset(self.get_queryset())
-
-        fields = [f for f in FIELD_TO_LABEL]
-        if not may_see_mr_fields(request.user):
-            fields = [f for f in fields if f not in _MR_QUERY_PARAMS]
-        header = [FIELD_TO_LABEL[f] for f in fields]
-
-        class _Echo:
-            """A file-like object that returns the line instead of storing it."""
-            def write(self, value):
-                return value
-
-        writer = csv.writer(_Echo())
-
-        def rows():
-            yield writer.writerow(header)
-            # .iterator() so a large export is never materialised in memory.
-            for obj in queryset.iterator(chunk_size=500):
-                yield writer.writerow([
-                    "" if getattr(obj, f) is None else getattr(obj, f)
-                    for f in fields
-                ])
-
-        response = StreamingHttpResponse(rows(), content_type="text/csv")
-        response["Content-Disposition"] = (
-            'attachment; filename="paper-reviews.csv"'
-        )
-        return response
 
     # ── Import: preview / commit (Part B) ─────────────────────────────────────
 

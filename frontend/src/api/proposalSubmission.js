@@ -11,7 +11,6 @@
 // Not yet used by the UI, but present on the ViewSet if wanted:
 //   GET  proposal-submissions/filter_options/
 //   GET  proposal-submissions/permitted_events/
-//   GET  proposal-submissions/export/
 //   POST proposal-submissions/import/preview/  and  import/commit/
 //   POST proposal-submissions/bulk_update/
 //   POST proposal-submissions/{id}/duplicate/

@@ -279,6 +279,7 @@ class NavVisibilityTests(TestCase):
 
     SIDEBAR = FRONTEND / "components" / "Sidebar.jsx"
     PALETTE = FRONTEND / "components" / "CommandPalette.jsx"
+    NAV = FRONTEND / "lib" / "nav.js"
 
     def _read(self, path):
         if not FRONTEND.exists():
@@ -286,11 +287,25 @@ class NavVisibilityTests(TestCase):
         self.assertTrue(path.exists(), f"missing {path}")
         return path.read_text(encoding="utf-8")
 
+    def _code(self, path):
+        """
+        The file with its comments removed.
+
+        A source-text assertion that reads comments as code fails on the very
+        sentence explaining why the code is right: `test_the_sidebar_renders_no_
+        locked_rows` was matching the phrase "No access" inside Sidebar.jsx's own
+        comment about having REMOVED the locked rows. Prose is not the render.
+        """
+        src = self._read(path)
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        # (?<!:) so "https://" inside a string is not read as a comment.
+        return re.sub(r"(?m)(?<!:)//.*$", "", src)
+
     def test_the_sidebar_renders_no_locked_rows(self):
-        src = self._read(self.SIDEBAR)
+        code = self._code(self.SIDEBAR)
         for marker in ("rail-lock", "rail-item locked", "No access"):
             self.assertNotIn(
-                marker, src,
+                marker, code,
                 f"Sidebar.jsx still renders {marker!r}. A module the user cannot "
                 f"view belongs out of the rail, not in it behind a padlock.",
             )
@@ -299,11 +314,24 @@ class NavVisibilityTests(TestCase):
         """
         The filter itself, so removing the locked rows cannot be 'fixed' later by
         dropping the check and showing everything to everybody.
+
+        The rule used to be spelled inline here as `!i.mod || canView(i.mod)` and
+        this test pinned that text. It moved into lib/nav.js canAccess(), which
+        answers the same question and two more (adminOnly, hpOnly) that an inline
+        canView could not — see the comment on canAccess about the three copies
+        it replaced. So the pin moved with it: the consumer must route through
+        canAccess, and canAccess must still consult canView. Pinning the old
+        literal asserted the shape of the code, not the property.
         """
-        src = self._read(self.SIDEBAR)
         self.assertRegex(
-            src, r"g\.items\.filter\(\(i\) => !i\.mod \|\| canView\(i\.mod\)\)",
-            "Sidebar.jsx no longer filters group items on canView",
+            self._code(self.SIDEBAR),
+            r"g\.items\.filter\(\(i\) => canAccess\(i, canView,",
+            "Sidebar.jsx no longer filters group items through canAccess",
+        )
+        self.assertRegex(
+            self._code(self.NAV),
+            r"return !item\.mod \|\| canView\(item\.mod\)",
+            "nav.js canAccess no longer gates an item on its module's view grant",
         )
 
     def test_an_empty_group_takes_its_heading_with_it(self):
@@ -322,8 +350,8 @@ class NavVisibilityTests(TestCase):
         The other NAV consumer. Hiding a row in the rail while leaving it
         one keystroke away in the palette would not be hiding it at all.
         """
-        src = self._read(self.PALETTE)
         self.assertRegex(
-            src, r"if \(i\.mod && !canView\(i\.mod\)\) return",
-            "CommandPalette.jsx no longer filters nav entries on canView",
+            self._code(self.PALETTE),
+            r"if \(!canAccess\(i, canView,",
+            "CommandPalette.jsx no longer filters nav entries through canAccess",
         )

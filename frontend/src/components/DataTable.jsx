@@ -15,7 +15,9 @@ import {
 import useServerRows from '../hooks/useServerRows';
 import useLiveData from '../hooks/useLiveData';
 import useVirtualRows from '../hooks/useVirtualRows';
-import { apiErrorMessage, fetchAllIds, fetchPage } from '../api/client';
+import { apiErrorMessage, downloadExport, fetchAllIds, fetchPage } from '../api/client';
+import { useSession } from '../context/SessionContext';
+import { useToast } from '../context/ToastContext';
 
 const PAGE_SIZE_DEFAULT = 1000;
 
@@ -913,6 +915,17 @@ export default function DataTable({
   // of adjacent columns sharing a group. Opt-in: `groups` alone only shapes
   // the Columns menu, which is all the older tables ever asked of it.
   groupHeader = false,
+  /**
+   * Show the admin Export button. OFF by default, and server mode only.
+   *
+   * Deliberately opt-in rather than "every table gets one". The file is built
+   * by `{resource}/export/`, which exists for the resources that asked for it
+   * and 404s for the rest, and a table whose rows are already all in the
+   * browser has no such endpoint at all. Bookings is the caller today; Pre
+   * Event Docs exports through lib/exportSheet.js from its own toolbar, not
+   * through this table.
+   */
+  exportable = false,
   // Whether this table may edit a cell in place. Defaults to FALSE, so a column
   // carrying editOpts is inert until its page explicitly opts in with the
   // caller's own permission check — previously EditableCell rendered off the
@@ -965,6 +978,12 @@ export default function DataTable({
   live = true,
 }) {
   const storeId = tableId || noun;
+  // Export is admin-only. `isAdmin` is the frontend half of
+  // accounts/permissions.py:IsAdminRole — role=admin OR an all-access team —
+  // and the endpoint enforces the same rule itself, so this only decides
+  // whether a button nobody else can use is drawn.
+  const { isAdmin } = useSession();
+  const toast = useToast();
   const storedRef = useRef(undefined);
   if (storedRef.current === undefined) storedRef.current = readStored(storeId, defaultSortVersion);
   const stored = storedRef.current;
@@ -1002,6 +1021,7 @@ export default function DataTable({
   const [selError, setSelError] = useState('');
   const [hidden, setHidden] = useState(() => new Set(stored && stored.hidden ? stored.hidden : hiddenDefault));
   const [view, setView] = useState('table');
+  const [exporting, setExporting] = useState(false);
 
   // Persist whenever any persisted slice changes. The generation goes WITH the
   // write, so the retirement above happens once and the user's next choice —
@@ -1460,6 +1480,40 @@ export default function DataTable({
 
   const loadedCount = serverMode && infinite ? data.length : Math.min(shown, data.length);
 
+  /**
+   * Export what the table is showing, admin only. See `exportable` above.
+   *
+   * THE SERVER BUILDS THE FILE, not the browser: this table holds one page of a
+   * set that may be 35,000 rows, so anything written from what is loaded would
+   * be an export of the scroll position. `{resource}/export/` is sent the same
+   * spec, search and params as the list request and writes the table's own
+   * columns under its own headings — see accounts/spreadsheet_export.py.
+   *
+   * REFUSED, NOT QUIETLY WRONG, when the request cannot say what the screen
+   * says: a condition the server could not express is applied in the browser to
+   * the loaded page only (split.clientConds), and a spec too large to send is
+   * not sent at all. In either case the server's answer to this query is a WIDER
+   * set than the rows on screen, and a file holding more than the user filtered
+   * down to is the one outcome an export must never have. The button says why
+   * instead.
+   */
+  const exportBlocked = clientNarrowed || specTooLarge;
+  const doExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      await downloadExport(server.resource, {
+        filterSpec: specJson,
+        search: q || null,
+        params: paramsJson ? JSON.parse(paramsJson) : undefined,
+      });
+    } catch (err) {
+      toast(apiErrorMessage(err, `Could not export these ${noun}`), 'er');
+    } finally {
+      setExporting(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server && server.resource, specJson, q, paramsJson, noun, toast]);
+
   // ── Load on scroll (infinite mode) ────────────────────────────────────────
   // A sentinel sits directly below the last row; reaching it fetches the next
   // page. The footer's "Load N more" button stays alongside it: it is the
@@ -1745,6 +1799,16 @@ export default function DataTable({
           )}
         </Popover>
         <div className="tb-sp" />
+        {exportable && serverMode && isAdmin ? (
+          <button className="btn btn-s btn-sm" onClick={doExport}
+            disabled={exporting || exportBlocked}
+            title={exportBlocked
+              ? 'One of the active filters is applied in the browser, so the server cannot '
+                + 'reproduce this exact list. Remove it to export.'
+              : `Download the filtered ${noun}`}>
+            <Icon name="sheet" size={13} />{exporting ? 'Exporting…' : 'Export'}
+          </button>
+        ) : null}
         {extraToolbar}
         {card ? (
           <Seg options={[{ value: 'table', icon: 'list', label: 'Table' }, { value: 'cards', icon: 'grid', label: 'Cards' }]} value={view} onChange={setView} />

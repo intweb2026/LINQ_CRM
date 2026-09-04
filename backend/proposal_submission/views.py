@@ -16,7 +16,6 @@ assigned "BIU" would also receive every "BIUK - PM" row, and its second branch
 grants on a sales_executive column this model does not have. See access.py for
 the full reasoning.
 """
-import csv
 import logging
 import uuid
 
@@ -25,7 +24,6 @@ from django.db.models import (
     BooleanField, Case, Count, F, IntegerField, OuterRef, Q, Subquery, Value, When,
 )
 from django.db.models.functions import Coalesce, Lower, NullIf
-from django.http import StreamingHttpResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -777,51 +775,6 @@ class ProposalSubmissionViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMi
         )
         return Response({"unrestricted": has_full_visibility(request.user),
                          "count": len(rows), "results": rows})
-
-    # ── CSV export (Part E) ───────────────────────────────────────────────────
-
-    @action(detail=False, methods=["get"], url_path="export")
-    def export(self, request):
-        """
-        GET /api/proposal-submissions/export/ → streaming CSV.
-
-        Respects, in order: RBAC scope and duplicate annotation (get_queryset),
-        the active filters/search/filter_spec and the current ordering
-        (filter_queryset — the same pipeline the list view uses), and MR stripping
-        for users who cannot read those columns. An export that skipped any of
-        those would be a data leak with a filename attached.
-
-        Headers are Zoho display labels so an export round-trips through the
-        importer unchanged.
-        """
-        queryset = self.filter_queryset(self.get_queryset())
-
-        fields = [f for f in FIELD_TO_LABEL]
-        if not may_see_mr_fields(request.user):
-            fields = [f for f in fields if f not in _MR_QUERY_PARAMS]
-        header = [FIELD_TO_LABEL[f] for f in fields]
-
-        class _Echo:
-            """A file-like object that returns the line instead of storing it."""
-            def write(self, value):
-                return value
-
-        writer = csv.writer(_Echo())
-
-        def rows():
-            yield writer.writerow(header)
-            # .iterator() so a large export is never materialised in memory.
-            for obj in queryset.iterator(chunk_size=500):
-                yield writer.writerow([
-                    "" if getattr(obj, f) is None else getattr(obj, f)
-                    for f in fields
-                ])
-
-        response = StreamingHttpResponse(rows(), content_type="text/csv")
-        response["Content-Disposition"] = (
-            'attachment; filename="proposal-submissions.csv"'
-        )
-        return response
 
     # ── Import: preview / commit (Part A) ─────────────────────────────────────
 

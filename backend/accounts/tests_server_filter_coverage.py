@@ -170,9 +170,17 @@ class FilterDefaultOperatorTests(SimpleTestCase):
     """
 
     def test_choice_columns_open_on_is_not_contains(self):
+        """
+        The rule was spelled `op: col.opts ? 'Is' : 'Contains'` when this test was
+        written, and the assertion quoted it verbatim. blankCond() now reads
+        colKind(col) and answers for three kinds rather than two — a number column
+        opens on Equals, which Contains could not express either — so the literal
+        is gone while the property it guarded is intact and wider. The assertion
+        follows the property.
+        """
         src = (FRONTEND / "components/DataTable.jsx").read_text(encoding="utf-8")
         self.assertIn(
-            "op: col.opts ? 'Is' : 'Contains'", src,
+            "kind === 'choice' ? 'Is'", src,
             "DataTable's blank condition no longer distinguishes a closed-list "
             "column. Opening every column on Contains put every status/grade/"
             "priority filter back in the browser.",

@@ -223,32 +223,75 @@ class OverlongValueIsARowErrorTests(_Base):
                 self.assertIn("longer than 500 characters", self.problems(entry))
 
 
+# A rubric that sums to 33, which is inside the B+ band (31-35). Spelled with
+# the Zoho headers because that is what an import file carries.
+B_PLUS_SCORES = {
+    "Closeness to Topic (10)": 10,
+    "Closeness to Region (5)": 5,
+    "Clear Solution to Challenges (10)": 10,
+    "Case Study, Results, Examples (5)": 5,
+    "Not an obvious 'Sales Pitch' (5)": 3,
+    "Company Profile (10)": 0,
+}
+
+
 class GradeWidthTests(_Base):
     """
     grade was CharField(max_length=1) on an assumption, not on the data. 'B+' is
     the third most common grade in the real export, 355 of 3492 rows, and every one
     of them was unimportable.
+
+    WHAT CHANGED UNDER THIS CLASS, AND WHY THE ASSERTIONS MOVED
+    grade is DERIVED now. PaperReview.save() overwrites it from the six criteria
+    on every write (models.py computed_grade(), GRADE_BANDS), so the file's Grade
+    column is accepted for round-trip compatibility and then decides nothing —
+    paper_review/importer.py says so in as many words. These tests asserted the
+    opposite, that an imported letter is stored verbatim, and they had been
+    failing ever since the bands became business rules.
+
+    The column still has to be five wide, and that is what is worth testing: not
+    because a file can carry "B+", but because computed_grade() RETURNS it. So
+    the width is now asserted through the derivation that produces it.
     """
 
-    def test_b_plus_imports_and_is_stored_whole(self):
+    def test_a_file_carrying_b_plus_is_still_importable(self):
+        """
+        Round-trip compatibility. The column is accepted rather than refused;
+        refusing it would break every existing export that carries one.
+        """
         rows = [pr_row(**{"Grade": "B+"})]
         data = self.preview(PR[1], rows)
         self.assertEqual(data["importable"], 1, data["rows"])
+        self.assertEqual(self.commit(PR[1], rows, data).status_code, 201)
+
+    def test_the_derived_b_plus_is_stored_whole(self):
+        """
+        THE REASON THE COLUMN IS FIVE WIDE. A 33-point rubric is a B+, and a
+        one-character column truncated it — which is the same DataError this file
+        exists for, just reached through save() rather than through the file.
+        """
+        rows = [pr_row(**{"Grade": "B+"}, **B_PLUS_SCORES)]
+        data = self.preview(PR[1], rows)
 
         resp = self.commit(PR[1], rows, data)
         self.assertEqual(resp.status_code, 201, resp.content)
-        self.assertEqual(PaperReview.objects.get().grade, "B+")
+        review = PaperReview.objects.get()
+        self.assertEqual(review.proposal_score, 33)
+        self.assertEqual(review.grade, "B+")
 
-    def test_the_whole_real_vocabulary_imports(self):
-        """A, B, B+, C, D, E; every distinct grade the export actually carries."""
-        for grade in ("A", "B", "B+", "C", "D", "E"):
-            with self.subTest(grade=grade):
+    def test_the_criteria_outrank_the_files_grade(self):
+        """
+        A file claiming A over a 33-point rubric stores B+. Every letter the
+        export carries goes in; none of them decides anything.
+        """
+        for claimed in ("A", "B", "B+", "C", "D", "E"):
+            with self.subTest(grade=claimed):
                 PaperReview.objects.all().delete()
-                rows = [pr_row(**{"Grade": grade})]
+                rows = [pr_row(**{"Grade": claimed}, **B_PLUS_SCORES)]
                 data = self.preview(PR[1], rows)
                 resp = self.commit(PR[1], rows, data)
                 self.assertEqual(resp.status_code, 201, resp.content)
-                self.assertEqual(PaperReview.objects.get().grade, grade)
+                self.assertEqual(PaperReview.objects.get().grade, "B+")
 
     def test_the_column_is_still_narrow_enough_to_mean_something(self):
         """
