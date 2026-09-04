@@ -183,7 +183,9 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 
         purpose_code = extract_purpose_code(validated_data.get("purpose", ""))
         if purpose_code:
-            validated_data["ticket_number"] = assign_next_ticket_number(purpose_code)
+            validated_data["ticket_number"] = assign_next_ticket_number(
+                purpose_code, validated_data.get("type_of_ticket", ""),
+            )
 
         return super().create(validated_data)
 

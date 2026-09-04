@@ -8,11 +8,10 @@ import { htmlToText } from '../lib/richText';
 import {
   PARTICIPATION_TYPES, QC_GRADES, QC_GRADE_TONE, SPEAKER_SLOT_STATUSES, SPEAKER_SLOT_TONE,
   SPONSORSHIP_STATUSES, SPONSORSHIP_TONE, REVENUE_POSSIBILITY, REVENUE_TONE,
-  // The two derived status columns have KNOWN vocabularies, unlike the panel and
-  // risk columns below, because they are read from the event catalogue and the
-  // bookings pipeline rather than typed here. Reused rather than restated; both
-  // pairs already back the Events and Bookings grids.
-  EVENT_STATUSES, EV_TONE, PAYMENT_STATUSES, STATUS_TONE,
+  // Booking Status by SE has a KNOWN vocabulary, unlike the panel and risk columns
+  // below, because it is read from the bookings pipeline rather than typed here.
+  // Reused rather than restated; the pair already backs the Bookings grid.
+  PAYMENT_STATUSES, STATUS_TONE,
   PANEL_APPROACHED, PANEL_APPROACHED_TONE, SLOT_REOFFER_STATUSES, SLOT_REOFFER_TONE,
   RISK_LEVELS, RISK_TONE,
   // The SAME list the paper review form offers. agenda_slot is where the bridge
@@ -75,19 +74,17 @@ const PROPOSAL_COLS = [
      every row. The status columns keep theirs; those lists are constants
      rather than a scan of the data. */
   { key: 'event_code', serverField: 'event_code', serverOrdering: 'event_code', label: 'Event Code', group: 'id', cell: (v) => <span className="mono lnk">{v}</span> },
-  /* READ ONLY, and not stored on the proposal at all — both are annotated from
-     the event catalogue by ProposalSubmissionViewSet._annotate_tracker_context.
-     They carry serverField and serverOrdering like every other column because
-     that annotation is real SQL: the catalogue is the source of truth for an
-     event's date and status, so editing them here would be editing a copy. */
+  /* READ ONLY, and not stored on the proposal at all; it is annotated from the
+     event catalogue by ProposalSubmissionViewSet._annotate_tracker_context. It
+     carries serverField and serverOrdering like every other column because that
+     annotation is real SQL; the catalogue is the source of truth for an event
+     date, so editing it here would be editing a copy. */
   { key: 'event_date', serverField: 'event_date', serverOrdering: 'event_date', label: 'Event Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
-  { key: 'event_status', serverField: 'event_status', serverOrdering: 'event_status', label: 'Event Status', group: 'id', cell: (v) => (v ? <Dot tone={EV_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => EVENT_STATUSES },
-  /* Also read from the catalogue: the tracker's Production Executive is the event's
-     AGENDA team and its SPEX Manager is the SPEX team. NO `opts` — these are free-text
-     team names maintained on the event, so a pinned list here would go stale the first
-     time somebody joins. Both are registered filter_spec fields, so a text condition
-     on either is evaluated by the database over every row. */
-  { key: 'production_executive', serverField: 'production_executive', serverOrdering: 'production_executive', label: 'Production Executive', group: 'id', cell: (v) => (v ? <Who name={v} avatar={false} /> : <span className="dim">—</span>) },
+  /* Also read from the catalogue, the SPEX Manager column is the SPEX team on the
+     event. NO opts, since it is a free-text team name maintained there; a pinned
+     list here would go stale the first time somebody joins. It is a registered
+     filter_spec field, so a text condition on it is evaluated by the database over
+     every row. */
   { key: 'spex_manager', serverField: 'spex_manager', serverOrdering: 'spex_manager', label: 'SPEX Manager', group: 'id', cell: (v) => (v ? <Who name={v} avatar={false} /> : <span className="dim">—</span>) },
   { key: 'submission_date', serverField: 'submission_date', serverOrdering: 'submission_date', label: 'Submission Date', type: 'date', group: 'id', cell: (v) => (v ? fdate(v) : <span className="dim">—</span>) },
   { key: 'participation_type', serverField: 'participation_type', serverOrdering: 'participation_type', label: 'Participation Type', group: 'id', cell: (v) => v || <span className="dim">—</span>, opts: () => PARTICIPATION_TYPES },

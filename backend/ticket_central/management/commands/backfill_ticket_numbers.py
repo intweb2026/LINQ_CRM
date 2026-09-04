@@ -55,7 +55,9 @@ class Command(BaseCommand):
             # ponytail: one locked round-trip per row. The queue is rows that
             # arrived without a number, so it is small; batch by purpose if a
             # migration ever makes it large.
-            ticket.ticket_number = assign_next_ticket_number(purpose_code)
+            ticket.ticket_number = assign_next_ticket_number(
+                purpose_code, ticket.type_of_ticket,
+            )
             ticket.save(update_fields=["ticket_number"])
 
         if dry_run:

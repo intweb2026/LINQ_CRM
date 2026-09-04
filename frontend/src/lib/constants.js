@@ -183,7 +183,10 @@ export const SALES_CHECK_OPTIONS = ['Unassigned', 'Pending', 'Scheduled', 'Done'
 // ── Proposal Submission ──────────────────────────────────────────────────
 // Option lists inferred from the reference screenshots — the exact allowed
 // values are not confirmed against a backend yet. See PROPOSAL_SUBMISSION_BACKEND.md.
-export const PARTICIPATION_TYPES = ['Speaker', 'Sponsor', 'Speaker & Sponsor', 'Panelist'];
+// Two values by request, Sponsor and Speaker & Sponsor were dropped. The backend
+// stores this as free text and validates no choices, so an older row can still
+// hold a dropped value; it renders, it just cannot be picked or filtered by name.
+export const PARTICIPATION_TYPES = ['Speaker', 'Panelist'];
 // A-D was inferred from screenshots; the Zoho export carries B+ and E as well,
 // and 'B+' is the third most common. Listing only A-D meant the column filter and
 // the form's dropdown could neither show nor select a grade that a third of the

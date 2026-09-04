@@ -811,7 +811,7 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                         purpose_code = extract_purpose_code(coerced.get("purpose", ""))
                         if purpose_code:
                             coerced["ticket_number"] = assign_next_ticket_number(
-                                purpose_code
+                                purpose_code, coerced.get("type_of_ticket", ""),
                             )
                     ticket = Ticket.objects.create(
                         created_by=request.user, **coerced,
