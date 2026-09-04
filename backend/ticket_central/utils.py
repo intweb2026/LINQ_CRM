@@ -350,28 +350,32 @@ def extract_purpose_code(purpose):
     return normalize_purpose(purpose)[:50]
 
 
-def build_ticket_number(purpose_code, number):
+def build_ticket_number(purpose_code, number, type_code=""):
     """
-    Format: 'PURPOSE NUMBER', e.g. 'CEU 10001'.
+    'TYPE-PURPOSE NUMBER', e.g. 'BX-CEU 10001'; 'CEU 10001' with no type.
 
-    The type code used to lead the string ('BX-CEU 10001'). It never keyed
-    anything — the counter has always been per purpose, so two types under one
-    purpose shared a series and the prefix only recorded which type happened to
-    raise that row, a fact the type_of_ticket column already holds. Numbers
-    already in the table keep their old prefix; the scan below reads the
-    trailing integer, so both shapes count toward the same high-water mark.
+    The type code leads the string but keys nothing. The counter is per purpose
+    alone, so two types under one purpose share one series and the prefix only
+    records which type raised that row. Every number is found from its trailing
+    integer, so typed, untyped and legacy rows all count toward the same
+    high-water mark.
     """
     if not purpose_code:
         return ""  # cannot build without a purpose
     num_str = str(number)
+    prefix = f"{type_code}-{purpose_code}" if type_code else purpose_code
     max_prefix_len = 50 - len(num_str) - 1
-    return f"{purpose_code[:max_prefix_len]} {num_str}"
+    return f"{prefix[:max_prefix_len]} {num_str}"
 
 
-def assign_next_ticket_number(purpose_code):
+def assign_next_ticket_number(purpose_code, type_of_ticket=""):
     """
-    Returns the next ticket number for this purpose: one past the highest
+    Returns the next ticket number for this purpose, one past the highest
     number already in use, never a gap.
+
+    `type_of_ticket` only decorates the string, raw 'Blue - BX' or bare 'BX'
+    either way. The number is found from the purpose alone, so BX and WH under
+    one purpose keep sharing a series.
 
     Gap reuse was removed. It scanned upward from the LOWEST number in use, and
     the Zoho import left purposes holding two disjoint ranges — FLE, for
@@ -390,6 +394,7 @@ def assign_next_ticket_number(purpose_code):
     # caller having to remember is how one unnormalised path reopens the split
     # counters this exists to prevent.
     purpose_code = extract_purpose_code(purpose_code)
+    type_code = extract_type_code(type_of_ticket)
 
     with transaction.atomic():
         seq, created = TicketSequence.objects.select_for_update().get_or_create(
@@ -427,7 +432,7 @@ def assign_next_ticket_number(purpose_code):
             seq.last_number = next_num
             seq.save(update_fields=["last_number"])
 
-        return build_ticket_number(purpose_code, next_num)
+        return build_ticket_number(purpose_code, next_num, type_code)
 
 
 def _resolve_user(v):

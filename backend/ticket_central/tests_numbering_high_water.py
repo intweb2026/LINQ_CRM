@@ -53,6 +53,28 @@ class HighWaterNumberingTests(TestCase):
         self.assertEqual(assign_next_ticket_number("BRANDNEW"), "BRANDNEW 10001")
 
 
+class TypePrefixTests(TestCase):
+    """The type leads the string; the number still comes from the purpose."""
+
+    def test_type_code_leads_the_number(self):
+        self.assertEqual(assign_next_ticket_number("CCU", "BX"), "BX-CCU 10001")
+
+    def test_raw_zoho_label_is_reduced_to_its_code(self):
+        self.assertEqual(assign_next_ticket_number("CCU", "Blue - BX"),
+                         "BX-CCU 10001")
+
+    def test_two_types_under_one_purpose_share_the_series(self):
+        first = assign_next_ticket_number("CCU", "BX")
+        Ticket.objects.create(purpose="CCU", type_of_ticket="BX",
+                              ticket_number=first)
+
+        self.assertEqual(first, "BX-CCU 10001")
+        self.assertEqual(assign_next_ticket_number("CCU", "WH"), "WH-CCU 10002")
+
+    def test_missing_type_still_numbers(self):
+        self.assertEqual(assign_next_ticket_number("CCU"), "CCU 10001")
+
+
 class PurposeKeyNormalisationTests(TestCase):
     """`purpose` is free text and keys the counter, so variants used to split it."""
 
@@ -93,7 +115,7 @@ class BackfillUsesSharedGeneratorTests(TestCase):
         call_command("backfill_ticket_numbers")
 
         blank.refresh_from_db()
-        self.assertEqual(blank.ticket_number, "FLE 7222")
+        self.assertEqual(blank.ticket_number, "WH-FLE 7222")
 
     def test_dry_run_writes_nothing(self):
         from django.core.management import call_command

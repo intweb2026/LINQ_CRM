@@ -224,8 +224,11 @@ class TicketNumberTests(TestCase):
     def test_extract_purpose_code(self):
         self.assertEqual(extract_purpose_code("  CEU  "), "CEU")
 
-    def test_build_is_purpose_and_number_only(self):
-        """No type prefix: 'BX-CEU 10001' is the old shape."""
+    def test_build_leads_with_the_type_code(self):
+        self.assertEqual(build_ticket_number("CEU", 10001, "BX"), "BX-CEU 10001")
+
+    def test_build_without_a_type_is_purpose_and_number(self):
+        """The type only decorates; a row without one still gets a number."""
         self.assertEqual(build_ticket_number("CEU", 10001), "CEU 10001")
 
     def test_build_no_purpose_returns_empty(self):
@@ -233,8 +236,9 @@ class TicketNumberTests(TestCase):
 
     def test_build_truncates_to_50(self):
         long_purpose = "A" * 100
-        result = build_ticket_number(long_purpose, 10001)
+        result = build_ticket_number(long_purpose, 10001, "BX")
         self.assertLessEqual(len(result), 50)
+        self.assertTrue(result.startswith("BX-"))
 
     def test_build_5digit_number_fits(self):
         result = build_ticket_number("CEU", 10001)
@@ -564,8 +568,8 @@ class CRUDTests(APITestCase):
     def test_create_assigns_ticket_number_when_purpose_present(self):
         """
         ticket_number is assigned AT CREATE, not overnight — supersedes D9.
-        Format is '{purpose} {n}' (utils.build_ticket_number) — the type code
-        is not in it. The purpose is upper-cased, not embedded verbatim:
+        Format is '{type}-{purpose} {n}' (utils.build_ticket_number). The
+        purpose is upper-cased, not embedded verbatim:
         extract_purpose_code normalises it so that case variants of one code
         cannot open separate counters.
         """
@@ -576,7 +580,7 @@ class CRUDTests(APITestCase):
         self.assertEqual(resp.status_code, 201)
         ticket = Ticket.objects.get(pk=resp.data["id"])
         self.assertNotEqual(ticket.ticket_number, "")
-        self.assertTrue(ticket.ticket_number.startswith("NUMBERED "))
+        self.assertTrue(ticket.ticket_number.startswith("BX-NUMBERED "))
 
     def test_create_without_purpose_is_rejected(self):
         """
@@ -1021,11 +1025,11 @@ class BackfillTests(TestCase):
         self.assertNotEqual(t.ticket_number, "")
 
     def test_number_format_matches_expected(self):
-        """Purpose and number only — the type code is not in the string."""
+        """The cron carries the type code into the string, same as the API."""
         Ticket.objects.create(purpose="CEU", type_of_ticket="Blue - BX", ticket_number="")
         self._run()
         t = Ticket.objects.get(purpose="CEU")
-        self.assertEqual(t.ticket_number, "CEU 10001")
+        self.assertEqual(t.ticket_number, "BX-CEU 10001")
 
     def test_skips_ticket_with_no_purpose(self):
         Ticket.objects.create(purpose="", type_of_ticket="BX", ticket_number="")
