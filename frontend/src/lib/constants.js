@@ -140,7 +140,7 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // every other module rather than offering a tick that saves fine and changes
 // nothing, which is the worse failure: an administrator would read it as
 // "shared" and never find out otherwise.
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }, { k: 'mining_matrix', l: 'Mining Matrix' }];
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }, { k: 'mining_matrix', l: 'Mining Matrix' }, { k: 'pre_event_docs', l: 'Pre-Event Docs' }];
 // 'all' is the odd one and is deliberately last. The first four answer "does
 // this module open"; 'all' answers "whose rows are in it" — own rows, or every
 // row. It rides in the same list because every matrix helper, every delta and
@@ -183,7 +183,10 @@ export const SALES_CHECK_OPTIONS = ['Unassigned', 'Pending', 'Scheduled', 'Done'
 // ── Proposal Submission ──────────────────────────────────────────────────
 // Option lists inferred from the reference screenshots — the exact allowed
 // values are not confirmed against a backend yet. See PROPOSAL_SUBMISSION_BACKEND.md.
-export const PARTICIPATION_TYPES = ['Speaker', 'Sponsor', 'Speaker & Sponsor', 'Panelist'];
+// Two values by request, Sponsor and Speaker & Sponsor were dropped. The backend
+// stores this as free text and validates no choices, so an older row can still
+// hold a dropped value; it renders, it just cannot be picked or filtered by name.
+export const PARTICIPATION_TYPES = ['Speaker', 'Panelist'];
 // A-D was inferred from screenshots; the Zoho export carries B+ and E as well,
 // and 'B+' is the third most common. Listing only A-D meant the column filter and
 // the form's dropdown could neither show nor select a grade that a third of the
