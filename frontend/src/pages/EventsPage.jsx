@@ -3,12 +3,15 @@ import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { OwnerName } from '../components/Badge';
 import { ownerOf } from '../lib/owners';
-import { fdate, nf, uniq } from '../lib/helpers';
+import { fdate, nf, plur, uniq } from '../lib/helpers';
 import * as eventsApi from '../api/events';
+import { apiErrorMessage } from '../api/client';
 import { useFetch } from '../hooks/useFetch';
 import { useBulkUpdate } from '../hooks/useBulkUpdate';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
+import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import NoAccessPage from './NoAccessPage';
 import EventDrawer from './events/EventDrawer';
 import EditEventModal from './events/EditEventModal';
@@ -18,7 +21,9 @@ import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
 
 export default function EventsPage() {
-  const { canView, can } = useSession();
+  const { canView, can, isAdmin } = useSession();
+  const toast = useToast();
+  const confirm = useConfirm();
   const { data: events, refetchQuiet: reloadEvents } = useFetch(eventsApi.list, [], { initialData: [] });
   const EVENTS = events || [];
   // The catalogue is also written by the webhook ingestion path and by the
@@ -146,6 +151,28 @@ export default function EventsPage() {
             <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
               <Icon name="edit" size={13} />Update field…
             </button>
+            {/* isAdmin, not can('delete', 'events'): events/views.py bulk_delete is
+                IsAdminRole, so showing this to a grid-granted deleter would offer
+                an affordance the API then refuses. Select one row and this is a
+                per-event delete; the modal keeps its own, which stays on the grid
+                cell because DELETE /events/{id}/ does. Wrapped in try/catch — the
+                response interceptor only acts on 401 (api/client.js), so a 403
+                would otherwise close the dialog and do nothing visible. */}
+            {isAdmin ? (
+              <button className="btn btn-sm btn-d" onClick={async () => {
+                const ok = await confirm({ title: 'Delete events?', sub: plur(ids.length, 'event') + ' will be permanently removed from the catalogue.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. Bookings are not deleted with them — they store their event as a text code, so they survive with codes that no longer resolve, and imports in Paper Review, Proposal Submission and Bookings will reject rows matching those codes.</p> });
+                if (!ok) return;
+                try {
+                  // The toast reports what the SERVER deleted, not how many were
+                  // asked for — those differ whenever a row is out of scope.
+                  const res = await eventsApi.bulkRemove(ids);
+                  clear(); refresh();
+                  toast(plur(res.deleted, 'event') + ' deleted', 'ok');
+                } catch (err) {
+                  toast(apiErrorMessage(err, 'Could not delete those events.'), 'er');
+                }
+              }}><Icon name="trash" size={13} />Delete</button>
+            ) : null}
             <button className="x" aria-label="Clear" onClick={clear}><Icon name="x" size={13} /></button>
           </div>
         )}

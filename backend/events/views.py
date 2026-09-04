@@ -711,6 +711,57 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "errors":             errors[:20],
         })
 
+    # IsAdminRole, not crm_permission("events"): the delete cell of the grid
+    # gates the per-event destroy, this one is admin-only by request. Same split
+    # ticket_central/views.py already carries, and the reason its api helper
+    # routes a single row through destroy instead of here.
+    @action(detail=False, methods=["post"], url_path="bulk_delete",
+            permission_classes=[IsAdminRole])
+    def bulk_delete(self, request):
+        """Admin-only: delete up to 1000 events by ID in one request.
+
+        Bookings are NOT touched — BookEvent stores its event as a text code
+        rather than a foreign key, so they survive with a code that no longer
+        resolves, exactly as they do after clear_all below.
+        """
+        from accounts.models import ActionLog
+        ids = request.data.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return Response({"detail": "ids list required"}, status=400)
+        if len(ids) > 1000:
+            return Response({"detail": "Maximum 1000 IDs per request"}, status=400)
+
+        # Through self.get_queryset(), so this delete inherits the row scoping
+        # above rather than going global. Matters for an is_all_access team,
+        # which IsAdminRole passes but has_all_records may still narrow.
+        permitted_ids = list(
+            self.get_queryset().filter(id__in=ids).values_list("id", flat=True)
+        )
+        skipped = len(set(ids)) - len(permitted_ids)
+        if not permitted_ids:
+            return Response(
+                {"detail": "None of the requested records are in your scope.",
+                 "deleted": 0, "requested": len(ids), "permitted": 0},
+                status=403,
+            )
+
+        with transaction.atomic():
+            qs    = Event.objects.filter(id__in=permitted_ids)
+            count = qs.count()
+            ActionLog.objects.create(
+                user    = request.user,
+                action  = f"Bulk deleted {count} events",
+                details = (
+                    f"requested={len(ids)} permitted={count} "
+                    f"out_of_scope={skipped} ids={sorted(permitted_ids)}"
+                ),
+            )
+            qs.delete()
+        return Response({
+            "deleted": count, "requested": len(ids), "permitted": count,
+            "out_of_scope": skipped,
+        })
+
     @action(detail=False, methods=["delete"], url_path="clear_all",
             permission_classes=[IsHPAccount])
     def clear_all(self, request):

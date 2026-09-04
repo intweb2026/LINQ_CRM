@@ -4,7 +4,7 @@
 // `event_status` is the server's computed Live/Completed by date. The stored
 // `status`, `capacity` and the mocked web-booking count and campaign slug are
 // gone from this contract: nothing on the Events screen shows them any more.
-import { http, fetchAllPages } from './client';
+import { assertIdArray, chunk, http, fetchAllPages } from './client';
 
 // Backend column -> frontend key, for the owner columns the server can answer
 // from the Teams module. Only these four are resolvable; see OWNER_ROLE_SOURCES
@@ -131,6 +131,29 @@ export function update(id, patch) {
 }
 export function remove(id) {
   return http.delete(`events/${id}/`).then(() => true);
+}
+
+/** Matches the cap in events/views.py bulk_delete; past it, a 400. */
+const BULK_DELETE_MAX = 1000;
+
+/**
+ * Delete events, in batches the endpoint will accept. ADMIN ONLY — the endpoint
+ * is IsAdminRole, unlike the per-event destroy above, which the events delete
+ * cell of the permission grid gates. Batches run sequentially so the totals
+ * describe what actually happened up to any failure.
+ */
+export async function bulkRemove(ids) {
+  assertIdArray(ids, 'events.bulkRemove');
+  const totals = { deleted: 0, requested: 0, permitted: 0, out_of_scope: 0 };
+  for (const batch of chunk(ids, BULK_DELETE_MAX)) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await http.post('events/bulk_delete/', { ids: batch }).then((r) => r.data);
+    totals.deleted += res.deleted || 0;
+    totals.requested += res.requested || 0;
+    totals.permitted += res.permitted || 0;
+    totals.out_of_scope += res.out_of_scope || 0;
+  }
+  return totals;
 }
 export function create(payload) {
   return http.post('events/', toBackend(payload)).then((r) => toFrontend(r.data));
