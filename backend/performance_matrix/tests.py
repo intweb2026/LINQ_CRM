@@ -16,6 +16,9 @@ from events.models import Event
 from paper_review.models import PaperReview
 from ticket_central.models import Ticket
 
+from .management.commands.sync_verdicts_from_sheet import (
+    apply_changes, column_index, normalise_status, plan_changes,
+)
 from .services import BENCHMARK, build_payload, countdown, previous_edition_label
 
 TODAY = date(2026, 1, 12)
@@ -132,3 +135,44 @@ class MatrixTests(TestCase):
         self.assertEqual(countdown(TODAY, TODAY), "Today")
         self.assertEqual(countdown(TODAY, date(2027, 9, 13)), "1y 8mo 1d")
         self.assertEqual(countdown(TODAY, date(2026, 1, 9)), "3d ago")
+
+
+class VerdictSheetSyncTests(TestCase):
+    """The sheet to verdict copy, without Google: rows in, plan out, then written."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.a = Event.objects.create(event_code="HFE - RS", event_date=date(2026, 2, 2))
+        cls.b = Event.objects.create(event_code="FCM - JS", event_date=date(2026, 2, 11), verdict="Postponed")
+        cls.c = Event.objects.create(event_code="BIU/GS - PM", event_date=date(2026, 2, 9))
+
+    def test_columns_and_aliases(self):
+        self.assertEqual(column_index("B"), 1)
+        self.assertEqual(column_index("BJ"), 61)
+        self.assertEqual(normalise_status("  going   ahead "), "Going Ahead")
+        self.assertEqual(normalise_status("Full efforts required"), "Full Efforts Req.")
+        self.assertIsNone(normalise_status(""))
+        self.assertIsNone(normalise_status("Maybe"))
+
+    def test_plan_then_apply(self):
+        pad = [""] * 58   # columns D to BI, so the status lands in BJ
+        rows = [
+            ["Events 2026-27", "Events 2026-27", "SE", *pad, "Event Status"],   # header
+            ["Total", "", "", *pad, ""],                                           # totals
+            ["Feb", "hfe - rs", "Terry", *pad, "Going Ahead"],                    # case differs, changes
+            ["Feb", "FCM - JS", "Terry", *pad, "postponed"],                      # already correct
+            ["Feb", "BIU/GS - PM", "Terry", *pad, "Maybe"],                       # unknown status
+            ["Feb", "ZZZ - QQ", "Terry", *pad, "Going Ahead"],                    # no such event
+            ["Feb", "HFE - RS", "Terry", *pad, "Cancelled"],                      # duplicate code, first wins
+        ]
+        plan = plan_changes(rows, 1, 61)
+        self.assertEqual([(e.event_code, v) for e, v in plan["changes"]], [("HFE - RS", "Going Ahead")])
+        self.assertEqual([e.event_code for e in plan["unchanged"]], ["FCM - JS"])
+        self.assertEqual(plan["unknown"], [("BIU/GS - PM", "Maybe")])
+        self.assertEqual(plan["unmatched"], ["Events 2026-27", "ZZZ - QQ"])
+        self.assertEqual(plan["blank"], 0)
+        self.assertEqual(apply_changes(plan["changes"]), 1)
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.verdict, "Going Ahead")
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.verdict, "")
