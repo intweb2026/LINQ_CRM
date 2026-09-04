@@ -49,7 +49,7 @@ export default function CommandPalette({ open, onClose }) {
     const res = [];
     NAV_FLAT.forEach((i) => {
       // canAccess, not an inline canView: Dashboard is gated on `needsAny`,
-      // Data API Keys on `hpOnly`, Event Performance on `adminOnly`, and the old
+      // Data API Keys on `hpOnly`, Performance Matrix on `adminOnly`, and the old
       // check ignored anything that was not a single `mod` — so the palette would
       // have kept offering them to someone the rail hides them from, which is the
       // same page reachable by a different door. The username is what `hpOnly` is

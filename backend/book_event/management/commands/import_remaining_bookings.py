@@ -104,7 +104,7 @@ from django.db import transaction
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
-from event_performance.active_edition_service import (
+from events.codes import (
     extract_year_from_code,
     normalize_master_code,
 )

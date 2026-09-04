@@ -17,14 +17,14 @@ All three are the same event family, and every ticket raised for any of them
 carries `purpose = "AFS"`. So the matrix cannot join on event_code at all; it has
 to reduce an event code to the purpose it belongs to.
 
-WHY NOT event_performance.normalize_master_code
+WHY NOT events.codes.normalize_master_code
 That function takes the first THREE alphabetic characters, which is wrong twice
 over here. It truncates the real codes that are longer — BAPE→BAP, SFIL→SFI,
 FLNU→FLN, WLKE→WLK, SCSG→SCS — and it reads a leading month as the code, so
 "Feb2027_AFS-JS" resolves to "FEB". Both failures are silent: the row simply
 shows zero unmined links, which is indistinguishable from an event that is
-genuinely fully mined. It is left alone because Event Performance's own grouping
-depends on its exact behaviour.
+genuinely fully mined. It is left alone because the booking importers depend on
+its exact behaviour.
 
 THE APPROACH: MATCH AGAINST THE REAL CODE LIST, DO NOT INVENT A SHAPE
 `purpose` is a closed set — whatever values Ticket Central actually holds — so
@@ -34,17 +34,12 @@ is understood the day the first ticket carries it, with no change here.
 """
 import re
 
-_ALPHA = re.compile(r"[A-Za-z]+")
-
 # Dropped from a code before matching, but only when something else survives —
 # "Feb2027_AFS-JS" leads with a calendar month, and a bare month is never an
-# event family. Both spellings, because the exports carry both.
-_MONTHS = frozenset({
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "SEPT", "OCT", "NOV", "DEC",
-    "JANUARY", "FEBRUARY", "MARCH", "APRIL", "JUNE",
-    "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
-})
+# event family. One list, shared with events.codes.derive_base_code.
+from events.codes import MONTHS as _MONTHS
+
+_ALPHA = re.compile(r"[A-Za-z]+")
 
 
 def known_purpose_codes():

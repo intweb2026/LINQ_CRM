@@ -90,6 +90,9 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
         exclude=(
             # identity
             "event_code",
+            # retired from every screen; the Performance Matrix verdict is the
+            # per-edition status people actually set
+            "status",
             # the nine fields Event.save() derives — callers set the SOURCE
             "name", "official_name", "accepting_web_bookings",
             "city", "country", "venue",
@@ -105,7 +108,9 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "telemarketing_team":     "Telemarketing Team",
             "event_management_team":  "Event Management Team",
             "spex_team":              "SPEX Team",
-            "master_code":            "Master Code",
+            "base_code":              "Base Code",
+            "year":                   "Year",
+            "verdict":                "Verdict (Performance Matrix)",
             "website_live_date":      "Website Live Date",
             "nearest_related_event":  "Nearest Related Event",
             "related_event_1":        "Related Event 1",
@@ -454,7 +459,11 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     upcoming_event_1 = _clean(row, "upcoming_event_1")
                     upcoming_event_2 = _clean(row, "upcoming_event_2")
                     upcoming_event_3 = _clean(row, "upcoming_event_3")
-                    status = _clean(row, "status") or Event.Status.DRAFT
+                    # Edition identity. Blank derives in Event.save() from the
+                    # internal code and the start date, so both are optional.
+                    base_code = _clean(row, "base_code").upper()
+                    year_raw = _clean(row, "year")
+                    year = int(year_raw) if year_raw.isdigit() and 2000 <= int(year_raw) <= 2100 else None
 
                     # Accepting Web Bookings
                     awb_raw = _clean(row, "web_bookings") or _clean(row, "accepting_web_bookings")
@@ -572,7 +581,8 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             existing.upcoming_event_1 = upcoming_event_1 or existing.upcoming_event_1
                             existing.upcoming_event_2 = upcoming_event_2 or existing.upcoming_event_2
                             existing.upcoming_event_3 = upcoming_event_3 or existing.upcoming_event_3
-                            existing.status = status or existing.status
+                            existing.base_code = base_code or existing.base_code
+                            existing.year = year or existing.year
                             existing.sales_executive = sales_exec or existing.sales_executive
 
                             existing.save()
@@ -621,7 +631,8 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                             upcoming_event_1=upcoming_event_1,
                             upcoming_event_2=upcoming_event_2,
                             upcoming_event_3=upcoming_event_3,
-                            status=status,
+                            base_code=base_code,
+                            year=year,
                             sales_executive=sales_exec,
                         )
 

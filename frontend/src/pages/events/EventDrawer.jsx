@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Drawer from '../../components/Drawer';
 import { Tabs } from '../../components/UI';
 import { Icon } from '../../lib/icons';
-import { EvBadge, Who } from '../../components/Badge';
+import { Who } from '../../components/Badge';
 import { fdate, nf, pc } from '../../lib/helpers';
 import { OWNER_FIELDS, ownerOf } from '../../lib/owners';
 import * as bookingsApi from '../../api/bookings';
@@ -28,7 +28,7 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
       head={
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3, flexWrap: 'wrap' }}>
-            <span className="mono" style={{ color: 'var(--t-600)' }}>{ev.event_code}</span><EvBadge value={ev.status} />
+            <span className="mono" style={{ color: 'var(--t-600)' }}>{ev.event_code}</span>
           </div>
           <h2>{ev.name}</h2><p>{ev.location} · {fdate(ev.event_date)} → {fdate(ev.end_date)}</p>
         </div>
@@ -46,11 +46,11 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
           <div className="ro">
             <div className="ro-c"><div className="ro-l">Starts</div><div className="ro-v">{fdate(ev.event_date)}</div></div>
             <div className="ro-c"><div className="ro-l">Ends</div><div className="ro-v">{fdate(ev.end_date)}</div></div>
-            <div className="ro-c"><div className="ro-l">Edition</div><div className="ro-v">{ev.edition}</div></div>
+            <div className="ro-c"><div className="ro-l">Base code</div><div className="ro-v mono">{ev.base_code || '—'}</div></div>
+            <div className="ro-c"><div className="ro-l">Year</div><div className="ro-v">{ev.year || '—'}</div></div>
             <div className="ro-c"><div className="ro-l">Event type</div><div className="ro-v">{ev.event_type}</div></div>
             <div className="ro-c"><div className="ro-l">Website live</div><div className="ro-v">{fdate(ev.website_live_date)}</div></div>
             <div className="ro-c"><div className="ro-l">Sales check</div><div className="ro-v">{ev.sales_check}</div></div>
-            <div className="ro-c"><div className="ro-l">Capacity</div><div className="ro-v">{nf(ev.capacity)}</div></div>
             <div className="ro-c"><div className="ro-l">Nearest related</div><div className="ro-v mono">{ev.nearest_related}</div></div>
             <div className="ro-c"><div className="ro-l">Website</div><div className="ro-v mono">{ev.website || '—'}</div></div>
             <div className="ro-c"><div className="ro-l">Web bookings enabled</div><div className="ro-v">{ev.web_bookings_enabled || '—'}</div></div>
@@ -62,8 +62,6 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
             <div><div className="l">Paid</div><div className="v g">{nf(paid)}</div></div>
             <div><div className="l">Pending</div><div className="v a">{nf(pend)}</div></div>
           </div>
-          <div className="shr"><span className="l">Seats filled</span><span className="t"><i style={{ width: pc(bk.length, ev.capacity) + '%' }} /></span><span className="p">{pc(bk.length, ev.capacity)}%</span></div>
-          <div className="shr"><span className="l">Web bookings</span><span className="t"><i style={{ width: pc(ev.web_bookings, ev.capacity) + '%' }} /></span><span className="p">{pc(ev.web_bookings, ev.capacity)}%</span></div>
         </>
       )}
       {tab === 'editions' && (
@@ -140,7 +138,6 @@ export default function EventDrawer({ event: ev, onClose, onEdit }) {
           })}
           <div className="sl" style={{ marginTop: 18 }}>Naming &amp; metadata</div>
           <div className="ro">
-            <div className="ro-c"><div className="ro-l">Campaign name</div><div className="ro-v mono">{ev.email_marketing}</div></div>
             <div className="ro-c"><div className="ro-l">Name for email marketing</div><div className="ro-v">{ev.email_marketing_name || '—'}</div></div>
             <div className="ro-c"><div className="ro-l">Name for branding</div><div className="ro-v">{ev.branding_name || '—'}</div></div>
             <div className="ro-c"><div className="ro-l">Annualisation</div><div className="ro-v">{ev.annualisation || '—'}</div></div>

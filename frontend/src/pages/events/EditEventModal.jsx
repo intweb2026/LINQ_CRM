@@ -3,15 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
-import { Av, EvBadge } from '../../components/Badge';
+import { Av } from '../../components/Badge';
 import { avc, ini } from '../../lib/helpers';
 import { OWNER_EDIT_FIELDS, ownerOf } from '../../lib/owners';
-import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
+import { YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
+import { apiErrorMessage } from '../../api/client';
 
 // The SCA, the sales team leader and the two Market Research columns are editable
 // here — see OWNER_EDIT_FIELDS in lib/owners.js. Market Research Sr./Jr. is what
@@ -64,21 +65,26 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
   const { data: allUsers } = useFetch(usersApi.list, [], { initialData: [] });
   const pool = (allUsers || []).filter((u) => u.status === 'active');
   const [form, setForm] = useState({
-    event_code: ev.event_code, name: ev.name, edition: ev.edition, status: ev.status,
+    event_code: ev.event_code, base_code: ev.base_code || '', year: ev.year ?? '', name: ev.name,
     event_date: ev.event_date, end_date: ev.end_date, website_live_date: ev.website_live_date, location: ev.location,
     website: ev.website || '', web_bookings_enabled: ev.web_bookings_enabled || 'No', nearest_related: ev.nearest_related || '', vr1_status: ev.vr1_status || 'Not Sent',
-    event_type: ev.event_type, capacity: ev.capacity, sales_check: ev.sales_check,
+    event_type: ev.event_type, sales_check: ev.sales_check,
     email_marketing_name: ev.email_marketing_name || '', branding_name: ev.branding_name || '',
     annualisation: ev.annualisation || 'Annual', date_format: ev.date_format || 'DD-MM-YYYY',
     related_event_1: ev.related_event_1 || '', related_event_2: ev.related_event_2 || '', related_event_3: ev.related_event_3 || '',
     upcoming_event_1: ev.upcoming_event_1 || '', upcoming_event_2: ev.upcoming_event_2 || '', upcoming_event_3: ev.upcoming_event_3 || '',
-    sales_team: ev.sales_team || '', sales_lead: ev.sales_lead, tele_team: ev.tele_team, mr_senior: ev.mr_senior, mr_junior: ev.mr_junior, spex_lead: ev.spex_lead, event_mgmt: ev.event_mgmt,
+    sales_team: ev.sales_team || '', sales_lead: ev.sales_lead, tele_team: ev.tele_team, mr_senior: ev.mr_senior, mr_junior: ev.mr_junior, spex_lead: ev.spex_lead,
   });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function save() {
     if (!form.event_code.trim() || !form.name.trim()) { toast('Event code and name are required', 'er'); return; }
-    await eventsApi.update(ev.id, { ...form, capacity: +form.capacity || ev.capacity });
+    try {
+      await eventsApi.update(ev.id, form);
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not save the event'), 'er');
+      return;
+    }
     onClose(); toast(form.event_code + ' updated', 'ok'); onSaved();
   }
   async function del() {
@@ -95,7 +101,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
             <span className="av av-lg" style={{ background: avc(ev.event_code) }}>{ini(ev.event_code)}</span>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                <h2 style={{ fontSize: 17 }}>Edit Event</h2><EvBadge value={ev.status} /><span className="tg bg-neutral">{ev.event_type}</span>
+                <h2 style={{ fontSize: 17 }}>Edit Event</h2><span className="tg bg-neutral">{ev.event_type}</span>
               </div>
               <p>{ev.event_code} · {ev.name}</p>
             </div>
@@ -125,9 +131,11 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Identification</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label><input className="in mono" value={form.event_code} onChange={set('event_code')} /></div>
-          <div className="fd"><label className="fd-l">Edition</label><input className="in" value={form.edition} onChange={set('edition')} /></div>
-          <div className="fd"><label className="fd-l">Status</label><select className="in" value={form.status} onChange={set('status')}>{EVENT_STATUSES.map((s) => <option key={s}>{s}</option>)}</select></div>
+          <div className="fd"><label className="fd-l">Internal code<span className="req">*</span></label><input className="in mono" value={form.event_code} onChange={set('event_code')} /></div>
+          {/* See NewEventModal: the family code shared by every edition, and the
+              edition year. Together they are the Performance Matrix's row identity. */}
+          <div className="fd"><label className="fd-l">Base code</label><input className="in mono" value={form.base_code} onChange={set('base_code')} /></div>
+          <div className="fd"><label className="fd-l">Year</label><NumField min={2000} max={2100} value={form.year} onChange={set('year')} /></div>
           <div className="fd full" style={{ gridColumn: '1/-1' }}><label className="fd-l">Official event name<span className="req">*</span></label><input className="in" value={form.name} onChange={set('name')} /></div>
         </div>
       </div>
@@ -150,10 +158,9 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
         </div>
       </div>
       <div className="fs">
-        <div className="fs-t"><Icon name="target" size={13} />Classification &amp; capacity</div>
+        <div className="fs-t"><Icon name="target" size={13} />Classification</div>
         <div className="fg c4">
           <div className="fd"><label className="fd-l">Event type</label><input className="in" value={form.event_type} onChange={set('event_type')} /></div>
-          <div className="fd"><label className="fd-l">Capacity</label><NumField min={0} value={form.capacity} onChange={set('capacity')} /></div>
           <div className="fd"><label className="fd-l">Sales check</label><select className="in" value={form.sales_check} onChange={set('sales_check')}>{SALES_CHECK_OPTIONS.map((o) => <option key={o}>{o}</option>)}</select></div>
         </div>
       </div>

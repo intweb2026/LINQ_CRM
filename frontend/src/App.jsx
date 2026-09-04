@@ -30,7 +30,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const BookingsPage = lazy(() => import('./pages/BookingsPage'));
 const TicketCentralPage = lazy(() => import('./pages/TicketCentralPage'));
 const EventsPage = lazy(() => import('./pages/EventsPage'));
-const EventPerformancePage = lazy(() => import('./pages/EventPerformancePage'));
+const PerformanceMatrixPage = lazy(() => import('./pages/PerformanceMatrixPage'));
 const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
@@ -118,7 +118,10 @@ export default function App() {
                 <Route path="paper-review" element={<PaperReviewPage />} />
                 <Route path="proposal-submission" element={<ProposalSubmissionPage />} />
                 <Route path="events" element={<EventsPage />} />
-                <Route path="performance" element={<EventPerformancePage />} />
+                <Route path="performance-matrix" element={<PerformanceMatrixPage />} />
+                {/* The old Event Performance address, kept as a redirect so a
+                    bookmark lands on its replacement rather than on the home page. */}
+                <Route path="performance" element={<Navigate to="/performance-matrix" replace />} />
                 <Route path="mining-matrix" element={<MiningMatrixPage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />

@@ -23,12 +23,12 @@
 // cannot express "no role may be granted this" — ticking the module would light
 // up a page whose every request then 403s.
 //
-// ONE ENTRY CARRIES IT: Event Performance. Its numbers are per-event revenue and
-// paid/unpaid delegate counts across the whole catalogue, and the server has
-// always answered /api/event-performance/ for admins only. The rail and the page
-// were gated on the `performance` module instead, so any team ticked into it saw
-// the entry, opened the page and read commercially sensitive figures the module
-// was never meant to authorise. Both now ask the same question the server asks.
+// ONE ENTRY CARRIES IT: Performance Matrix. Its numbers are live paid and pending
+// delegate counts across the whole catalogue, and the server answers
+// /api/performance-matrix/ for admins only. Its predecessor was gated on the
+// `performance` module instead, so any team ticked into it saw the entry, opened
+// the page and read commercially sensitive figures the module was never meant to
+// authorise. Both now ask the same question the server asks.
 //
 // `hpOnly` is a FOURTH gate and stacks the same way: the entry is reachable only by the HP account, whatever the permission
 // matrix says. It is not a module because it is not a role capability — no role
@@ -55,8 +55,8 @@ import { HP_USERNAME } from './constants';
  *
  * Read off the canView() calls in DashboardPage: the action queue, the headline
  * stats, the charts and the recent-activity panels between them cover these four
- * and nothing else. 'performance' is deliberately absent — Event Performance is
- * its own page and contributes no panel here, so holding it alone would light up
+ * and nothing else. 'performance' is deliberately absent — the Performance Matrix
+ * is its own page and contributes no panel here, so holding it alone would light up
  * a Dashboard with everything hidden.
  *
  * Exported because DashboardPage's own guard reads the same list. One definition,
@@ -79,7 +79,7 @@ export const NAV = [
     // `adminOnly` — the `mod` alongside it is decorative, kept only so an entry
     // never sits here with no module at all, and the Permissions grid shows the
     // Performance row as locked for the same reason (see CRM_MODULES).
-    { id: 'performance', l: 'Event Performance', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance' },
+    { id: 'performance_matrix', l: 'Performance Matrix', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance-matrix' },
     // Its own module, not a corner of ticket_central: the matrix aggregates
     // tickets but it is a capacity-planning surface, and ticket_central's grant
     // carries create/update/delete over the live queue. See CRM_MODULES in

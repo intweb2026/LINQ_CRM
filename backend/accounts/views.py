@@ -386,7 +386,6 @@ class UserViewSet(viewsets.ModelViewSet):
             stats.append({
                 "event_code": e.event_code,
                 "name": e.name,
-                "expected_revenue": float(e.expected_revenue),
                 "current_revenue": float(rev),
                 "event_status": e.event_status
             })

@@ -17,6 +17,19 @@ class Event(models.Model):
         POSTPONED = "Postponed", "Postponed"
         TBP       = "TBP",       "TBP"
 
+    # The Performance Matrix's one manual column. Set per EDITION by an admin
+    # from the matrix itself (performance_matrix/views.py), never derived. The
+    # matrix paints the whole row in the verdict's colour, so the palette lives
+    # with the choices: frontend/src/api/performanceMatrix.js mirrors this list.
+    class Verdict(models.TextChoices):
+        STANDBY      = "Standby",           "Standby"
+        GOING_AHEAD  = "Going Ahead",       "Going Ahead"
+        NEEDS_PUSH   = "Needs a push",      "Needs a push"
+        FULL_EFFORTS = "Full Efforts Req.", "Full Efforts Req."
+        POSTPONED    = "Postponed",         "Postponed"
+        TBP          = "TBP",               "TBP"
+        CANCELLED    = "Cancelled",         "Cancelled"
+
     event_code  = models.CharField(max_length=50, unique=True, db_index=True)
     name        = models.CharField(max_length=255, blank=True, default="")
     # Provenance for the Zoho load. All rows written by ONE run of
@@ -31,11 +44,17 @@ class Event(models.Model):
     venue       = models.CharField(max_length=255, blank=True, default="")
     event_date  = models.DateField()
     end_date    = models.DateField(null=True, blank=True)
-    capacity    = models.PositiveIntegerField(default=500)
-    expected_revenue = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+
+    # ── Edition identity ─────────────────────────────────────────────────────
+    # (base_code, year) is what every cross-edition calculation keys on; see
+    # events/codes.py. event_code stays the unique INTERNAL code shown in the UI.
+    # Both are filled in by save() when left blank, so an import or the webhook
+    # never creates an edition the matrix cannot place.
+    base_code              = models.CharField(max_length=50, blank=True, default="", db_index=True)
+    year                   = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    verdict                = models.CharField(max_length=30, choices=Verdict.choices, blank=True, default="")
 
     # ── New fields from Events.csv ──────────────────────────────────────────
-    master_code            = models.CharField(max_length=50, blank=True, default="", db_index=True)
     official_name          = models.CharField(max_length=255, blank=True, default="")
     spex_team              = models.CharField(max_length=255, blank=True, default="")
     tele_marketing_team    = models.CharField(max_length=255, blank=True, default="")
@@ -99,6 +118,17 @@ class Event(models.Model):
             
         self.tele_marketing_team = self.telemarketing_team
         self.market_research_team = self.market_research_senior
+
+        # Edition identity defaults. Only ever fills a BLANK, so a value an admin
+        # typed on the Events form is never overwritten by the rule.
+        from .codes import derive_base_code
+        if not (self.base_code or "").strip():
+            self.base_code = derive_base_code(self.event_code)
+        self.base_code = self.base_code.strip().upper()
+        if not self.year and self.event_date:
+            # to_python: importers and tests hand save() an ISO STRING, which has
+            # no .year until the field has parsed it.
+            self.year = self._meta.get_field("event_date").to_python(self.event_date).year
 
         # Sync sales_team and sales_executive. Every write path in the codebase
         # goes through save(), the importer and the bulk editor included
@@ -195,6 +225,7 @@ class Event(models.Model):
             models.Index(fields=["event_code"]),
             models.Index(fields=["event_date"]),
             models.Index(fields=["updated_at"]),
+            models.Index(fields=["base_code", "year"], name="events_base_year_idx"),
         ]
 
     def __str__(self):

@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
-import { EVENT_STATUSES, YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
+import { YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import * as eventsApi from '../../api/events';
+import { apiErrorMessage } from '../../api/client';
 import { OWNER_EDIT_FIELDS } from '../../lib/owners';
 
 // The SCA, the sales team leader and the two Market Research columns — see
@@ -27,10 +28,10 @@ export default function NewEventModal({ onClose, onSaved }) {
   const { data: allUsers } = useFetch(usersApi.list, [], { initialData: [] });
   const pool = (allUsers || []).filter((u) => u.status === 'active');
   const [form, setForm] = useState({
-    event_code: '', edition: '', name: '', status: 'Draft', event_type: '',
+    event_code: '', base_code: '', year: '', name: '', event_type: '',
     event_date: '', end_date: '', location: '', website_live_date: '',
     website: '', web_bookings_enabled: 'No', nearest_related: '', vr1_status: 'Not Sent',
-    capacity: '', sales_check: 'Unassigned',
+    sales_check: 'Unassigned',
     email_marketing_name: '', branding_name: '', annualisation: 'Annual', date_format: 'DD-MM-YYYY',
     related_event_1: '', related_event_2: '', related_event_3: '',
     upcoming_event_1: '', upcoming_event_2: '', upcoming_event_3: '',
@@ -57,8 +58,9 @@ export default function NewEventModal({ onClose, onSaved }) {
         website_live_date: form.website_live_date || null,
         website: form.website.trim() || '', web_bookings_enabled: form.web_bookings_enabled,
         nearest_related: form.nearest_related.trim() || '—', vr1_status: form.vr1_status,
-        status: form.status, event_type: form.event_type.trim() || 'Summit', edition: form.edition.trim() || '1st',
-        capacity: +form.capacity || 300, sales_check: form.sales_check,
+        event_type: form.event_type.trim() || 'Summit',
+        base_code: form.base_code.trim().toUpperCase(), year: form.year ? +form.year : null,
+        sales_check: form.sales_check,
         ...ownerFields,
         email_marketing_name: form.email_marketing_name.trim() || name,
         branding_name: form.branding_name.trim() || code,
@@ -68,8 +70,9 @@ export default function NewEventModal({ onClose, onSaved }) {
         upcoming_event_1: form.upcoming_event_1.trim() || '—', upcoming_event_2: form.upcoming_event_2.trim() || '—', upcoming_event_3: form.upcoming_event_3.trim() || '—',
       });
     } catch (err) {
-      if (err.response?.data?.event_code) { toast('That event code already exists', 'er'); return; }
-      toast('Could not create event — check the form and try again', 'er');
+      // The server names the field: a duplicate internal code, or a second
+      // edition claiming the same base code and year.
+      toast(apiErrorMessage(err, 'Could not create event — check the form and try again'), 'er');
       return;
     }
     onClose(); toast(code + ' added to the catalogue', 'ok'); onSaved?.(); nav('/events');
@@ -81,9 +84,13 @@ export default function NewEventModal({ onClose, onSaved }) {
       <div className="fs">
         <div className="fs-t"><Icon name="calendar" size={13} />Identification</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Event code<span className="req">*</span></label><input className="in mono" placeholder="e.g. XYZ - PM27" value={form.event_code} onChange={set('event_code')} /></div>
-          <div className="fd"><label className="fd-l">Edition</label><input className="in" placeholder="e.g. 1st" value={form.edition} onChange={set('edition')} /></div>
-          <div className="fd"><label className="fd-l">Status</label><select className="in" value={form.status} onChange={set('status')}>{EVENT_STATUSES.map((s) => <option key={s}>{s}</option>)}</select></div>
+          <div className="fd"><label className="fd-l">Internal code<span className="req">*</span></label><input className="in mono" placeholder="e.g. FEB2027_AFS-JS" value={form.event_code} onChange={set('event_code')} /></div>
+          {/* The base code is what every edition of a family shares: AFS for AFS,
+              AFS - JS and Feb2027_AFS-JS alike. (Base code, year) is the identity the
+              Performance Matrix keys on; blank derives both from the code and start
+              date on save. */}
+          <div className="fd"><label className="fd-l">Base code</label><input className="in mono" placeholder="from internal code" value={form.base_code} onChange={set('base_code')} /></div>
+          <div className="fd"><label className="fd-l">Year</label><NumField min={2000} max={2100} placeholder="from start date" value={form.year} onChange={set('year')} /></div>
           <div className="fd"><label className="fd-l">Event type</label><input className="in" placeholder="e.g. Summit" value={form.event_type} onChange={set('event_type')} /></div>
           <div className="fd full" style={{ gridColumn: '1/-1' }}><label className="fd-l">Official event name<span className="req">*</span></label><input className="in" placeholder="e.g. Battery Recycling Summit 2027" value={form.name} onChange={set('name')} /></div>
         </div>
@@ -107,9 +114,8 @@ export default function NewEventModal({ onClose, onSaved }) {
         </div>
       </div>
       <div className="fs">
-        <div className="fs-t"><Icon name="target" size={13} />Classification &amp; capacity</div>
+        <div className="fs-t"><Icon name="target" size={13} />Classification</div>
         <div className="fg c4">
-          <div className="fd"><label className="fd-l">Capacity</label><NumField min={0} placeholder="300" value={form.capacity} onChange={set('capacity')} /></div>
           <div className="fd"><label className="fd-l">Sales check</label><select className="in" value={form.sales_check} onChange={set('sales_check')}>{SALES_CHECK_OPTIONS.map((o) => <option key={o}>{o}</option>)}</select></div>
         </div>
       </div>

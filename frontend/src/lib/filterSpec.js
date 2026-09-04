@@ -31,8 +31,8 @@
  */
 
 import {
-  DATE_NO_VALUE_OPS,
-  dateCondActive, dateCondBound, dateCondWindow, isDateOp,
+  DATE_NO_VALUE_OPS, DATE_PRESET_OPS,
+  dateCondActive, dateCondBound, dateCondWindow, isDateOp, presetWindow,
 } from './dateFilter';
 
 // UI operator -> backend operator. `multi` names the operator to use when the
@@ -59,6 +59,16 @@ const OP_MAP = {
   'Starts With': { single: 'starts_with', multi: null },
   'Ends With': { single: 'ends_with', multi: null },
   'Like': { single: 'like', multi: 'like', listOk: true },
+  // Numeric columns. The same server operators the date vocabulary uses for
+  // ordering, plus equality; `between` is a pair, so it only has a two-value
+  // form and a lone bound stays in the browser as an incomplete condition.
+  'Equals': { single: 'is', multi: 'any_of' },
+  'Not Equals': { single: 'is_not', multi: 'none_of' },
+  'Greater Than': { single: 'gt', multi: null },
+  'At Least': { single: 'gte', multi: null },
+  'Less Than': { single: 'lt', multi: null },
+  'At Most': { single: 'lte', multi: null },
+  'Between': { single: null, multi: 'between' },
   'Is Empty': { single: 'is_empty', multi: 'is_empty', noValue: true },
   'Is Not Empty': { single: 'is_not_empty', multi: 'is_not_empty', noValue: true },
 };
@@ -90,6 +100,9 @@ const DATE_OP_MAP = {
   Is: 'between',
   'Is Not': 'not_between',
   Between: 'between',
+  // Relative presets resolve to a concrete window at request time (presetWindow).
+  Today: 'between', Yesterday: 'between', 'Last 7 Days': 'between', 'Last 30 Days': 'between',
+  'This Month': 'between', 'Last Month': 'between', 'This Year': 'between',
   Before: 'before',
   After: 'after',
   'Is Empty': 'is_empty',
@@ -139,6 +152,16 @@ function dateCriterion(cond, field, cfg) {
     return { ok: false, reason: `'${op}' not allowed on '${field}'` };
   }
   const hasTime = !!cfg.has_time;
+
+  // A preset is a window computed now, sent exactly as a picked range would be.
+  if (DATE_PRESET_OPS.includes(cond.op)) {
+    const win = presetWindow(cond.op);
+    if (!win) return { ok: false, reason: 'no window' };
+    return {
+      ok: true,
+      criterion: { field, op, values: [dateEdge(win.from, 'start', hasTime), dateEdge(win.to, 'end', hasTime)] },
+    };
+  }
 
   if (DATE_NO_VALUE_OPS.includes(cond.op)) return { ok: true, criterion: { field, op } };
 
@@ -255,7 +278,8 @@ export function toCriterion(cond, col, schema) {
     return { ok: true, criterion: { field, op: map.single } };
   }
 
-  const values = condValues(cond);
+  // A number editor holds '' for a bound not yet typed; that is not a value.
+  const values = condValues(cond).filter((v) => String(v ?? '').trim() !== '');
   if (values.length === 0) return { ok: false, reason: 'no values' };
 
   const multi = values.length > 1;

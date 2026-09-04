@@ -58,7 +58,9 @@ urlpatterns = [
     # dataapi/authentication.py. Kept off the router above because it is a
     # separate credential domain, not part of the session-authenticated API.
     path("api/data/",            include("dataapi.urls")),
-    path("api/event-performance/", include("event_performance.urls")),
+    # Performance Matrix, admin only. One aggregate response per view plus a
+    # verdict write, so an include rather than a router entry.
+    path("api/performance-matrix/", include("performance_matrix.urls")),
     # Mining Resource Matrix. A single aggregate response per view rather than
     # a paginated list, so it is its own include and not a router entry above.
     path("api/mining-matrix/", include("mining_matrix.urls")),

@@ -161,13 +161,13 @@ class EventListSerializer(OwnerResolutionMixin, serializers.ModelSerializer):
     class Meta:
         model  = Event
         fields = [
-            "id", "event_code", "event_date", "end_date", "location", "website", "web_bookings",
+            "id", "event_code", "base_code", "year", "verdict", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
             "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
-            "status", "event_status",
+            "event_status",
             # Legacy/system fields for full-stack API contract safety
             "name", "official_name", "city", "country", "venue", "accepting_web_bookings",
             "tele_marketing_team", "market_research_team", "content_check", "marketing_check",
@@ -194,13 +194,13 @@ class EventDetailSerializer(OwnerResolutionMixin, serializers.ModelSerializer):
     class Meta:
         model  = Event
         fields = [
-            "id", "event_code", "event_date", "end_date", "location", "website", "web_bookings",
+            "id", "event_code", "base_code", "year", "verdict", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
             "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
-            "status", "event_status",
+            "event_status",
             # Legacy/system fields for full-stack API contract safety
             "name", "official_name", "city", "country", "venue", "accepting_web_bookings",
             "tele_marketing_team", "market_research_team", "content_check", "marketing_check",
@@ -233,13 +233,12 @@ class EventWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Event
         fields = [
-            "event_code", "event_date", "end_date", "location", "website", "web_bookings",
+            "event_code", "base_code", "year", "verdict", "event_date", "end_date", "location", "website", "web_bookings",
             "nearest_related_event", "event_type", "website_live_date", "sales_check", "vr1_sent_status",
             "sales_team", "team_leader", "telemarketing_team", "spex_team",
             "market_research_senior", "market_research_junior", "event_management_team", "official_event_name",
             "email_marketing_name", "branding_name", "annualisation", "date_format", "related_event_1",
             "related_event_2", "related_event_3", "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
-            "status",
             # Legacy/system fields
             "name", "official_name", "city", "country", "venue", "accepting_web_bookings",
             "tele_marketing_team", "market_research_team", "content_check", "marketing_check",
@@ -248,6 +247,38 @@ class EventWriteSerializer(serializers.ModelSerializer):
 
     def validate_event_code(self, value):
         return value.upper().strip()
+
+    def validate_base_code(self, value):
+        return (value or "").upper().strip()
+
+    def validate(self, attrs):
+        """
+        One edition per (base_code, year). Checked here rather than as a database
+        constraint because the live catalogue predates both columns and is
+        backfilled by rule; a constraint would refuse the migration on the first
+        two rows the rule happens to collapse, while this only refuses NEW
+        collisions and lets an admin repair old ones from the form.
+        """
+        inst = self.instance
+        base = attrs.get("base_code", getattr(inst, "base_code", ""))
+        year = attrs.get("year", getattr(inst, "year", None))
+        # A blank base_code or year is filled in by Event.save(); derive the same
+        # way so a form that left them blank is still checked.
+        if not base:
+            from .codes import derive_base_code
+            base = derive_base_code(attrs.get("event_code", getattr(inst, "event_code", "")))
+        if not year:
+            d = attrs.get("event_date", getattr(inst, "event_date", None))
+            year = d.year if d else None
+        if base and year:
+            clash = Event.objects.filter(base_code=base, year=year)
+            if inst is not None:
+                clash = clash.exclude(pk=inst.pk)
+            if clash.exists():
+                raise serializers.ValidationError({
+                    "base_code": f"{clash.first().event_code} is already the {year} edition of {base}.",
+                })
+        return attrs
 
     def _sync_assigned_users(self, instance, user_ids):
         users = User.objects.filter(pk__in=user_ids)

@@ -107,7 +107,8 @@
    Paper Review           as Bookings, plus [import_wizard_steps]
                           [import_dropzone] [import_column_mapping]
    Proposal Submission    same set as Paper Review
-   Event Performance      [table_shell] [kpi_cards] [tabs]
+   Performance Matrix     [table_shell] [tabs] [table_frozen_columns]
+                          [performance_matrix]
    Google Sync            [table_shell] [modal] [form_sections_grid]
    Users                  [table_shell] [table_cells] [drawer] [modal]
                           [avatars_identity]
@@ -162,6 +163,8 @@
    [table_bulk_selection_bar]  .bulk, the floating bar for ticked rows
    [cards_empty_state]         .cg .rc .card .sl .mt
    [bulk_update_modal]         .bu-, the Mass Update dialog
+   [table_filled_cells]        a status inside a cell paints the whole cell
+   [performance_matrix]        .vd- row tints, .pm-done, .pm-dense and the year chips
 
    ─────────────────────────────────────────────────────────────────────────────
    styles/overlays.css — the dashboard, and everything floating above a page

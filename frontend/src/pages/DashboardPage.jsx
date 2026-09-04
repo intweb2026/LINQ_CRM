@@ -147,7 +147,7 @@ export default function DashboardPage() {
   const first = user.name.split(' ')[0];
   const today = new Date();
   const withOffset = EVENTS.map((e) => ({ ...e, offset: e.event_date ? Math.round((new Date(e.event_date) - today) / 864e5) : -1 }));
-  const live = withOffset.filter((e) => e.status === 'Live');
+  const live = withOffset.filter((e) => e.event_status === 'Live');
   const soon = withOffset.filter((e) => e.offset > 0).sort((a, b) => a.offset - b.offset);
   const next7 = soon.filter((e) => e.offset <= 30);
 
@@ -329,7 +329,7 @@ export default function DashboardPage() {
                   <div className="ev-r" key={e.id} onClick={() => nav('/events')}>
                     <span className="ev-dt"><span className="d">{d.getDate()}</span><span className="m">{MON[d.getMonth()]}</span></span>
                     <span className="ev-b"><span className="n">{e.name}</span><span className="s"><span className="mono" style={{ color: 'var(--t-600)' }}>{e.event_code}</span>· {e.location}</span></span>
-                    <EvBadge value={e.status} />
+                    <EvBadge value={e.event_status} />
                   </div>
                 );
               })}

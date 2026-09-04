@@ -9,7 +9,8 @@ class EventFilter(django_filters.FilterSet):
     event_date_to   = django_filters.DateFilter(field_name="event_date", lookup_expr="lte")
     city            = django_filters.CharFilter(lookup_expr="icontains")
     event_code      = django_filters.CharFilter(lookup_expr="icontains")
-    year            = django_filters.NumberFilter(field_name="event_date", lookup_expr="year")
+    year            = django_filters.NumberFilter(field_name="year")
+    base_code       = django_filters.CharFilter(lookup_expr="iexact")
     name            = django_filters.CharFilter(lookup_expr="icontains")
     official_name   = django_filters.CharFilter(lookup_expr="icontains")
     accepting_web_bookings = django_filters.BooleanFilter()
@@ -18,7 +19,7 @@ class EventFilter(django_filters.FilterSet):
 
     class Meta:
         model  = Event
-        fields = ["status", "event_date_from", "event_date_to", "city", "event_code", "year", "name", "official_name", "accepting_web_bookings", "sales_executive", "team_leader"]
+        fields = ["status", "event_date_from", "event_date_to", "city", "event_code", "base_code", "year", "name", "official_name", "accepting_web_bookings", "sales_executive", "team_leader"]
 
     def filter_status(self, queryset, name, value):
         today = timezone.now().date()

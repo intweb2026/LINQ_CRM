@@ -95,12 +95,12 @@ class EventBulkUpdateTests(TestCase):
     # ── (a) ───────────────────────────────────────────────────────────────────
     def test_a_safe_field_changes_all_and_row_count_holds(self):
         before = Event.objects.count()
-        r = self._commit(self.ids, "status", Event.Status.LIVE)
+        r = self._commit(self.ids, "verdict", Event.Verdict.GOING_AHEAD)
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["updated"], 3)
         for e in self.events:
             e.refresh_from_db()
-            self.assertEqual(e.status, Event.Status.LIVE)
+            self.assertEqual(e.verdict, Event.Verdict.GOING_AHEAD)
         self.assertEqual(Event.objects.count(), before)
 
     # ── (b) per-object save() proof ───────────────────────────────────────────
@@ -187,33 +187,33 @@ class EventBulkUpdateTests(TestCase):
     # ── (f) ───────────────────────────────────────────────────────────────────
     def test_f_preview_writes_nothing(self):
         before = Event.objects.count()
-        r = self._preview(self.ids, "status", Event.Status.CANCELLED)
+        r = self._preview(self.ids, "verdict", Event.Verdict.CANCELLED)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["updated"], 0)
-        self.assertEqual(r.data["distribution"], {"Draft": 3})
+        self.assertEqual(r.data["distribution"], {"": 3})
         for e in self.events:
             e.refresh_from_db()
-            self.assertEqual(e.status, Event.Status.DRAFT)
+            self.assertEqual(e.verdict, "")
         self.assertEqual(Event.objects.count(), before)
 
     # ── (g) ───────────────────────────────────────────────────────────────────
     def test_g_rerun_is_no_op(self):
-        self._commit(self.ids, "status", Event.Status.LIVE)
-        again = self._preview(self.ids, "status", Event.Status.LIVE)
+        self._commit(self.ids, "verdict", Event.Verdict.GOING_AHEAD)
+        again = self._preview(self.ids, "verdict", Event.Verdict.GOING_AHEAD)
         self.assertEqual(again.data["no_op"], 3)
 
     # ── (h) ───────────────────────────────────────────────────────────────────
     def test_h_one_actionlog_with_full_ids(self):
         before = ActionLog.objects.count()
-        self._commit(self.ids, "status", Event.Status.COMPLETED)
+        self._commit(self.ids, "verdict", Event.Verdict.POSTPONED)
         self.assertEqual(ActionLog.objects.count(), before + 1)
         log = ActionLog.objects.latest("created_at")
-        self.assertEqual(log.action, "Bulk updated status on 3 events")
+        self.assertEqual(log.action, "Bulk updated verdict on 3 events")
         self.assertIn(str(sorted(self.ids)), log.details)
 
     # ── (i) ───────────────────────────────────────────────────────────────────
     def test_i_collateral_empty_and_single_group(self):
-        r = self._preview(self.ids, "status", Event.Status.LIVE)
+        r = self._preview(self.ids, "verdict", Event.Verdict.GOING_AHEAD)
         self.assertEqual(r.data["collateral"]["count"], 0)
         self.assertEqual(r.data["collateral"]["sample"], [])
 
@@ -226,11 +226,11 @@ class EventBulkUpdateTests(TestCase):
 
     # ── (j) ───────────────────────────────────────────────────────────────────
     def test_j_user_without_can_update_is_forbidden(self):
-        r = self._preview(self.ids, "status", Event.Status.LIVE, user=self.readonly)
+        r = self._preview(self.ids, "verdict", Event.Verdict.GOING_AHEAD, user=self.readonly)
         self.assertEqual(r.status_code, 403)
         for e in self.events:
             e.refresh_from_db()
-            self.assertEqual(e.status, Event.Status.DRAFT)
+            self.assertEqual(e.verdict, "")
 
     # ── Frontend payload contract ─────────────────────────────────────────────
     # These post the EXACT body shape frontend/src/api/events.js builds, rather
@@ -252,7 +252,7 @@ class EventBulkUpdateTests(TestCase):
         return body
 
     def test_frontend_preview_payload_is_accepted(self):
-        body = self._frontend_body(self.ids, "status", None, False, None)
+        body = self._frontend_body(self.ids, "verdict", None, False, None)
         self.assertNotIn("value", body)          # key omitted, not null
         self.assertIsInstance(body["ids"], list)
         r = self._post(body)
@@ -267,17 +267,17 @@ class EventBulkUpdateTests(TestCase):
         design — has_value is part of the digest — so the middle call is not
         optional.
         """
-        no_value = self._post(self._frontend_body(self.ids, "status", None, False, None))
+        no_value = self._post(self._frontend_body(self.ids, "verdict", None, False, None))
         self.assertEqual(no_value.status_code, 200)
 
         with_value = self._post(
-            self._frontend_body(self.ids, "status", Event.Status.LIVE, False, None)
+            self._frontend_body(self.ids, "verdict", Event.Verdict.GOING_AHEAD, False, None)
         )
         self.assertEqual(with_value.status_code, 200)
         self.assertNotEqual(no_value.data["plan_hash"], with_value.data["plan_hash"])
 
         r = self._post(self._frontend_body(
-            self.ids, "status", Event.Status.LIVE, True, with_value.data["plan_hash"],
+            self.ids, "verdict", Event.Verdict.GOING_AHEAD, True, with_value.data["plan_hash"],
         ))
         self.assertEqual(r.status_code, 200, r.content)
         self.assertEqual(r.data["updated"], 3)
@@ -290,7 +290,7 @@ class EventBulkUpdateTests(TestCase):
         here, which is why the endpoint now logs what it received.
         """
         for ids in ([], {}, None):
-            body = self._frontend_body(ids, "status", None, False, None)
+            body = self._frontend_body(ids, "verdict", None, False, None)
             r = self._post(body)
             self.assertEqual(r.status_code, 400)
             self.assertEqual(r.content, b'{"detail":"ids list required"}')
@@ -304,8 +304,8 @@ class EventBulkUpdateTests(TestCase):
         return SCHEMA(req).data["fields"]
 
     def test_choices_match_model_enum(self):
-        self.assertEqual(self._schema_fields()["status"]["choices"],
-                         list(Event.Status.values))
+        self.assertEqual(self._schema_fields()["verdict"]["choices"],
+                         list(Event.Verdict.values))
 
     def test_every_editable_column_is_wired_except_the_documented_exclusions(self):
         """
@@ -315,7 +315,7 @@ class EventBulkUpdateTests(TestCase):
         list is asserted here rather than left to the builder.
         """
         wired = set(self._schema_fields())
-        for excluded in [*DERIVED_FIELDS, "event_code", "sales_executive",
+        for excluded in [*DERIVED_FIELDS, "event_code", "sales_executive", "status",
                          "id", "created_at", "updated_at", "import_batch_id"]:
             self.assertNotIn(excluded, wired)
 
@@ -325,7 +325,8 @@ class EventBulkUpdateTests(TestCase):
             and not f.primary_key and not f.is_relation
         }
         missing = concrete - wired - set(DERIVED_FIELDS) - {
-            "event_code", "created_at", "updated_at", "import_batch_id",
+            # status is retired from every screen; the matrix verdict replaced it
+            "event_code", "status", "created_at", "updated_at", "import_batch_id",
         }
         self.assertEqual(missing, set(), f"not offered for mass update: {missing}")
 
@@ -354,29 +355,6 @@ class EventBulkUpdateTests(TestCase):
         })
         self.assertEqual(cleared.status_code, 400)
         self.assertIn("cannot be cleared", cleared.data["detail"])
-
-    # ── the newly wired types ─────────────────────────────────────────────────
-    def test_capacity_is_an_integer_and_rejects_garbage_with_a_400(self):
-        bad = self._preview(self.ids, "capacity", "abc")
-        self.assertEqual(bad.status_code, 400)
-        self.assertIn("whole number", bad.data["detail"])
-
-        r = self._commit(self.ids, "capacity", "750")
-        self.assertEqual(r.status_code, 200, r.data)
-        for e in Event.objects.filter(id__in=self.ids):
-            self.assertEqual(e.capacity, 750)
-
-    def test_capacity_below_zero_is_refused_rather_than_raising_at_save(self):
-        r = self._preview(self.ids, "capacity", -1)
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("negative", r.data["detail"])
-
-    def test_expected_revenue_is_a_decimal(self):
-        from decimal import Decimal
-        r = self._commit(self.ids, "expected_revenue", "1250.50")
-        self.assertEqual(r.status_code, 200, r.data)
-        for e in Event.objects.filter(id__in=self.ids):
-            self.assertEqual(e.expected_revenue, Decimal("1250.50"))
 
     def test_a_date_column_round_trips(self):
         import datetime

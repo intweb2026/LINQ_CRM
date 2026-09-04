@@ -73,7 +73,7 @@ class CanonicalCodeTests(TestCase):
 
     def test_a_longer_code_is_not_truncated_to_three_letters(self):
         """
-        The failure that ruled out event_performance.normalize_master_code, which
+        The failure that ruled out events.codes.normalize_master_code, which
         returns the first three alphabetic characters: BAPE would become BAP,
         SFIL would become SFI, and every ticket under the real code would be lost.
         """

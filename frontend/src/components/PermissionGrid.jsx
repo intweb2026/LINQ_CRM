@@ -54,7 +54,7 @@ export default function PermissionGrid({ value, inherited, onToggle, disabled })
             <td>
               {mo.l}
               {/* Said in the row rather than only in a tooltip: an administrator
-                  looking for why Event Performance will not grant needs the
+                  looking for why Performance Matrix will not grant needs the
                   answer where they are looking, not on hover. */}
               {mo.adminOnly ? <span className="dim" style={{ marginLeft: 6, fontSize: 11 }}>Admins only</span> : null}
             </td>

@@ -43,7 +43,6 @@ OFFERED_ROW = {
     "location": "Zurich",
     "event_type": "Conference",
     "vr1_sent_status": "Sent",
-    "status": Event.Status.UPCOMING,
     "website_live_date": "2026-07-15",
     "website": "https://example.invalid/summit",
     "web_bookings": "yes",

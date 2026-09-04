@@ -132,7 +132,11 @@ INSTALLED_APPS = [
     "webhooks",
     "google_sync",
     "reports",
-    "event_performance",
+    # Performance Matrix. Owns no table of its own (the verdict column lives on
+    # Event); its one migration drops the tables of the Event Performance module
+    # it replaced. Reads events, book_event and book_delegate, so it sits after
+    # all three.
+    "performance_matrix",
     "historical_event_registry",
     "ticket_central",
     # Mining Resource Matrix. Reads ticket_central and events, owns no table

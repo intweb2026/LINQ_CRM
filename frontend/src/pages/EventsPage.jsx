@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
-import { EvBadge, OwnerName } from '../components/Badge';
+import { OwnerName } from '../components/Badge';
 import { ownerOf } from '../lib/owners';
 import { fdate, nf, uniq } from '../lib/helpers';
-import { EVENT_STATUSES } from '../lib/constants';
 import * as eventsApi from '../api/events';
 import { useFetch } from '../hooks/useFetch';
 import { useBulkUpdate } from '../hooks/useBulkUpdate';
@@ -37,7 +36,7 @@ export default function EventsPage() {
   if (!canView('events')) return <NoAccessPage module="Events" />;
 
   return (
-    <>
+    <div className="gs-page">
       {/* `infinite` without `server`. eventsApi.list already walks every page up
           front via fetchAllPages, so the whole catalogue is in memory and
           scrolling reveals more of what is already there rather than fetching;
@@ -77,16 +76,16 @@ export default function EventsPage() {
         ]}
         hiddenDefault={[]}
         cols={[
-          { key: 'event_code', label: 'Code', group: 'ev', cell: (v) => <span className="mono lnk">{v}</span> },
+          { key: 'event_code', label: 'Internal Code', group: 'ev', cell: (v) => <span className="mono lnk">{v}</span> },
+          // The family code every edition shares; (base code, year) is what the
+          // Performance Matrix keys on. See backend/events/codes.py.
+          { key: 'base_code', label: 'Base Code', group: 'ev', cell: (v) => <span className="mono">{v}</span>, opts: () => uniq(EVENTS.map((e) => e.base_code)) },
           { key: 'name', label: 'Official Event Name', group: 'ev', cls: 'st' },
-          { key: 'status', label: 'Status', group: 'ev', cell: (v) => <EvBadge value={v} />, opts: () => EVENT_STATUSES },
           { key: 'event_date', label: 'Start Date', type: 'date', group: 'ev', cell: (v) => fdate(v) },
           { key: 'end_date', label: 'End Date', type: 'date', group: 'ev', cell: (v) => fdate(v) },
           { key: 'location', label: 'Location', group: 'ev', opts: () => uniq(EVENTS.map((e) => e.location)) },
-          { key: 'edition', label: 'Edition', group: 'ev' },
+          { key: 'year', label: 'Year', group: 'ev', num: true, opts: () => uniq(EVENTS.map((e) => e.year)) },
           { key: 'event_type', label: 'Event Type', group: 'ev', cell: (v) => <span className="tg bg-neutral">{v}</span>, opts: () => uniq(EVENTS.map((e) => e.event_type)) },
-          { key: 'capacity', label: 'Capacity', group: 'ev', num: true, cell: (v) => nf(v) },
-          { key: 'web_bookings', label: 'Web Bookings', group: 'ev', num: true, cell: (v) => nf(v) },
           { key: 'nearest_related', label: 'Nearest Related', group: 'ev', cell: (v) => <span className="mono">{v}</span> },
           { key: 'website_live_date', label: 'Website Live', type: 'date', group: 'ev', cell: (v) => fdate(v) },
           { key: 'sales_check', label: 'Sales Check', group: 'ev', cell: (v) => <span className={'bg bg-' + (v === 'Done' ? 'green' : v === 'Pending' ? 'amber' : 'blue')}><i />{v}</span>, opts: () => uniq(EVENTS.map((e) => e.sales_check)) },
@@ -106,8 +105,6 @@ export default function EventsPage() {
           { key: 'mr_senior', label: 'Market Research Sr.', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'mr_senior')} /> },
           { key: 'mr_junior', label: 'Market Research Jr.', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'mr_junior')} /> },
           { key: 'spex_lead', label: 'SpEx Lead', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'spex_lead')} /> },
-          { key: 'event_mgmt', label: 'Event Management', group: 'own', cell: (v, row) => <OwnerName owner={ownerOf(row, 'event_mgmt')} /> },
-          { key: 'email_marketing', label: 'Email Marketing Campaign', group: 'meta', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
           { key: 'email_marketing_name', label: 'Name for Email Marketing', group: 'meta' },
           { key: 'branding_name', label: 'Name for Branding', group: 'meta' },
           { key: 'annualisation', label: 'Annualisation', group: 'meta' },
@@ -126,13 +123,12 @@ export default function EventsPage() {
                 <div className="mono" style={{ color: 'var(--t-600)', marginBottom: 2 }}>{r.event_code}</div>
                 <div className="who-n" style={{ whiteSpace: 'normal' }}>{r.name}</div>
               </div>
-              <EvBadge value={r.status} />
             </div>
             <div className="rc-m">
               <div><div className="l">Starts</div><div className="v">{fdate(r.event_date)}</div></div>
               <div><div className="l">Location</div><div className="v">{r.location}</div></div>
-              <div><div className="l">Capacity</div><div className="v">{nf(r.capacity)}</div></div>
-              <div><div className="l">Web bookings</div><div className="v">{nf(r.web_bookings)}</div></div>
+              <div><div className="l">Ends</div><div className="v">{fdate(r.end_date)}</div></div>
+              <div><div className="l">Year</div><div className="v">{r.year || '—'}</div></div>
             </div>
           </div>
         )}
@@ -163,6 +159,6 @@ export default function EventsPage() {
       {editEvent ? <EditEventModal event={editEvent} onClose={() => setEditEvent(null)} onSaved={refresh} /> : null}
       {newOpen ? <NewEventModal onClose={() => setNewOpen(false)} onSaved={refresh} /> : null}
       {importOpen ? <ImportWizard kind="events" onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
-    </>
+    </div>
   );
 }

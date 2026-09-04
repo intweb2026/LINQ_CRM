@@ -34,10 +34,19 @@ import { IST_OFFSET_MS } from './helpers';
 // Order is the order they are offered in. `Is` first because it is what most
 // date filters want, and the two emptiness tests sit next to it because they
 // are the ones that need no value at all.
-export const DATE_OPS = ['Is', 'Is Not', 'Is Empty', 'Is Not Empty', 'Before', 'After', 'Between'];
+/**
+ * Relative windows. Each resolves to a concrete [from, to] at the moment it is
+ * evaluated (presetWindow), so a saved "Last 7 Days" means the last seven days
+ * whenever the table is opened, not the seven that were current when it was
+ * saved. They take no value of their own, which is why they ride in
+ * DATE_NO_VALUE_OPS below and the editor draws nothing for them.
+ */
+export const DATE_PRESET_OPS = ['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'This Month', 'Last Month', 'This Year'];
+
+export const DATE_OPS = ['Is', 'Is Not', 'Before', 'After', 'Between', ...DATE_PRESET_OPS, 'Is Empty', 'Is Not Empty'];
 
 /** Operators that take no value; a condition using one is active immediately. */
-export const DATE_NO_VALUE_OPS = ['Is Empty', 'Is Not Empty'];
+export const DATE_NO_VALUE_OPS = ['Is Empty', 'Is Not Empty', ...DATE_PRESET_OPS];
 
 /** Operators whose value is a single calendar date. */
 export const DATE_EXACT_OPS = ['Is', 'Is Not', 'Before', 'After'];
@@ -53,6 +62,9 @@ export function dateOpLabel(op) {
   return {
     Is: 'is', 'Is Not': 'is not', Before: 'before', After: 'after',
     Between: 'between', 'Is Empty': 'is empty', 'Is Not Empty': 'is not empty',
+    Today: 'is today', Yesterday: 'was yesterday', 'Last 7 Days': 'in the last 7 days',
+    'Last 30 Days': 'in the last 30 days', 'This Month': 'this month', 'Last Month': 'last month',
+    'This Year': 'this year',
   }[op] || String(op).toLowerCase();
 }
 
@@ -245,6 +257,7 @@ export function dateForOp(cond, op) {
  * After are half-open by nature; ask dateCondBound() for their single edge.
  */
 export function dateCondWindow(cond) {
+  if (cond && DATE_PRESET_OPS.includes(cond.op)) return presetWindow(cond.op);
   const d = cond && cond.date;
   if (!d) return null;
   if (d.mode === 'range') {
@@ -257,6 +270,32 @@ export function dateCondWindow(cond) {
     return d.from <= d.to ? { from: d.from, to: d.to } : { from: d.to, to: d.from };
   }
   return isCompleteDate(d.date) ? { from: d.date, to: d.date } : null;
+}
+
+/**
+ * The window a relative preset names, as of `today` (IST, like every other
+ * day boundary in this module). Inclusive both ends.
+ */
+export function presetWindow(op, today = todayISO()) {
+  const t = parseISO(today);
+  if (!t) return null;
+  const shift = (n) => iso(new Date(t.getTime() + n * 864e5));
+  const y = t.getUTCFullYear(), m = t.getUTCMonth();
+  const first = (yy, mm) => `${yy}-${String(mm + 1).padStart(2, '0')}-01`;
+  const last = (yy, mm) => iso(new Date(Date.UTC(yy, mm + 1, 0)));
+  switch (op) {
+    case 'Today': return { from: today, to: today };
+    case 'Yesterday': return { from: shift(-1), to: shift(-1) };
+    case 'Last 7 Days': return { from: shift(-6), to: today };
+    case 'Last 30 Days': return { from: shift(-29), to: today };
+    case 'This Month': return { from: first(y, m), to: last(y, m) };
+    case 'Last Month': {
+      const pm = m === 0 ? 11 : m - 1, py = m === 0 ? y - 1 : y;
+      return { from: first(py, pm), to: last(py, pm) };
+    }
+    case 'This Year': return { from: `${y}-01-01`, to: `${y}-12-31` };
+    default: return null;
+  }
 }
 
 /** The single ISO date a Before/After condition compares against, or null. */

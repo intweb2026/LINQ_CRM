@@ -24,18 +24,21 @@ export const TARGET_FIELDS = {
   // reads, `accepting_web_bookings` and `tele_marketing_team`.
   //
   // Order is specific-before-generic — team_leader's 'Sales Team Leader' before
-  // sales_team, website_live_date before website, vr1_sent_status before status. autoMap
+  // sales_team, website_live_date before website. autoMap
   // resolves exact matches first, but a header with no exact match falls back to
   // a substring scan that takes the first hit in this order.
   events: [
-    ['event_code', 'Event Code'],
+    ['event_code', 'Event Code', ['Internal Code']],
+    // (base_code, year) is the edition identity the Performance Matrix keys on.
+    // Blank derives from the internal code and the start date on save.
+    ['base_code', 'Base Code', ['Base', 'Family Code']],
+    ['year', 'Year', ['Edition Year', 'Edition']],
     ['official_event_name', 'Official Event Name'],
     ['event_date', 'Start Date'],
     ['end_date', 'End Date'],
     ['location', 'Location'],
     ['event_type', 'Event Type'],
     ['vr1_sent_status', 'VR1 Sent Status'],
-    ['status', 'Status'],
     ['website_live_date', 'Website Live Date'],
     ['website', 'Website'],
     ['web_bookings', 'Accepting Web Bookings', ['Web Bookings']],
@@ -49,6 +52,8 @@ export const TARGET_FIELDS = {
     ['telemarketing_team', 'Tele Marketing Team', ['Telemarketing Team']],
     ['market_research_senior', 'Market Research Senior', ['Market Research Team']],
     ['market_research_junior', 'Market Research Junior'],
+    // Not shown on the Events screen any more, but Proposal Submission reads it
+    // as the tracker's Production Executive, so it still imports.
     ['event_management_team', 'Event Management Team'],
     ['content_check', 'Content Check'],
     ['marketing_check', 'Marketing Check'],

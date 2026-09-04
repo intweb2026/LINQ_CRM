@@ -1,17 +1,9 @@
 // Real backend: /api/events/ (see backend/events/serializers.py for the
 // exact field set — EventListSerializer / EventDetailSerializer / EventWriteSerializer).
 //
-// Known gaps — fields this UI expects that the backend does not currently
-// expose/accept, defaulted below rather than fabricated:
-//   - `edition`      — no backend field; stored nowhere, always ''.
-//   - `capacity`      — Event model has the column but no serializer exposes it.
-//   - `web_bookings`  — UI wants a numeric web-sourced booking count; the
-//                       backend field of the same name is actually a boolean
-//                       "web bookings enabled" flag (mapped to
-//                       `web_bookings_enabled` instead). Defaulted to 0.
-//   - `email_marketing` (campaign slug) — no backend field; derived from the
-//                       event code the same way NewEventModal already did
-//                       against the old mock data.
+// `event_status` is the server's computed Live/Completed by date. The stored
+// `status`, `capacity` and the mocked web-booking count and campaign slug are
+// gone from this contract: nothing on the Events screen shows them any more.
 import { http, fetchAllPages } from './client';
 
 // Backend column -> frontend key, for the owner columns the server can answer
@@ -51,14 +43,14 @@ function toFrontend(e) {
     id: e.id,
     event_code: e.event_code,
     name: e.official_event_name || e.name || e.event_code,
-    status: e.status,
+    event_status: e.event_status,
     event_date: e.event_date,
     end_date: e.end_date,
     location: e.location,
-    edition: '',
+    base_code: e.base_code || '',
+    year: e.year ?? '',
+    verdict: e.verdict || '',
     event_type: e.event_type,
-    capacity: 0,
-    web_bookings: 0,
     nearest_related: e.nearest_related_event || '—',
     website_live_date: e.website_live_date,
     sales_check: e.sales_check,
@@ -76,9 +68,7 @@ function toFrontend(e) {
     mr_senior: e.market_research_senior,
     mr_junior: e.market_research_junior,
     spex_lead: e.spex_team,
-    event_mgmt: e.event_management_team,
     owner_src: ownerSrc(e.owner_resolution),
-    email_marketing: e.event_code ? e.event_code.split(' ')[0].toLowerCase() + '-campaign' : '',
     email_marketing_name: e.email_marketing_name || '',
     branding_name: e.branding_name || '',
     annualisation: e.annualisation || '',
@@ -93,14 +83,14 @@ function toFrontend(e) {
 }
 
 // Inverse of toFrontend — only fields EventWriteSerializer actually accepts
-// are sent; `edition`/`capacity` are silently dropped (backend has nowhere
-// to store them).
+// are sent. A blank base_code or year is sent as null and Event.save() derives it.
 function toBackend(f) {
   const out = {
     event_code: f.event_code,
     name: f.name,
     official_event_name: f.name,
-    status: f.status,
+    base_code: f.base_code,
+    year: f.year === '' || f.year == null ? null : Number(f.year),
     event_date: f.event_date,
     end_date: f.end_date,
     location: f.location,
@@ -117,7 +107,6 @@ function toBackend(f) {
     market_research_senior: f.mr_senior,
     market_research_junior: f.mr_junior,
     spex_team: f.spex_lead,
-    event_management_team: f.event_mgmt,
     email_marketing_name: f.email_marketing_name,
     branding_name: f.branding_name,
     annualisation: f.annualisation,

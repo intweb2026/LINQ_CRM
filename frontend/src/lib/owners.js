@@ -19,7 +19,6 @@ export const OWNER_FIELDS = [
   { key: 'mr_senior',  label: 'Market Research Sr.' },
   { key: 'mr_junior',  label: 'Market Research Jr.' },
   { key: 'spex_lead',  label: 'SpEx lead' },
-  { key: 'event_mgmt', label: 'Event management' },
 ];
 
 export const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);

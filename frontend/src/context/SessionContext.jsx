@@ -204,7 +204,7 @@ export function SessionProvider({ children }) {
    *
    * backend/accounts/permissions.py:IsAdminRole passes on `is_admin` OR a team
    * flagged `has_all_access`, and that class guards whole surfaces which no
-   * module grant can open — Event Performance is one. A frontend gate reading
+   * module grant can open — the Performance Matrix is one. A frontend gate reading
    * only `user.role === 'admin'` would hide those surfaces from an all-access
    * team the server would happily serve, so both halves are checked here, once,
    * rather than re-derived per page.

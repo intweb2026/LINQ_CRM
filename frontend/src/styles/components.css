@@ -132,7 +132,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .who-s.mono{font-family:var(--mono);font-size:10px}
 
 /* ═══ KPI ═══  [kpi_cards]
-   The stat tiles at the top of Dashboard and Event Performance. .kpi.hi is
+   The stat tiles at the top of the Dashboard. .kpi.hi is
    the one dark tile. The .pill- colours at the end of this section are the
    delta badges these cards carry. */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:11px;margin-bottom:18px}
@@ -193,6 +193,27 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .mono{font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:-.02em}
 .lnk{color:var(--t-600);cursor:pointer}.lnk:hover{text-decoration:underline}
 .dim{color:var(--text-4)}
+
+/* ═══ FILLED CELLS ═══  [table_filled_cells]
+   A status inside a TABLE CELL paints the whole cell in its colour rather than
+   sitting in it as a pill. Scoped to table.dt cells on purpose: in drawers,
+   cards, forms and the KPI tiles the pill shape stays, because there is no cell
+   to fill. The td declares its padding and height as --cell-px and --row-h, and
+   the badge reads them back: negative horizontal margins pull it over the
+   padding (still inside the td's padding box, so overflow:hidden does not clip
+   it) and the height matches the row, so a denser table fills its shorter rows
+   with no second rule set. The dot is dropped in this form: the colour is now
+   the whole cell, and a dot beside a word inside it is decoration twice. */
+table.dt tbody td>.bg,table.dt tbody td>.tg,table.dt tbody td .ec .bg,table.dt tbody td .ec .tg{display:flex;align-items:center;justify-content:center;gap:5px;height:var(--row-h);margin:0 calc(-1 * var(--cell-px));padding:0 8px;border-radius:0;font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.dt tbody td>.bg>i,table.dt tbody td .ec .bg>i{display:none}
+/* The in-place editor wraps its badge, so it becomes the full cell too. It sits
+   inside the Popover's anchor (a block, see Popover's `block` prop), hence the
+   descendant selectors. Its hover affordance moves from a tinted box to a
+   hairline inset, and the caret pins to the right edge of the filled cell. */
+table.dt tbody td .ec{display:block;margin:0;padding:0;border-radius:0;max-width:none}
+table.dt tbody td .ec>.ec-v{display:block;overflow:visible}
+table.dt tbody td .ec:hover{background:none;box-shadow:inset 0 0 0 1px var(--border-s)}
+table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px}
 
 /* ═══ TOOLBAR ═══  [table_toolbar]
    The row of controls above a list; the search box, .seg segmented switches
@@ -491,17 +512,16 @@ table.dt thead th.act{color:var(--t-600);background:var(--t-50)}
 table.dt thead th.act .th-flt svg{opacity:1;color:var(--t-600)}
 /* Header holds TWO controls: the label sorts, the funnel filters. One button
    cannot both sort and open a popover, which is why sorting was unreachable. */
-.th-w{display:flex;align-items:center;gap:2px;justify-content:center}
-/* Counterweight for the filter funnel.
-   The funnel is a real 26px flex item on the RIGHT of every header, so a label
-   centred in the space left over sits 13px left of the column's true centre —
-   and the value below it, centred in a plain <td>, sits on the true centre. A
-   half-funnel of disagreement between every header and its own column is
-   exactly the kind of near-miss that reads as sloppy. An equal 26px item on
-   the left makes the leftover space symmetric, so the label's centre and the
-   cell's centre are the same axis. Empty and aria-hidden: it is a spacer, not
-   content, and nothing should announce it. */
-.th-sp{flex:0 0 26px}
+.th-w{display:flex;align-items:center;justify-content:center;position:relative}
+/* The funnel is OUT OF THE FLOW. It used to be a real 26px flex item on the
+   right of every header, balanced by this 26px spacer on the left, and the two
+   together ate 52px of every column: at the widths the matrices use, "Countdown"
+   read "Co…" with a grey funnel beside it. It is absolutely positioned over the
+   header's right padding now and appears on hover (or stays when a filter is
+   active), so the label has the whole column and is centred on the same axis as
+   the value below it with no counterweight at all. The spacer element is left in
+   the markup and hidden here, so nothing in DataTable had to change. */
+.th-sp{display:none}
 .th-sort{all:unset;display:inline-flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;box-sizing:border-box;padding:9px 4px;flex:1;min-width:0}
 /* THE GUARD. A <th> is white-space:nowrap, and in a fixed-layout grid a cell
    cannot grow to fit its text — so a label longer than its column does not
@@ -522,10 +542,14 @@ table.dt thead th.act .th-flt svg{opacity:1;color:var(--t-600)}
    applied directly. */
 .th-nosort{cursor:default;overflow:hidden;text-overflow:ellipsis;display:inline-block;white-space:nowrap}
 .th-nosort:hover{background:none;color:inherit}
-.th-flt-btn{all:unset;display:grid;place-items:center;cursor:pointer;box-sizing:border-box;padding:9px 12px 9px 4px}
-.th-flt-btn svg{opacity:.3;transition:opacity .12s}
-.th-flt-btn:hover svg{opacity:.75}
-.th-flt-btn.on svg{opacity:1;color:var(--t-600)}
+/* Brand teal on a teal tint, never grey on grey: the old funnel sat at 30%
+   opacity on the header's own colour and disappeared into it. Hidden until the
+   header is hovered or the filter is live, so a resting table shows labels only. */
+.th-flt-btn{all:unset;position:absolute;right:3px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:18px;height:18px;border-radius:var(--r-sm);cursor:pointer;box-sizing:border-box;color:var(--t-600);background:var(--t-50);opacity:0;transition:opacity .12s,background .12s}
+table.dt thead th:hover .th-flt-btn,.th-flt-btn.on,.th-flt-btn:focus-visible{opacity:1}
+.th-flt-btn:hover{background:var(--t-100)}
+.th-flt-btn.on{background:var(--t-600);color:#fff}
+.th-flt-btn svg{width:10px;height:10px}
 /* ── rows and cells ──  [table_cells]
    Row states, .num, the identity cell, and the pinned leading cells used by
    the delegate grids in the Bookings dialogs. */
@@ -543,7 +567,7 @@ table.dt thead tr.grp+tr th{top:26px}
    while the header read from the other end. The class stays: it still marks
    a column as numeric for colWidth() and remains the hook if a genuinely
    place-value column ever needs its old behaviour back. */
-table.dt tbody td{padding:0 12px;height:44px;border-bottom:1px solid var(--n-50);vertical-align:middle;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);text-align:center}
+table.dt tbody td{--cell-px:12px;--row-h:44px;padding:0 var(--cell-px);height:var(--row-h);border-bottom:1px solid var(--n-50);vertical-align:middle;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);text-align:center}
 table.dt tbody tr{transition:background .1s}
 table.dt tbody tr:hover{background:var(--t-50)}
 table.dt tbody tr.sel{background:var(--t-50)}
@@ -818,3 +842,92 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
   .kbar{gap:11px 0}
   .kbar-sec{padding-left:0;border-left:none;padding-top:10px;border-top:1px solid var(--border);flex-basis:100%}
 }
+
+/* ═══ PERFORMANCE MATRIX ═══  [performance_matrix]
+   The verdict row tints, the completed-edition wash, the small number styles,
+   the year chips and the density rules.
+
+   THE VERDICT PAINTS THE ROW. A <tr> carries `vd vd-<slug>` (rowClass in
+   DataTable, slug from api/performanceMatrix.js), which sets two custom
+   properties, and everything below reads only those: the cells take --vd-bg as a
+   wash over the surface, the first cell a 3px edge in --vd, the pill its dot and
+   text. Adding a verdict is one line here and one in the API file.
+
+   Tints are rgba over var(--surface) rather than the theme's -bg tokens because
+   they have to read as a WASH behind eleven columns of numbers in both themes;
+   the -bg tokens are tuned for a badge. The two dark verdicts, TBP and
+   Cancelled, are still a wash — a solid dark row would hide the very numbers the
+   verdict is about — and say it with the strongest edge and pill instead. */
+.vd-ahead{--vd:var(--blue);--vd-bg:rgba(45,107,228,.10);--vd-fill:rgba(45,107,228,.20)}
+.vd-push{--vd:var(--green);--vd-bg:rgba(14,159,110,.12);--vd-fill:rgba(14,159,110,.22)}
+.vd-full{--vd:#D9A400;--vd-bg:rgba(217,164,0,.17);--vd-fill:rgba(217,164,0,.30)}
+.vd-postponed{--vd:var(--n-400);--vd-bg:rgba(142,154,168,.20);--vd-fill:rgba(142,154,168,.34)}
+.vd-tbp{--vd:var(--red-tx);--vd-bg:rgba(142,28,26,.13);--vd-fill:rgba(142,28,26,.24)}
+.vd-cancelled{--vd:var(--n-800);--vd-bg:rgba(19,26,35,.18);--vd-fill:rgba(19,26,35,.30)}
+html[data-theme=dark] .vd-tbp{--vd:var(--red)}
+html[data-theme=dark] .vd-cancelled{--vd-bg:rgba(227,231,236,.12);--vd-fill:rgba(227,231,236,.26)}
+/* The gradient trick keeps the pinned cells opaque — see [table_frozen_columns]:
+   a translucent sticky cell lets the scrolling columns show through it. */
+table.dt tbody tr.vd td,table.dt tbody tr.vd td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--surface)}
+table.dt tbody tr.vd:hover td,table.dt tbody tr.vd:hover td.pin-col,table.dt tbody tr.vd.sel td{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--t-50)}
+table.dt tbody tr.vd td:first-child{box-shadow:inset 3px 0 0 var(--vd)}
+/* The verdict cell. A stronger cut of the row's own wash, so the cell that SETS
+   the colour reads as its source; --vd-fill sits beside --vd-bg on each class. */
+.pm-vd{display:flex;align-items:center;justify-content:center;height:var(--row-h);margin:0 calc(-1 * var(--cell-px));font-size:11px;font-weight:650;color:var(--vd,var(--text-3));background:var(--vd-fill,var(--n-75));white-space:nowrap}
+.pm-n{color:var(--text);font-weight:650;font-variant-numeric:tabular-nums}
+/* The delta against the previous edition rides beside the figure at half size,
+   so the column stays one number wide. */
+.pm-d{font-size:10px;font-weight:700;margin-left:5px;font-variant-numeric:tabular-nums}
+.pm-d.up{color:var(--green-tx)}
+.pm-d.down{color:var(--red-tx)}
+
+/* Completed editions. SEPIA, and it OUTRANKS the verdict: a past edition is one
+   colour from edge to edge, no verdict rule on the left, no verdict fill on the
+   right, every status cell inside it folded into the same wash. Declared AFTER
+   the .vd-* tints so its properties win on a row carrying both. */
+.pm-done{--vd-bg:rgba(112,66,20,.13);--vd-fill:rgba(112,66,20,.10);--vd:#6B4A2B;--pm-done-tx:#6B4A2B}
+html[data-theme=dark] .pm-done{--vd-bg:rgba(214,166,110,.15);--vd-fill:rgba(214,166,110,.12);--vd:#D9B48F;--pm-done-tx:#D9B48F}
+table.dt tbody tr.pm-done td,table.dt tbody tr.pm-done td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--surface);color:var(--pm-done-tx)}
+table.dt tbody tr.pm-done:hover td,table.dt tbody tr.pm-done:hover td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--t-50)}
+table.dt tbody tr.pm-done td:first-child{box-shadow:none}
+table.dt tbody tr.pm-done td .bg,table.dt tbody tr.pm-done td .tg,table.dt tbody tr.pm-done td .pm-vd{background:var(--vd-fill);color:var(--pm-done-tx)}
+table.dt tbody tr.pm-done .pm-n,table.dt tbody tr.pm-done .pm-code,table.dt tbody tr.pm-done .pm-d,table.dt tbody tr.pm-done .dim{color:var(--pm-done-tx)}
+/* The code is the row's only identity, so it carries the hover: the dotted rule
+   is the one cue that there is more underneath it. */
+.pm-code{cursor:help;color:var(--t-600);text-decoration:underline dotted var(--n-300);text-underline-offset:3px}
+.pm-loc{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+/* Year chips in the tab strip's action slot. */
+.pm-years{display:flex;align-items:center;gap:5px}
+.pm-years .chip{height:24px;padding:0 9px;font-size:11px}
+.pm-years .tabs-upd{margin-left:8px}
+/* The page root the Events and Performance Matrix pages share. It takes over
+   the sizing #main>.dt-tw gets (see [table_shell]) because the table is no
+   longer a direct child of #main: without the flex chain below the table grew
+   to its full height and the horizontal scrollbar sat below the fold. It also
+   sets these modules' own face. Google Sans Flex is loaded in public/index.html
+   beside the app fonts and falls back to them. */
+#main>.gs-page{flex:1;min-height:0;display:flex;flex-direction:column;font-family:'Google Sans Flex',var(--font)}
+.gs-page>.tabs{margin-bottom:6px}
+.gs-page .tab{font-size:13px}
+.gs-page .tb{margin-bottom:6px}
+.gs-page>.dt-tw,.gs-page>.pm-dense{flex:1;min-height:280px;display:flex;flex-direction:column}
+.gs-page>.dt-tw>.tsc{flex:1;min-height:0;max-height:none}
+.gs-page>.pm-dense>.dt-tw{flex:1;min-height:0;display:flex;flex-direction:column}
+.gs-page>.pm-dense>.dt-tw>.tsc{flex:1;min-height:0;max-height:none}
+/* The type ladder, top down and one step apart: block title 12.5px in caps,
+   column header 12px, data 11px. The header rows are as short as their type
+   allows, height set explicitly so the second sticky row's offset is exact. */
+.pm-dense table.dt thead tr.grp th{height:22px;padding:0 8px;line-height:1;font-size:12.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
+.pm-dense table.dt thead tr.grp+tr th{top:22px}
+.pm-dense table.dt thead th{font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-3)}
+.pm-dense .th-sort{padding:5px 3px}
+.pm-dense .th-nosort{padding:5px 3px}
+.pm-dense table.dt tbody td{--cell-px:8px;--row-h:30px;font-size:11px;font-weight:450}
+.pm-dense table.dt tbody td>.bg,.pm-dense table.dt tbody td>.tg,.pm-dense table.dt tbody td .ec .bg,.pm-dense table.dt tbody td .ec .tg{font-size:11px;font-weight:600}
+.pm-dense .mono{font-size:11px;font-weight:500}
+.pm-dense .pm-n{font-weight:600}
+.pm-dense .pm-vd{font-size:11px;font-weight:600}
+/* An option in the verdict menu: a swatch in the verdict's fill and edge colour,
+   read off the same .vd-* class the row uses, so the menu previews the row. */
+.pm-opt{display:inline-flex;align-items:center;gap:9px}
+.pm-opt i{width:12px;height:12px;border-radius:3px;background:var(--vd-fill,var(--n-75));box-shadow:inset 0 0 0 1.5px var(--vd,var(--n-300));flex-shrink:0}

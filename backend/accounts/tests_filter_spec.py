@@ -375,11 +375,11 @@ class TicketAndEventFilterTests(_Base):
         )
         self.e1 = Event.objects.create(
             event_code="FSE1 - AA", event_date="2026-03-01",
-            status=Event.Status.LIVE, web_bookings=True, capacity=100,
+            status=Event.Status.LIVE, web_bookings=True,
         )
         self.e2 = Event.objects.create(
             event_code="FSE2 - BB", event_date="2026-09-01",
-            status=Event.Status.DRAFT, web_bookings=False, capacity=900,
+            status=Event.Status.DRAFT, web_bookings=False,
         )
 
     def _tids(self, criteria):

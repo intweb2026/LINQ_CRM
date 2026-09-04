@@ -125,8 +125,31 @@ const MAX_LIVE_SPAN = 150;
  */
 const SERVER_POLL_MS = 60_000;
 
+/**
+ * ONE OPERATOR LIST PER KIND OF COLUMN. A closed list of statuses is not
+ * searched for a substring, a number is not asked whether it "starts with"
+ * anything, and a date has its own vocabulary in lib/dateFilter.js. The kind is
+ * read off what the column already declares: `type: 'date'`, `opts` (a closed
+ * list, shown as a multi-select checklist), `num`, or plain text.
+ */
 const FILTER_OPS = ['Contains', 'Not Contains', 'Is', 'Is Not', 'Starts With', 'Ends With', 'Like', 'Is Empty', 'Is Not Empty'];
+const CHOICE_OPS = ['Is', 'Is Not', 'Is Empty', 'Is Not Empty'];
+const NUM_OPS = ['Equals', 'Not Equals', 'Greater Than', 'At Least', 'Less Than', 'At Most', 'Between', 'Is Empty', 'Is Not Empty'];
+// The numeric operators no other kind uses, so a stored condition can be
+// evaluated numerically without the column in hand.
+const NUM_ONLY_OPS = ['Equals', 'Not Equals', 'Greater Than', 'At Least', 'Less Than', 'At Most', 'Between'];
 const NO_VALUE_OPS = ['Is Empty', 'Is Not Empty'];
+
+function colKind(col) {
+  if (isDateCol(col)) return 'date';
+  if (col.opts) return 'choice';
+  if (col.num) return 'number';
+  return 'text';
+}
+
+function opsFor(col) {
+  return { date: DATE_OPS, choice: CHOICE_OPS, number: NUM_OPS, text: FILTER_OPS }[colKind(col)];
+}
 
 /**
  * A column whose filter is a DATE filter rather than a text one.
@@ -155,7 +178,8 @@ function isDateCond(cond) {
 
 function condActive(cond) {
   if (isDateCond(cond)) return dateCondActive(cond);
-  return NO_VALUE_OPS.includes(cond.op) || (cond.values || []).length > 0 || !!cond._live;
+  // A number editor holds '' for a bound not typed yet; only a real value counts.
+  return NO_VALUE_OPS.includes(cond.op) || (cond.values || []).some((v) => String(v ?? '').trim() !== '') || !!cond._live;
 }
 
 function opLabel(op) {
@@ -163,6 +187,8 @@ function opLabel(op) {
     Is: 'is', 'Is Not': 'is not', Contains: 'contains', 'Not Contains': 'does not contain',
     'Starts With': 'starts with', 'Ends With': 'ends with', Like: 'is like',
     'Is Empty': 'is empty', 'Is Not Empty': 'is not empty',
+    Equals: 'equals', 'Not Equals': 'does not equal', 'Greater Than': 'is greater than',
+    'At Least': 'is at least', 'Less Than': 'is less than', 'At Most': 'is at most', Between: 'is between',
   }[op] || op.toLowerCase();
 }
 
@@ -181,11 +207,32 @@ function likeTest(val, pattern) {
   return new RegExp('^' + esc + '$').test(val);
 }
 
+/** The numeric operators, over the row's raw value. An incomplete bound passes
+ *  everything, so a half-built condition never blanks the table. */
+function numCondPasses(row, cond) {
+  const vs = (cond.values || []).map((v) => String(v ?? '').trim()).filter(Boolean).map(Number).filter((x) => !Number.isNaN(x));
+  if (!vs.length || (cond.op === 'Between' && vs.length < 2)) return true;
+  const raw = row[cond.key];
+  const n = raw === '' || raw == null ? NaN : Number(raw);
+  if (Number.isNaN(n)) return cond.op === 'Not Equals';
+  switch (cond.op) {
+    case 'Equals': return vs.includes(n);
+    case 'Not Equals': return !vs.includes(n);
+    case 'Greater Than': return n > vs[0];
+    case 'At Least': return n >= vs[0];
+    case 'Less Than': return n < vs[0];
+    case 'At Most': return n <= vs[0];
+    case 'Between': return n >= Math.min(vs[0], vs[1]) && n <= Math.max(vs[0], vs[1]);
+    default: return true;
+  }
+}
+
 function condPasses(row, cond) {
   if (isDateCond(cond)) return dateCondPasses(row, cond);
   const val = String(row[cond.key] == null ? '' : row[cond.key]).trim();
   if (cond.op === 'Is Empty') return val === '' || val === '—';
   if (cond.op === 'Is Not Empty') return val !== '' && val !== '—';
+  if (NUM_ONLY_OPS.includes(cond.op)) return numCondPasses(row, cond);
   const allValues = cond._live ? [...cond.values, cond._live] : cond.values;
   const vs = allValues.map((v) => String(v).toLowerCase()).filter(Boolean);
   if (!vs.length) return true;
@@ -302,7 +349,7 @@ function reconcileConds(conds, cols) {
     if (wantDate === hasDate) return c;
     if (wantDate) return emptyDateCond(c.key, DATE_OPS.includes(c.op) ? c.op : 'Is');
     const { date, ...rest } = c;
-    return { ...rest, op: FILTER_OPS.includes(c.op) ? c.op : 'Contains', values: rest.values || [] };
+    return { ...rest, op: opsFor(col).includes(c.op) ? c.op : blankCond(col).op, values: rest.values || [] };
   });
 }
 
@@ -400,7 +447,8 @@ function OperatorSelect({ value, onChange, ops = FILTER_OPS }) {
  */
 function blankCond(col) {
   if (isDateCol(col)) return emptyDateCond(col.key);
-  return { key: col.key, op: col.opts ? 'Is' : 'Contains', values: [] };
+  const kind = colKind(col);
+  return { key: col.key, op: kind === 'choice' ? 'Is' : kind === 'number' ? 'Equals' : 'Contains', values: [] };
 }
 
 /**
@@ -468,13 +516,40 @@ function OptsPicker({ opts, optText, values, onChange, pill }) {
   );
 }
 
+/**
+ * The value half of a numeric condition: one bound, or two for Between. Values
+ * are kept as the typed strings and parsed at evaluation, so a box being edited
+ * never throws the condition away mid-keystroke.
+ */
+function NumberEditor({ cond, onChange, pill }) {
+  const cls = pill ? 'flt-pill' : 'in in-xs';
+  const pair = cond.op === 'Between';
+  const vals = cond.values || [];
+  const set = (i, v) => {
+    const next = pair ? [vals[0] ?? '', vals[1] ?? ''] : [vals[0] ?? ''];
+    next[i] = v;
+    onChange({ ...cond, values: next });
+  };
+  return (
+    <div className={pair ? 'dflt-pair' : undefined}>
+      <input type="number" className={cls} placeholder={pair ? 'From' : 'Value'} value={vals[0] ?? ''} onChange={(e) => set(0, e.target.value)} />
+      {pair ? (
+        <>
+          <span className="dflt-and">and</span>
+          <input type="number" className={cls} placeholder="To" value={vals[1] ?? ''} onChange={(e) => set(1, e.target.value)} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 // Unified checklist item for the toolbar Search/Filter panel: checking a field
 // expands its operator + value editor directly beneath it (spreadsheet-search style).
 function FilterListItem({ col, cond, onToggle, onChangeCond }) {
   const checked = !!cond;
   const isDate = isDateCol(col);
   const value = cond || blankCond(col);
-  const ops = isDate ? DATE_OPS : FILTER_OPS;
+  const ops = opsFor(col);
   const noValueOps = isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS;
   const needsValue = checked && !noValueOps.includes(value.op);
   const opts = col.opts ? col.opts() : null;
@@ -498,6 +573,8 @@ function FilterListItem({ col, cond, onToggle, onChangeCond }) {
             ) : opts ? (
               <OptsPicker pill opts={opts} optText={optText} values={value.values}
                 onChange={(values) => onChangeCond({ ...value, values })} />
+            ) : colKind(col) === 'number' ? (
+              <NumberEditor pill cond={value} onChange={onChangeCond} />
             ) : (
               <ValueTagInput pill values={value.values} onChange={(values) => onChangeCond({ ...value, values, _live: '' })}
                 onLive={(text) => onChangeCond({ ...value, _live: text })} />
@@ -571,7 +648,7 @@ function FilterRow({ col, cond, onChange, onRemove }) {
   // Filter values are the STORED ones; `optLabel` only changes how they read.
   const optText = col.optLabel || ((o) => o);
   const isDate = isDateCol(col);
-  const ops = isDate ? DATE_OPS : FILTER_OPS;
+  const ops = opsFor(col);
   const needsValue = !(isDate ? DATE_NO_VALUE_OPS : NO_VALUE_OPS).includes(cond.op);
   const changeOp = (op) => onChange(isDate
     ? { ...cond, op, date: dateForOp(cond, op) }
@@ -591,6 +668,8 @@ function FilterRow({ col, cond, onChange, onRemove }) {
           ) : opts ? (
             <OptsPicker opts={opts} optText={optText} values={cond.values}
               onChange={(values) => onChange({ ...cond, values })} />
+          ) : colKind(col) === 'number' ? (
+            <NumberEditor cond={cond} onChange={onChange} />
           ) : (
             <ValueTagInput values={cond.values} onChange={(values) => onChange({ ...cond, values })} />
           )}
@@ -618,6 +697,33 @@ function sortHint(col, dir) {
  * the funnel is a separate button that opens the filter editor. Two separate controls because one button cannot both sort and
  * open a popover, which is why sorting was previously unreachable.
  */
+/**
+ * The cells of the group header row: one per run of adjacent visible columns
+ * that share a group. A run also breaks where the frozen columns end, so a
+ * group cell is either wholly pinned (and sticks with them, at the first
+ * column's offset) or wholly scrolling — a cell straddling the boundary would
+ * have to be both. `sec` follows the first column of the run so the rule that
+ * separates blocks in the body continues up through both header rows.
+ */
+function groupRuns(activeCols, groups, pins) {
+  const label = Object.fromEntries((groups || []).map((g) => [g.key, g.label]));
+  const runs = [];
+  activeCols.forEach((c) => {
+    const pin = pins.get(c.key) || null;
+    const last = runs[runs.length - 1];
+    if (last && last.group === c.group && !!last.pin === !!pin) {
+      last.span += 1;
+      last.pinLast = !!(pin && pin.last);
+      return;
+    }
+    runs.push({
+      key: c.key, group: c.group, label: label[c.group] || '', span: 1,
+      pin, pinLast: !!(pin && pin.last), sec: (c.cls || '').split(/\s+/).includes('sec'),
+    });
+  });
+  return runs;
+}
+
 function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemove, pin }) {
   const active = cond ? condActive(cond) : false;
   const value = cond || blankCond(col);
@@ -660,6 +766,7 @@ function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemov
 function EditableCell({ row, col, value }) {
   return (
     <Popover
+      block
       trigger={({ toggle }) => (
         <span className="ec" onClick={(e) => { e.stopPropagation(); toggle(); }}>
           <span className="ec-v">{col.cell ? col.cell(value, row) : value}</span>
@@ -695,7 +802,9 @@ function EditMenu({ row, col, close }) {
             onClick={() => pick(o)}
           >
             {String(row[col.key]) === String(o) ? <Icon name="check" size={15} /> : <span style={{ width: 15 }} />}
-            {o}
+            {/* A column may draw its own option, a colour swatch beside the
+                verdict for instance; the plain text is the default. */}
+            {col.optionCell ? col.optionCell(o) : o}
           </button>
         ))}
       </div>
@@ -729,10 +838,10 @@ function EditMenu({ row, col, close }) {
  *
  * Every other prop is a primitive or a stable callback, see rowClick/toggleRow.
  */
-const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle, pins }) {
+const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle, pins, cls }) {
   return (
     <tr
-      className={selected ? 'sel' : ''}
+      className={(selected ? 'sel ' : '') + (cls || '')}
       onClick={onClick ? () => onClick(row) : undefined}
       style={onClick ? { cursor: 'pointer' } : undefined}
     >
@@ -797,6 +906,13 @@ export default function DataTable({
    */
   defaultSortVersion = 0,
   card, onRow, bulkActions, extraToolbar, tableId, server = null,
+  // A class for the whole <tr>, from the row. The Performance Matrix paints a
+  // row in its verdict's colour with it; every other table leaves it unset.
+  rowClass = null,
+  // Draw `groups` as a second header row above the columns, one cell per run
+  // of adjacent columns sharing a group. Opt-in: `groups` alone only shapes
+  // the Columns menu, which is all the older tables ever asked of it.
+  groupHeader = false,
   // Whether this table may edit a cell in place. Defaults to FALSE, so a column
   // carrying editOpts is inert until its page explicitly opts in with the
   // caller's own permission check — previously EditableCell rendered off the
@@ -1675,7 +1791,8 @@ export default function DataTable({
             const c = cols.find((x) => x.key === cond.key);
             const text = isDateCond(cond) ? dateCondText(cond)
               : NO_VALUE_OPS.includes(cond.op) ? opLabel(cond.op)
-                : `${opLabel(cond.op)} ${fmtValues(cond.values, c && c.optLabel)}`;
+                : cond.op === 'Between' ? `is between ${(cond.values || []).join(' and ')}`
+                  : `${opLabel(cond.op)} ${fmtValues((cond.values || []).filter((v) => String(v ?? '').trim() !== ''), c && c.optLabel)}`;
             const local = serverMode && split.unsupported.some((u) => u.key === cond.key);
             return (
               /* A span with role=button, not a <button>: the remove control is
@@ -1711,6 +1828,20 @@ export default function DataTable({
                 {activeCols.map((c) => <col key={c.key} style={{ width: colWidth(c) }} />)}
               </colgroup>
               <thead>
+                {groupHeader && groups ? (
+                  <tr className="grp">
+                    {select ? (
+                      <th className={pins.size ? 'pin-col' : ''} style={pins.size ? { left: 0 } : undefined} />
+                    ) : null}
+                    {groupRuns(activeCols, groups, pins).map((run) => (
+                      <th key={run.key} colSpan={run.span}
+                        className={(run.pin ? 'pin-col ' : '') + (run.pinLast ? 'pin-last ' : '') + (run.sec ? 'sec' : '')}
+                        style={run.pin ? { left: run.pin.left } : undefined}>
+                        {run.label}
+                      </th>
+                    ))}
+                  </tr>
+                ) : null}
                 <tr>
                   {select ? (
                     /* The header checkbox selects every MATCHING row, not the
@@ -1784,6 +1915,7 @@ export default function DataTable({
                     select={select}
                     canEdit={canEdit}
                     pins={pins}
+                    cls={rowClass ? rowClass(r) : ''}
                     onClick={onRow ? rowClick : null}
                     onToggle={toggleRow}
                   />

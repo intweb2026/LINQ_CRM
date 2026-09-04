@@ -18,7 +18,7 @@ export function fitX(offset, panelW, viewportW) {
   return Math.max(8, Math.min(offset, viewportW - panelW - 8));
 }
 
-export default function Popover({ trigger, children, align = 'left', width, panelClassName, openRef }) {
+export default function Popover({ trigger, children, align = 'left', width, panelClassName, openRef, block = false }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const anchorRef = useRef(null);
@@ -90,8 +90,11 @@ export default function Popover({ trigger, children, align = 'left', width, pane
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, align]);
 
+  // `block` lets a trigger fill its container: the in-place cell editor paints
+  // the whole table cell, and an inline-block anchor would shrink it back to
+  // its text.
   return (
-    <div ref={anchorRef} style={{ position: 'relative', display: 'inline-block' }}>
+    <div ref={anchorRef} style={{ position: 'relative', display: block ? 'block' : 'inline-block' }}>
       {trigger({ open, toggle: () => setOpen((o) => !o) })}
       {open ? createPortal(
         /* Rendered before it is positioned, and invisible until it is. place()

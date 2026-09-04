@@ -13,7 +13,7 @@ only make sense read across the whole set, and the footer totals are over every
 row. The catalogue is a few hundred events and the payload is one small dict per
 row, so the whole thing is one response.
 
-NOT A ModelViewSet, for the same reason event_performance is not — there is no
+NOT A ModelViewSet, for the same reason performance_matrix is not — there is no
 model here to serialise. The rows are built in services.py and pass straight
 through DRF's renderer.
 """
