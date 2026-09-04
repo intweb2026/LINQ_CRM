@@ -214,7 +214,6 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
 
   async function create() {
     if (!form.purpose.trim()) { toast('Purpose is required', 'er'); return; }
-    if (!form.link_url.trim()) { toast('Link URL is required', 'er'); return; }
     if (!form.type_of_ticket.trim()) { toast('Type of Ticket is required', 'er'); return; }
     const body = {};
     // MR fields only. A create that carries any DMD key is rejected outright by
@@ -331,7 +330,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
               <Field label="Purpose" req>
                 <input className="in" placeholder="e.g. CCU" value={form.purpose} onChange={set('purpose')} disabled={!mrOpen} />
               </Field>
-              <Field label="Link URL" req full={!mrOpen}>
+              <Field label="Link URL" full={!mrOpen}>
                 <div className="fd-lnk">
                   {/* Read-only, this is a URL a miner has to be able to read in
                       full — so text that wraps, not an input that clips it. The

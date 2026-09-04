@@ -35,9 +35,9 @@ import { useToast } from '../../context/ToastContext';
 // else: no DMD columns, no provenance, no locked filler cells. `carry` marks
 // what a new row inherits from the one above — the event and its classification
 // repeat down a batch, while the link, its keywords and the comment are what
-// make each row a different ticket. `req` is this grid's own bar: link_url is
-// required HERE and not by the API, because a ticket with no link is not
-// actionable for Data Mining.
+// make each row a different ticket. `req` is this grid's own bar; link_url is
+// optional, matching the API, so a ticket can be raised before its link is
+// known.
 //
 // Labels and the estimate bound come from the server schema
 // (/api/tickets/bulk_update_schema/, derived from the model), and so does the
@@ -52,7 +52,7 @@ const FIELD_ORDER = [
 ];
 const F = {
   purpose: { w: 110, req: true, carry: true, ph: 'e.g. CCU' },
-  link_url: { w: 230, req: true, ph: 'https://' },
+  link_url: { w: 230, ph: 'https://' },
   linkedin_keywords: { w: 170, ph: 'hydrogen, electrolyser' },
   competitor_event_name: { w: 170, carry: true, ph: 'e.g. Hydrogen World 2026' },
   organizer: { w: 140, carry: true, ph: 'e.g. Informa' },
