@@ -104,12 +104,40 @@ const OVERRIDE_FIELDS = [
  * the save returned 200, and the date was back on the next refetch, which is
  * what made the Booking Code to SPP rule look like it did nothing.
  *
- * The three DATE fields are listed and the rest are not. They are the nullable
- * columns; the others are non-null CharFields whose empty value is '' and whose
- * blank simply means "nothing to push up", so clearing them on the invoice is
- * neither expressible nor asked for.
+ * The three DATE fields are listed here because they are the nullable columns.
+ * The two CharFields whose blank is a real value are in BLANKABLE_ON_INVOICE
+ * below, which is the same rule written for a column that takes '' rather than
+ * null.
  */
 const CLEARABLE_ON_INVOICE = ['payment_date', 'request_date', 'invoice_date'];
+
+/**
+ * The person-level fields whose CLEARED value belongs on the invoice as ''.
+ *
+ * The twin of CLEARABLE_ON_INVOICE, split from it by what the invoice column
+ * accepts: those three are nullable dates and take null, these two are non-null
+ * CharFields whose empty value is '' and which answer a null with "This field
+ * may not be null".
+ *
+ * Both cells offer a blank entry deliberately — DelegateTable's BLANK_FIRST, so
+ * a tier or a payment type picked by mistake can be returned to "not yet known"
+ * — and neither blank could be SAVED. The override went out as NULL, the
+ * invoice kept its old value, and effective_ticket_tier resolves as
+ * `override or invoice` (book_delegate/serializers.py), so the cleared cell read
+ * straight back off the invoice and came back filled on the next refetch. A 200,
+ * nothing said, the edit gone: the reported "cannot save the ticket tier".
+ *
+ * ONE blank row out of several is the case this has to get right, and it is why
+ * the blank goes on the invoice rather than on the row: a blank override reads
+ * as "inherit" server-side (book_delegate/effective.py), so a group booking with
+ * one tier cleared is expressed as invoice '' plus an override on each row that
+ * still has a tier. The invoice-level column is then blank for a booking whose
+ * other delegates hold a tier, which is the same trade CLEARABLE_ON_INVOICE
+ * already makes for the dates: the Bookings tab filters on the RESOLVED value
+ * (book_delegate/filters.py) and stays correct, the invoice-level tier filter
+ * (book_event/filters.py) no longer matches that booking.
+ */
+const BLANKABLE_ON_INVOICE = ['ticket_tier', 'payment_type'];
 
 /** The value every delegate shares for `key`, or undefined if they differ. */
 function agreedValue(delegates, key) {
@@ -134,6 +162,19 @@ function splitPersonLevel(delegates) {
     if (agreed !== undefined && agreed !== '' && agreed !== null) {
       invoiceFields[uiKey] = agreed;
       inherited[overrideKey] = true;
+      return;
+    }
+    // ANY row cleared, on a column whose blank is a value: the blank goes on
+    // the INVOICE as '', and `inherited` deliberately stays unset so every row
+    // that still holds a value keeps it as its own override. That is the whole
+    // rule for a GROUP booking where one delegate of several is blanked: the
+    // server reads a blank override as "inherit" (book_delegate/effective.py),
+    // so the blank cannot live on the row — it has to live on the invoice, with
+    // the values on the rows. The same write covers the all-blank case, where
+    // there is no value left to override with.
+    if (BLANKABLE_ON_INVOICE.includes(uiKey)
+        && delegates.some((d) => !String(d[uiKey] ?? '').trim())) {
+      invoiceFields[uiKey] = '';
       return;
     }
     // Nothing shared, or shared and empty. A clearable column is NULLed on the
