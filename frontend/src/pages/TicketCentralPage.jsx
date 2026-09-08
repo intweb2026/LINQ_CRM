@@ -59,7 +59,7 @@ const tkCols = () => [
   { key: 'type_of_ticket', serverField: 'type_of_ticket', label: 'Type of Ticket', group: 'mr', opts: () => TK_TYPES },
   { key: 'purpose', serverField: 'purpose', label: 'Purpose', group: 'mr' },
   { key: 'priority', serverField: 'priority', serverOrdering: 'priority', label: 'Priority', group: 'mr', cell: (v) => <PriBadge value={v} />, opts: () => Object.keys(TK_PRIORITY), editOpts: Object.keys(TK_PRIORITY), onEdit: (r, v) => ticketsApi.update(r.id, { priority: v }) },
-  { key: 'estimate', serverField: 'estimate', label: 'Estimate', group: 'mr', num: true, cell: num },
+  { key: 'estimate', serverField: 'estimate', label: 'Estimate', group: 'mr', num: true, serverOrdering: 'estimate', cell: num },
   { key: 'mr_comments', serverField: 'mr_comments', label: 'MR Comments', group: 'mr' },
   { key: 'ticket_type', serverField: 'ticket_type', label: 'Ticket Type', group: 'dm', cell: (v) => dim(v) || <span className="tg bg-neutral">{v}</span>, opts: () => TK_TICKET_TYPES },
   { key: 'assign_date', serverField: 'assign_date', label: 'Assign Date', type: 'date', group: 'dm', cell: day },
@@ -198,7 +198,9 @@ export default function TicketCentralPage() {
     { id: '', label: 'All tickets', count: S.total }, { id: 'draft', label: 'Draft', count: S.draft },
     { id: 'mr_submitted', label: 'MR Submitted', count: S.mr_submitted }, { id: 'completed', label: 'Completed', count: S.completed },
     { id: 'returned', label: 'Returned', count: S.returned },
-  ];
+    // Draft is an MR-only state — a DMD user can never act on one, and creation
+    // goes straight to MR Submitted, so the tab is a dead end for them.
+  ].filter((t) => t.id !== 'draft' || user.role !== 'data_mining');
   const tab = TABS.some((t) => t.id === subTab) ? subTab : '';
   const isMR = user.role === 'market_research' || user.role === 'admin';
   // Who may type a new ticket into the table. Read twice: by the New ticket row

@@ -38,6 +38,28 @@ find a more agreeable answer: `BIUK - PM26` is an exact hit that is bookings-off
 and the correct answer is "that edition is closed", not "here is a different
 edition". Those are different operator actions.
 
+THE ONE EXCEPTION — base-code placeholders, and only for web bookings
+A row whose event_code IS its own base_code (`WSU`, `PPTX`, `BGE`) is a FAMILY
+placeholder, not an edition; the bookable edition carries MRE initials
+(`WSU - MP`). An inbound `WSU` exact-matched that placeholder, which is closed
+by default, and every booking for the family was refused with "web bookings is
+disabled on that edition" while the real edition sat open. So when EVERY tier-1
+exact hit is a closed placeholder, the tier does not win and matching continues
+to the boundary tier, where the internal code resolves.
+
+This does not weaken the rule above. `BIUK - PM26` has base_code `BIUK`, so it
+is a real edition and still answers "that edition is closed". Only a row that
+names the family and nothing else steps aside, and only when it is closed — a
+placeholder an admin has deliberately opened still wins outright.
+
+It is opt-in via `for_web_booking`, and the default is OFF, because "closed"
+only means something to a caller that is taking a booking. paper_review and
+proposal_submission resolve the SAME catalogue for paper and proposal
+submissions, where web bookings is irrelevant and every event is closed by
+default — and they read `.matches` directly rather than `.event`, so widening
+the set there would turn a clean single match into a false ambiguity error.
+Only webhooks/services.py, the booking ingest path, passes it.
+
 Within a winning set every match is collected before deciding — never .first().
 Two or more matches that accept web bookings is an ambiguity, answered with 409.
 Ambiguity is never broken by -event_date; picking the newest edition is how the
@@ -185,13 +207,36 @@ def _prefilter_codes(qs, searches: list) -> list:
     return sorted(codes)
 
 
-def resolve_event_code(raw: str, normalized: str, *, queryset=None) -> Resolution:
+def _is_base_placeholder(event) -> bool:
+    """
+    True when this row names the FAMILY and nothing else — event_code equals
+    base_code, so it carries no edition identity (`WSU`, not `WSU - MP`).
+
+    base_code must be non-empty: a row saved before the column existed has both
+    sides blank, and "" == "" would make every such row a placeholder.
+    """
+    base = (event.base_code or "").strip().upper()
+    return bool(base) and (event.event_code or "").strip().upper() == base
+
+
+def _closed_placeholders_only(hits: list) -> bool:
+    """A tier-1 set that must step aside: all placeholders, none of them open."""
+    return (not any(e.accepting_web_bookings for e in hits)
+            and all(_is_base_placeholder(e) for e in hits))
+
+
+def resolve_event_code(raw: str, normalized: str, *, queryset=None,
+                       for_web_booking: bool = False) -> Resolution:
     """
     Resolve an inbound code to an Event. Never writes, never raises.
 
     `queryset` is injectable so callers can scope the search; it defaults to all
     events, which is correct for webhook ingestion — an inbound booking is not
     scoped to a user.
+
+    `for_web_booking` lets a closed base-code placeholder step aside for the
+    real edition it shadows. Off by default; see THE ONE EXCEPTION above for
+    why only the booking path may ask for it.
     """
     qs = Event.objects.all() if queryset is None else queryset
     raw        = (raw or "").strip()
@@ -207,7 +252,9 @@ def resolve_event_code(raw: str, normalized: str, *, queryset=None) -> Resolutio
     # ── Tier 1: exact ────────────────────────────────────────────────────────
     for code in searches:
         hits = list(qs.filter(event_code__iexact=code))
-        if hits:
+        # A closed family placeholder does not win the tier; the real edition it
+        # shadows is found by the boundary tier below. See THE ONE EXCEPTION.
+        if hits and not (for_web_booking and _closed_placeholders_only(hits)):
             return _decide(Outcome.EXACT, hits,
                            tier=f"exact({code!r})", raw=raw, normalized=normalized,
                            candidates=sorted(e.event_code for e in hits))

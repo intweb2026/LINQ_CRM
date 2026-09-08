@@ -24,28 +24,29 @@ export const OWNER_FIELDS = [
 export const OWNER_KEYS = OWNER_FIELDS.map((f) => f.key);
 
 /**
- * The owner columns the EVENT FORMS let you set.
+ * The owner columns the EVENT FORMS let you set — ALL OF THEM.
  *
- * The SCA and the sales lead, because those are genuinely per-event, and the two
- * Market Research columns, because those DECIDE ACCESS. backend
- * paper_review/access.py reads market_research_senior / market_research_junior to
- * work out which events a reviewer's paper review form offers, so a reviewer who
- * cannot be named here is a reviewer whose form is empty, with no way to fix it
- * short of a CSV re-import.
+ * Two are load-bearing rather than cosmetic: backend paper_review/access.py reads
+ * market_research_senior / market_research_junior to work out which events a
+ * reviewer's paper review form offers, so a reviewer who cannot be named here is
+ * a reviewer whose form is empty, with no way to fix it short of a CSV re-import.
+ * Dropping those two from this set breaks that silently.
  *
- * The other three stay display-only: nothing reads them for access, so an editor
- * would only invite re-typing what the Teams module already knows, and a value
- * typed on the event outranks the team's answer permanently.
+ * Telemarketing and SpEx lead were display-only, on the argument that the Teams
+ * module already knows them and a blank column inherits its answer. It does — but
+ * there was no way to name a DIFFERENT person on one event, which is what these
+ * two editors are for. A value typed here outranks the team's answer permanently,
+ * so leaving a column Unassigned stays the right move whenever the team's own lead
+ * is the correct answer.
  *
- * Display is unaffected: the drawer's Teams tab and the Events table still show
- * all seven, inherited where the event says nothing. An INHERITED name is never
- * written back — the selects read form values raw for exactly that reason — and
- * the backend grants access on the stored column alone, so the Teams module's MR
- * lead does not silently acquire every event with a blank column.
+ * An INHERITED name is never written back — the selects read form values raw for
+ * exactly that reason — and the backend grants access on the stored column alone,
+ * so the Teams module's MR lead does not silently acquire every event with a blank
+ * column.
  */
-export const OWNER_EDIT_KEYS = ['sales_team', 'sales_lead', 'mr_senior', 'mr_junior'];
+export const OWNER_EDIT_KEYS = OWNER_KEYS;
 
-export const OWNER_EDIT_FIELDS = OWNER_FIELDS.filter((f) => OWNER_EDIT_KEYS.includes(f.key));
+export const OWNER_EDIT_FIELDS = OWNER_FIELDS;
 
 /**
  * Placeholders that mean "nothing is assigned". Mirrors _BLANK_OWNER_VALUES in
@@ -81,4 +82,36 @@ export function ownerOf(ev, key) {
   }
 
   return { names: [], name: '', inherited: false, team: '' };
+}
+
+/**
+ * The active users who may be NAMED in `key`'s select, in the event forms.
+ *
+ * The owner columns are free text and the selects offered every active user, so
+ * "Sales team leader" listed all 25 salespeople and the two Market Research
+ * columns listed the whole company. The rule here mirrors what the backend
+ * already infers when a column is blank — events/serializers.py
+ * OWNER_ROLE_SOURCES reads the sales lead off the leads of the Sales team and
+ * the MR columns off Market Research — so the value a human can type matches the
+ * one that gets inherited.
+ *
+ * Only sales_lead carries the lead flag; every other column takes its whole team,
+ * leads included, because the person doing the work on one event is not usually
+ * the team's lead.
+ *
+ * A key with no rule falls through to every active user, so adding a column to
+ * OWNER_EDIT_KEYS never silently ships an empty select.
+ */
+const OWNER_POOL_RULES = {
+  sales_team: (u) => u.role === 'sales',
+  sales_lead: (u) => u.role === 'sales' && u.is_lead,
+  tele_team:  (u) => u.role === 'telemarketing',
+  mr_senior:  (u) => u.role === 'market_research',
+  mr_junior:  (u) => u.role === 'market_research',
+  spex_lead:  (u) => u.role === 'spex',
+};
+
+export function ownerPool(users, key) {
+  const rule = OWNER_POOL_RULES[key];
+  return (users || []).filter((u) => u.status === 'active' && (!rule || rule(u)));
 }

@@ -9,12 +9,12 @@ import { useFetch } from '../../hooks/useFetch';
 import { useToast } from '../../context/ToastContext';
 import * as eventsApi from '../../api/events';
 import { apiErrorMessage } from '../../api/client';
-import { OWNER_EDIT_FIELDS } from '../../lib/owners';
+import { OWNER_EDIT_FIELDS, ownerPool } from '../../lib/owners';
 
-// The SCA, the sales team leader and the two Market Research columns — see
-// OWNER_EDIT_FIELDS in lib/owners.js for why those four and not the other three.
-// Market Research Sr./Jr. is what decides whose paper review form offers this
-// event, so assigning the reviewer HERE is what makes it appear for them.
+// Every owner column — see OWNER_EDIT_FIELDS in lib/owners.js. Market Research
+// Sr./Jr. is what decides whose paper review form offers this event, so assigning
+// the reviewer HERE is what makes it appear for them. Anything left Unassigned is
+// sent blank and inherits the owning team's lead.
 //
 // The selects read form values RAW rather than through ownerOf(): an inherited name
 // is the team's answer, and writing it into the event would freeze "whoever leads
@@ -26,7 +26,6 @@ export default function NewEventModal({ onClose, onSaved }) {
   const toast = useToast();
   const nav = useNavigate();
   const { data: allUsers } = useFetch(usersApi.list, [], { initialData: [] });
-  const pool = (allUsers || []).filter((u) => u.status === 'active');
   const [form, setForm] = useState({
     event_code: '', base_code: '', year: '', name: '', event_type: '',
     event_date: '', end_date: '', location: '', website_live_date: '',
@@ -147,7 +146,7 @@ export default function NewEventModal({ onClose, onSaved }) {
               <label className="fd-l">{lbl}</label>
               <select className="in" value={form.owners[i]} onChange={setOwner(i)}>
                 <option value="">— Unassigned —</option>
-                {pool.map((u) => <option key={u.id}>{u.name}</option>)}
+                {ownerPool(allUsers, OWNER_KEYS[i]).map((u) => <option key={u.id}>{u.name}</option>)}
               </select>
             </div>
           ))}

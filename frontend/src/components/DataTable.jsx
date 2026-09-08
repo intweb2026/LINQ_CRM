@@ -1778,6 +1778,9 @@ export default function DataTable({
   const activeCondCount = conds.filter(condActive).length;
   const isFiltered = activeCondCount > 0 || !!q;
   const nounCap = noun.charAt(0).toUpperCase() + noun.slice(1);
+  // The bare centred block. Every branch below renders it INSIDE the table's own
+  // bordered box — see the no-rows branch — because a message sitting above the
+  // box, with the box empty underneath it, is what an emptied module looked like.
   const emptyState = isFiltered ? (
     <EmptyState icon="filter" title="No matching records found" body={`No ${noun} match your current search or filters.`}
       action={<button className="btn btn-s btn-sm" onClick={clearAll}><Icon name="refresh" size={13} />Clear filters</button>} />
@@ -1916,11 +1919,11 @@ export default function DataTable({
       {view === 'cards' && card ? (
         <>
           {pageRows.length ? <div className={'cg' + (staleRows ? ' dt-busy' : '')}>{pageRows.map((r) => <div key={r.id} onClick={() => onRow && onRow(r)}>{card(r)}</div>)}</div>
-            : emptyState}
+            : <div className="tw dt-empty">{emptyState}</div>}
           {/* Cards scroll with the page, not inside .tsc — the sentinel still
               belongs directly under the last card so scrolling loads there too. */}
           {moreBar}
-          <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
+          {pageRows.length ? <div className="tw" style={{ marginTop: 11 }}><Footer /></div> : null}
         </>
       ) : pageRows.length ? (
         <div className={'tw dt-tw' + (staleRows ? ' dt-busy' : '')}>
@@ -2059,21 +2062,37 @@ export default function DataTable({
           <Footer />
         </div>
       ) : serverMode && serverState.loading ? (
-        <div className="tw"><div className="more"><span className="spin" />Loading {noun}…</div></div>
+        <div className="tw dt-tw dt-empty"><div className="more"><span className="spin" />Loading {noun}…</div></div>
       ) : (
-        <>
+        /**
+         * NO ROWS — the SAME BOX the rows branch renders, holding the message.
+         *
+         * This used to be three stacked siblings: the bare message, then the
+         * entry band's own wrapper, then a footer. The band wrapper carried
+         * dt-tw, so `#main>.dt-tw{flex:1;min-height:280px}` stretched it into a
+         * blank white box 280px and taller with the message floating ABOVE it
+         * and a paging bar below, which is what an emptied module looked like.
+         *
+         * One box. The message is centred inside it (.dt-empty, components.css)
+         * and the entry band sits at its foot, under the same border the rows
+         * would have had, so nothing moves when the first ticket is typed.
+         *
+         * NO FOOTER: nothing is loaded, so "Showing 0 of N" and "Load 1,000
+         * more" were a paging bar over an empty table. N is the server's
+         * `count`, a separate statement from the page query, so a wipe
+         * committing between the two is answered pre-wipe — the bar read
+         * "Showing 0 of 37,008" directly under "No Tickets Found".
+         */
+        <div className="tw dt-tw dt-empty">
           {emptyState}
           {/* The band belongs here too. A scoped MR user starts with no tickets
               at all, so this branch — not the one above — is where they will do
               their first entry, and hiding it here would leave them looking at
               "No Tickets Found" with nothing to type into. */}
           {entryBand ? (
-            <div className="tw dt-tw dt-band-only">
-              <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
-            </div>
+            <div className="dt-band">{entryBand({ cols: activeCols, select, colWidth, pins })}</div>
           ) : null}
-          <div className="tw" style={{ marginTop: 11 }}><Footer /></div>
-        </>
+        </div>
       )}
 
       {/* C5 — the selection states what it actually covers, and the three states

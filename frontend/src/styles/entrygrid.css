@@ -20,10 +20,6 @@
   border-top: 2px solid var(--t-500);
 }
 .dt-band:empty { display: none; }
-/* .dt-band-only is DataTable's NO-ROWS wrapper. The class matters: a selector
-   on structure alone could catch the real table's wrapper and hide the whole
-   table whenever there were no drafts, which is most of the time. */
-.dt-band-only:has(> .dt-band:empty) { display: none; }
 
 /* The band's own horizontal scroll, independent of the table's. */
 .eg-scroll { overflow-x: auto; }

@@ -192,14 +192,14 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
   const isAdmin = user.role === 'admin';
   const status = ticket?.status;
   const mrOpen = mayWrite && (isNew || isAdmin || (user.role === 'market_research' && (status === 'draft' || status === 'returned')));
-  const dmdOpen = mayWrite && !isNew && (isAdmin || (user.role === 'data_mining' && status === 'mr_submitted'));
+  const dmdOpen = mayWrite && !isNew && (isAdmin || (user.role === 'data_mining' && (status === 'mr_submitted' || status === 'completed')));
   const mrLock = mrOpen ? null
     : isNew ? 'You do not have permission to raise tickets.'
       : user.role === 'market_research' ? 'Read-only — MR fields are editable while a ticket is Draft or Returned.'
         : 'Read-only for your role.';
   const dmdLock = dmdOpen ? null
     : isNew ? 'Data Mining fills this in after the ticket is submitted — the API refuses these fields at create.'
-      : user.role === 'data_mining' ? 'Read-only — DMD fields are editable while a ticket is MR Submitted.'
+      : user.role === 'data_mining' ? 'Read-only — DMD fields are editable once a ticket is MR Submitted.'
         : 'Read-only for your role.';
 
   const patch = useMemo(() => {

@@ -43,7 +43,8 @@ def resolve(raw):
     from webhooks.services import WebhookProcessor
     from webhooks.models import WebhookLog
     proc = WebhookProcessor(WebhookLog(payload={}))     # unsaved; no DB write
-    return resolve_event_code(raw, proc.normalize_event_code(raw))
+    return resolve_event_code(raw, proc.normalize_event_code(raw),
+                              for_web_booking=True)
 
 
 class ResolverSet1Tests(TestCase):
@@ -341,3 +342,204 @@ class UpdateBookingEventCodeTests(TestCase):
         self.assertEqual(
             BookEvent.objects.get(invoice_number="INV-UPD-001").event_code,
             "ACU - RS")
+
+
+class BaseCodePlaceholderTests(TestCase):
+    """
+    The rule itself, on the minimal shape: one closed placeholder, one open
+    edition. A row coded exactly `WSU` has base_code `WSU` too, so it is a
+    FAMILY placeholder; it exact-matched, it is closed by default, and the tier
+    wins outright — so the open edition behind it was never reached.
+
+    These pairs are SYNTHETIC. The real production catalogue, including the two
+    families this actually happened to and the one it did not, is
+    ProductionCatalogueTests below.
+    """
+
+    PAIRS = [("WSU", "WSU - MP"), ("PPTX", "PPTX - JS"), ("BGE", "BGE - AD")]
+
+    def test_closed_placeholder_steps_aside_for_its_open_edition(self):
+        for base, edition in self.PAIRS:
+            with self.subTest(event_code=base):
+                sid = transaction.savepoint()
+                try:
+                    make_event(base,    web_bookings=False)   # the placeholder
+                    make_event(edition, web_bookings=True)    # the real edition
+                    r = resolve(base)
+                    self.assertEqual(r.outcome, Outcome.BOUNDARY)
+                    self.assertEqual(r.event.event_code, edition)
+                finally:
+                    transaction.savepoint_rollback(sid)
+
+    def test_placeholder_is_recognised_by_base_code_not_by_shape(self):
+        """`WSU` is a placeholder because base_code == event_code, nothing else."""
+        placeholder = make_event("WSU", web_bookings=False)
+        self.assertEqual(placeholder.base_code, "WSU")
+        edition = make_event("WSU - MP", web_bookings=True)
+        self.assertEqual(edition.base_code, "WSU")
+
+    def test_open_placeholder_still_wins_outright(self):
+        """Stepping aside is only for CLOSED placeholders; an open one is a hit."""
+        make_event("WSU",      web_bookings=True)
+        make_event("WSU - MP", web_bookings=True)
+        r = resolve("WSU")
+        self.assertEqual(r.outcome, Outcome.EXACT)
+        self.assertEqual(r.event.event_code, "WSU")
+
+    def test_placeholder_alone_still_reports_bookings_off(self):
+        """No edition to fall through to: the honest answer is still 400."""
+        make_event("WSU", web_bookings=False)
+        r = resolve("WSU")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF)
+        self.assertIsNone(r.event)
+        self.assertEqual(r.http_status, 400)
+
+    def test_placeholder_and_closed_edition_reports_both(self):
+        """Falling through must not invent a success when everything is shut."""
+        make_event("WSU",      web_bookings=False)
+        make_event("WSU - MP", web_bookings=False)
+        r = resolve("WSU")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF)
+        self.assertCountEqual(r.matched_codes, ["WSU", "WSU - MP"])
+        self.assertIn("every matched edition", r.error_message)
+
+    def test_real_edition_that_is_closed_is_unchanged(self):
+        """
+        The load-bearing guarantee this must not weaken: BIUK - PM26 has
+        base_code BIUK, so it is an edition, not a placeholder, and it still
+        answers "that edition is closed" rather than booking onto BIUK - PM.
+        """
+        make_event("BIUK - PM",   web_bookings=True)
+        make_event("BIUK - PM26", web_bookings=False)
+        r = resolve("BIUK - PM26")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF)
+        self.assertIsNone(r.event)
+
+    def test_placeholder_never_reaches_a_different_family(self):
+        """Falling through uses the boundary rule, so BIU still cannot take BIUK."""
+        make_event("BIU",       web_bookings=False)   # closed placeholder
+        make_event("BIUK - PM", web_bookings=True)    # different family
+        r = resolve("BIU")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF)
+        self.assertIsNone(r.event)
+        self.assertNotIn("BIUK - PM", r.matched_codes)
+
+    def test_stepping_aside_is_off_by_default(self):
+        """
+        The regression this flag exists to prevent. paper_review and
+        proposal_submission resolve the same catalogue for submissions, where
+        every event is web_bookings=False and `.matches` is read directly — so
+        without the flag a closed `BIU` placeholder must still win tier 1 alone,
+        not widen the set to ['BIU', 'BIU/GS - PM'] and read as ambiguous.
+        """
+        make_event("BIU",         web_bookings=False)
+        make_event("BIU/GS - PM", web_bookings=False)
+
+        default = resolve_event_code("BIU", "BIU")
+        self.assertEqual(default.matched_codes, ["BIU"], default.diagnostic)
+
+        booking = resolve_event_code("BIU", "BIU", for_web_booking=True)
+        self.assertCountEqual(booking.matched_codes, ["BIU", "BIU/GS - PM"])
+
+
+class ProductionCatalogueTests(TestCase):
+    """
+    The three codes from the production report, against the REAL catalogue rows
+    they have — not an idealised placeholder/edition pair.
+
+    Two of the three were the placeholder bug; the third never was, and pinning
+    that distinction is the point of this class. Read the fixture as the
+    screenshot: (event_code, web_bookings).
+    """
+
+    CATALOGUE = [
+        ("BGE - AD",       False),   # BGE has NO bare placeholder row
+        ("PPTX",           False),   # placeholder, shadowing PPTX - JS
+        ("PPTX - JS",      True),
+        ("PPTX 23",        False),
+        ("PPTX 24",        False),
+        ("PPTX 25",        False),
+        ("FEB2027_WSU-MP", True),    # the only OPEN edition in the WSU family
+        ("WSU",            False),   # placeholder
+        ("WSU - MP",       False),   # closed, despite looking like the live one
+        ("WSU 25",         False),
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        for code, open_ in cls.CATALOGUE:
+            make_event(code, web_bookings=open_)
+
+    def test_pptx_reaches_its_open_edition(self):
+        r = resolve("PPTX")
+        self.assertEqual(r.outcome, Outcome.BOUNDARY, r.diagnostic)
+        self.assertEqual(r.event.event_code, "PPTX - JS")
+
+    def test_wsu_reaches_the_only_open_edition_in_the_family(self):
+        """
+        Underscore is a boundary, so FEB2027_WSU-MP is reachable from 'WSU' —
+        the [A-Za-z0-9] class over \\b, decided in the module docstring. It is
+        also the ONLY open WSU edition: `WSU - MP` is closed.
+        """
+        r = resolve("WSU")
+        self.assertEqual(r.outcome, Outcome.BOUNDARY, r.diagnostic)
+        self.assertEqual(r.event.event_code, "FEB2027_WSU-MP")
+
+    def test_bge_was_never_the_placeholder_bug(self):
+        """
+        No bare `BGE` row exists, so nothing shadowed anything. `BGE - AD` is a
+        real edition that is simply closed, and 400 is the correct answer — the
+        fix for this one is an admin ticking web bookings, not code.
+        """
+        r = resolve("BGE")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF, r.diagnostic)
+        self.assertEqual(r.matched_codes, ["BGE - AD"])
+        self.assertIsNone(r.event)
+        self.assertEqual(r.http_status, 400)
+
+    def test_closed_historical_editions_never_create_ambiguity(self):
+        """PPTX 23/24/25 and WSU 25 boundary-match but are closed, so they are
+        collected and then ignored — one open edition is still unambiguous."""
+        for code in ("PPTX", "WSU"):
+            with self.subTest(event_code=code):
+                r = resolve(code)
+                self.assertNotEqual(r.outcome, Outcome.AMBIGUOUS, r.diagnostic)
+
+    def test_an_explicit_historical_edition_still_reports_itself_closed(self):
+        """
+        'PPTX 25' is an edition, not a placeholder (base_code is PPTX), so tier 1
+        wins outright and the operator is told THAT edition is shut rather than
+        being silently moved onto PPTX - JS.
+        """
+        r = resolve("PPTX 25")
+        self.assertEqual(r.outcome, Outcome.BOOKINGS_OFF, r.diagnostic)
+        self.assertEqual(r.matched_codes, ["PPTX 25"])
+
+
+class StepAsideAmbiguityTests(TestCase):
+    """
+    The remaining branch: the placeholder steps aside and finds MORE than one
+    open edition. Stepping aside must not become a licence to pick.
+
+    Fixtures use the BIU family this file already resolves everything against —
+    these are shapes, not catalogue entries, per the module docstring.
+    """
+
+    def test_stepping_aside_onto_two_open_editions_is_409_not_a_guess(self):
+        """
+        The same 409 "Disambiguate at source" the resolver gives anywhere else,
+        and specifically NOT the newest-event_date tiebreak that caused the
+        original BIU/BIUK bug — hence the deliberately later date on the second.
+        """
+        make_event("BIU",      web_bookings=False,
+                   event_date=date(2026, 1, 1))          # closed placeholder
+        make_event("BIU - PM", web_bookings=True,
+                   event_date=date(2026, 9, 14))
+        make_event("BIU - RS", web_bookings=True,
+                   event_date=date(2027, 9, 14))         # later: the old tiebreak
+
+        r = resolve("BIU")
+        self.assertEqual(r.outcome, Outcome.AMBIGUOUS, r.diagnostic)
+        self.assertIsNone(r.event)
+        self.assertEqual(r.http_status, 409)
+        self.assertCountEqual(r.matched_codes, ["BIU - PM", "BIU - RS"])

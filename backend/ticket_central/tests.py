@@ -645,6 +645,28 @@ class CRUDTests(APITestCase):
         t.refresh_from_db()
         self.assertEqual(t.assign_name, "Alice DMD")
 
+    def test_dmd_can_update_dmd_fields_when_completed(self):
+        """Completing a ticket does not lock DMD out of their own columns —
+        a wrong count or comment is corrected in place, not by reopening."""
+        auth(self.client, self.dmd)
+        t = make_ticket(
+            purpose="P", type_of_ticket="BX",
+            status="completed", mr_submitted_at=timezone.now(),
+            dmd_submitted_at=timezone.now(),
+        )
+        resp = self.client.patch(f"/api/tickets/{t.id}/",
+                                 {"dm_comments": "Recount"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        t.refresh_from_db()
+        self.assertEqual(t.dm_comments, "Recount")
+
+    def test_dmd_still_blocked_on_mr_fields_when_completed(self):
+        auth(self.client, self.dmd)
+        t = make_ticket(purpose="P", type_of_ticket="BX", status="completed")
+        resp = self.client.patch(f"/api/tickets/{t.id}/",
+                                 {"mr_comments": "Not mine"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
     def test_admin_can_update_any_field(self):
         auth(self.client, self.admin)
         t = make_ticket(purpose="Admin Edit", type_of_ticket="BX")

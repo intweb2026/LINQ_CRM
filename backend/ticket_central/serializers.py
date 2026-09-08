@@ -220,7 +220,8 @@ class TicketDMDUpdateSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         ticket = self.instance
-        if ticket.status != Ticket.Status.MR_SUBMITTED:
+        if ticket.status not in (Ticket.Status.MR_SUBMITTED,
+                                 Ticket.Status.COMPLETED):
             raise serializers.ValidationError(
                 "DMD fields can only be edited after MR submission."
             )

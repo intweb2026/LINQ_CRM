@@ -101,7 +101,10 @@ class WebhookProcessor:
         # Look up the Event. All code matching lives in event_resolver; this
         # function does no matching of its own, so there is exactly one place
         # where the anchored boundary rule can be got wrong.
-        resolution = resolve_event_code(raw_event_code, event_code)
+        # for_web_booking: this IS the booking path, so a closed `WSU`-style
+        # base-code placeholder must not shadow the open `WSU - MP` edition.
+        resolution = resolve_event_code(raw_event_code, event_code,
+                                        for_web_booking=True)
         target_event = resolution.event
 
         if not target_event:

@@ -5,7 +5,7 @@ import { Icon } from '../../lib/icons';
 import { NumField } from '../../components/UI';
 import { Av } from '../../components/Badge';
 import { avc, ini } from '../../lib/helpers';
-import { OWNER_EDIT_FIELDS, ownerOf } from '../../lib/owners';
+import { OWNER_EDIT_FIELDS, ownerOf, ownerPool } from '../../lib/owners';
 import { YES_NO, VR1_STATUS, SALES_CHECK_OPTIONS } from '../../lib/constants';
 import * as usersApi from '../../api/users';
 import { useFetch } from '../../hooks/useFetch';
@@ -14,14 +14,11 @@ import { useConfirm } from '../../context/ConfirmContext';
 import * as eventsApi from '../../api/events';
 import { apiErrorMessage } from '../../api/client';
 
-// The SCA, the sales team leader and the two Market Research columns are editable
-// here — see OWNER_EDIT_FIELDS in lib/owners.js. Market Research Sr./Jr. is what
-// decides whose paper review form offers this event, so this is also where a
-// reviewer assigned to the wrong event gets corrected. The other three belong to
-// the Teams module and are shown, inherited, in the drawer's Teams tab and the
-// Events table; giving them an editor here only invites someone to re-type what
-// the team already knows, and a value typed on the event outranks the team's
-// answer permanently.
+// Every owner column is editable here — see OWNER_EDIT_FIELDS in lib/owners.js.
+// Market Research Sr./Jr. is what decides whose paper review form offers this
+// event, so this is also where a reviewer assigned to the wrong event gets
+// corrected. Telemarketing and SpEx lead override the Teams module's answer for
+// THIS event only; left Unassigned they keep inheriting it.
 //
 // The selects read form values RAW rather than through ownerOf(): an inherited name
 // is the team's answer, and writing it into the event would freeze "whoever leads
@@ -63,7 +60,6 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
   const confirm = useConfirm();
   const nav = useNavigate();
   const { data: allUsers } = useFetch(usersApi.list, [], { initialData: [] });
-  const pool = (allUsers || []).filter((u) => u.status === 'active');
   const [form, setForm] = useState({
     event_code: ev.event_code, base_code: ev.base_code || '', year: ev.year ?? '', name: ev.name,
     event_date: ev.event_date, end_date: ev.end_date, website_live_date: ev.website_live_date, location: ev.location,
@@ -107,10 +103,9 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
             </div>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {/* SCA and the sales lead only, matching the editable set below. The
-                  SpEx and Market Research chips were here too, but this form no
-                  longer owns those columns — the drawer's Teams tab is where all
-                  seven owners are shown. */}
+              {/* The two chips worth a glance in a cramped header. All six owners
+                  are editable in the Team ownership section below, and the
+                  drawer's Teams tab lists them read-only. */}
               {ownerChips('SCA', ev.sales_team)}{ownerChips('Sales', ownerOf(ev, 'sales_lead'))}
             </div>
           </div>
@@ -197,8 +192,8 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
                     CSV, so a name belonging to a left or inactive user is common.
                     Without this option the select renders blank and the next save
                     replaces a real owner with whatever was clicked first. */}
-                {form[k] && form[k] !== '—' && !pool.some((u) => u.name === form[k]) && <option>{form[k]}</option>}
-                {pool.map((u) => <option key={u.id}>{u.name}</option>)}
+                {form[k] && form[k] !== '—' && !ownerPool(allUsers, k).some((u) => u.name === form[k]) && <option>{form[k]}</option>}
+                {ownerPool(allUsers, k).map((u) => <option key={u.id}>{u.name}</option>)}
               </select>
             </div>
           ))}
