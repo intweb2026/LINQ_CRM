@@ -35,9 +35,18 @@ is already stamped on the row as created_by (the form link's reviewer for a publ
 submission, the logged-in author for an in-CRM one — see
 views.create_review_with_workflows), and Harry is a settings constant.
 
-The knock-on is deliberate: internal_footnotes can no longer go out (see
-Recipients.include_internal_footnotes), because a standing address has no User row
-and nothing can vouch for what its reader may see.
+INTERNAL FOOTNOTES GO TO EVERY RECIPIENT OF THIS EMAIL
+They used to be withheld unless every resolved recipient was Market Research or
+Admin, which in production meant always withheld: the standing Cc is a bare
+address with no User row, so nothing could vouch for its reader. DECISION, taken
+2026-09-08: this recipient list is internal by construction — the event's
+sales executive, the submitting MRE, and the standing Cc — and all of them
+need the note, so the field rides in both parts of every notification. The
+speaker is not on this list and never was.
+
+The restriction still stands everywhere a reader picks a record rather than being
+sent one: serializers.py strips internal_footnotes from the API for a non-MR user,
+and public_form.py shows the box only to a reviewer allowed to write it.
 
 THE ZOHO PRECEDENCE BUG, NOT REPLICATED
 The v2 script reads:
@@ -71,7 +80,6 @@ from django.utils.html import escape
 
 from events.models import Event
 
-from .access import may_see_mr_fields
 from .models import RUBRIC_TOTAL, NotificationLog, PaperReview
 
 logger = logging.getLogger(__name__)
@@ -112,12 +120,6 @@ EMAIL_FIELDS = (
     ("feedback_to_speaker",        "Feedback to speaker or request information"),
 )
 
-# Restricted to MR/Admin everywhere else in this app — see serializers.py
-# _MR_ONLY_FIELDS. Included in the PLAIN-TEXT part only, under the all-or-nothing
-# rule below. The HTML template has no footnotes field at all, so the rule is what
-# stands between the field and the wire on the text side.
-MR_FIELDS = ("internal_footnotes",)
-
 # The letters that count as clearing the bar, deciding which of the template's two
 # opening paragraphs renders (cleared / not_cleared). Absolute bands, so this is a
 # letter set rather than a score floor — see models.GRADE_BANDS.
@@ -147,47 +149,20 @@ class Recipients:
     style of webhooks/event_resolver.py's Resolution.
 
     to / cc            — addresses the send is attempted with
-    users              — the User objects behind them, for the MR rule
-    unvetted           — resolved addresses with NO User behind them
+    users              — the User objects behind them, for the _ref stamps
     is_fallback        — nothing resolved; the watchdog gets it instead
     failure_step       — which step ran out of information
     note              — human-readable degradation, stored on the log
     """
 
-    def __init__(self, to=None, cc=None, users=None, unvetted=None,
+    def __init__(self, to=None, cc=None, users=None,
                  is_fallback=False, failure_step="", note=""):
         self.to = to or []
         self.cc = cc or []
         self.users = users or []
-        self.unvetted = unvetted or []
         self.is_fallback = is_fallback
         self.failure_step = failure_step
         self.note = note
-
-    @property
-    def include_internal_footnotes(self):
-        """
-        B8. internal_footnotes goes out ONLY when every resolved recipient may
-        read it. All-or-nothing on purpose: a mixed To/Cc list is one email with
-        one body, so "include it for the MR reader" is the same thing as "leak it
-        to the speaker-sales reader", which reopens the hole the serializer's MR
-        stripping closed.
-
-        The fallback watchdog is a bare address with no User behind it and so can
-        never satisfy this, which is the intended answer — the fallback email is
-        the one going somewhere nobody vetted.
-        """
-        if self.is_fallback or not self.users:
-            return False
-        # The standing Cc (settings.PAPER_REVIEW_CC_EMAILS) is a bare address with
-        # no User row behind it, so nothing here can vouch for what its reader may
-        # see. One such address closes the field, exactly as the fallback watchdog
-        # does and for the same reason. Kept separate from `cc` rather than
-        # testing `cc` outright: the MRE is also a Cc, and they DO have a User row.
-        if self.unvetted:
-            return False
-        return all(may_see_mr_fields(u) for u in self.users)
-
 
 def _clean(value):
     """Whitespace-trimmed string. Turns Zoho's "" and Django's None into one case."""
@@ -292,7 +267,7 @@ def resolve_recipients(review):
     # The Cc: the submitter, then the standing list. Deduped against the To and
     # against each other, case-insensitively, so a sales executive who also filed
     # the review — or who is on the standing list — is addressed exactly once.
-    cc, cc_users, unvetted, seen = [], [], [], {a.lower() for a in to}
+    cc, cc_users, seen = [], [], {a.lower() for a in to}
 
     # The MRE who filled the form. created_by is null on rows the importer and the
     # webhook create, which neither notify nor have a submitter to copy; getattr
@@ -311,11 +286,9 @@ def resolve_recipients(review):
             continue
         seen.add(address.lower())
         cc.append(address)
-        unvetted.append(address)
 
     if to:
-        return Recipients(to=to, cc=cc, users=to_users + cc_users,
-                          unvetted=unvetted)
+        return Recipients(to=to, cc=cc, users=to_users + cc_users)
 
     # No sales executive address. The Cc is still real people, so the email goes
     # to them rather than to the watchdog — but the missing assignment is
@@ -324,7 +297,7 @@ def resolve_recipients(review):
     # still a delivered send.
     if cc:
         return Recipients(
-            to=cc, cc=[], users=cc_users, unvetted=unvetted, failure_step=step,
+            to=cc, cc=[], users=cc_users, failure_step=step,
             note=(f"Degraded: {step}. The Cc list (the submitter and the standing "
                   f"recipients) was used as the To list instead."),
         )
@@ -440,7 +413,8 @@ def template_context(review):
     An absent value becomes an em dash rather than the empty string, so a blank
     table cell always means "we hold nothing" and never "the token is misspelt".
     The exceptions are the conditional tokens (nos, cleared, li_company,
-    agenda_addition, feedback), which stay falsy so their blocks strip cleanly.
+    agenda_addition, feedback, footnotes), which stay falsy so their blocks strip
+    cleanly.
     """
     context = {
         "event_code":    _display(review, "event_code"),
@@ -464,6 +438,9 @@ def template_context(review):
         # pasted Word markup.
         "agenda_addition": _plain(_clean(review.agenda_addition)),
         "feedback":        _plain(_clean(review.feedback_to_speaker)),
+        # Conditional like the two above: a review with no note gets no panel,
+        # rather than an empty one. Every recipient of this email may read it.
+        "footnotes":       _plain(_clean(review.internal_footnotes)),
         "record_url":    f"{settings.CRM_BASE_URL}/paper-review",
         # Named in the HEADER line, "reviewed by ...". The event's assigned MRE,
         # not the submitter — see event_mre_name. NOT the signature either; the
@@ -477,24 +454,20 @@ def template_context(review):
     return context
 
 
-def render_body(review, include_internal_footnotes):
+def render_body(review):
     """
     (text, html). The HTML is the supplied handoff template; the text part exists
     because a send with no plain-text alternative is what makes an email look like
     spam, and it stays the flat field list \u2014 a plain-text transcription of an
     editorial layout is a worse fallback than the fields themselves.
 
-    THE MR RULE APPLIES TO THE TEXT PART ONLY, because internal_footnotes is the
-    only field it governs and the HTML template never had a place for it. A field
-    the recipients may not read is OMITTED, not blanked \u2014 the same choice the
-    serializer makes, so the absence itself carries no information about whether a
-    value exists.
+    ALL 17 FIELDS, EVERY TIME. internal_footnotes used to be filtered out of
+    this list unless every recipient was MR; that rule is gone (see the module
+    docstring), so the text part is the flat field list with nothing withheld,
+    and the HTML part carries the note as its own panel.
     """
-    rows_text = [
-        f"{label}: {_display(review, field)}"
-        for field, label in EMAIL_FIELDS
-        if not (field in MR_FIELDS and not include_internal_footnotes)
-    ]
+    rows_text = [f"{label}: {_display(review, field)}"
+                 for field, label in EMAIL_FIELDS]
     text = (
         "A new paper review has been submitted.\n\n"
         + "\n".join(rows_text)
@@ -565,7 +538,9 @@ def _alert(kind, subject, detail, intended):
 def _notify(review):
     recipients = resolve_recipients(review)
     subject = subject_for(review)
-    include_footnotes = recipients.include_internal_footnotes
+    # What the body will actually carry, which is now purely "is there a note",
+    # since no recipient list withholds it any more.
+    include_footnotes = bool(_clean(review.internal_footnotes))
 
     # B1 — the kill switch. Resolution and body-rendering ALWAYS run, so
     # resolve_recipients() is verifiable against real Event data with zero mail
@@ -581,7 +556,7 @@ def _notify(review):
     # deliberately NOT populated here: those are stamped "at send time" (B5), and
     # with sending suppressed there is no send time to stamp them at.
     if not settings.PAPER_REVIEW_NOTIFICATIONS_ENABLED:
-        render_body(review, include_footnotes)   # proves the body would build
+        render_body(review)                      # proves the body would build
         _log(review, subject, recipients, NotificationLog.Status.SUPPRESSED,
              recipients.note, include_footnotes)
         return
@@ -590,7 +565,7 @@ def _notify(review):
     # alongside dead SMTP, and both have to end as a logged `failed` rather than
     # as an exception escaping into a request whose record is already committed.
     try:
-        text, html = render_body(review, include_footnotes)
+        text, html = render_body(review)
         _send(subject, text, html, recipients.to, recipients.cc)
     except Exception as exc:                                  # noqa: BLE001
         _log(review, subject, recipients, NotificationLog.Status.FAILED,

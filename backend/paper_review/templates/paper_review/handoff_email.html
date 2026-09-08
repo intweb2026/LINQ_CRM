@@ -177,6 +177,28 @@
   </table>
   {% endif %}
 
+  {% if footnotes %}
+  <!-- INTERNAL FOOTNOTES. Goes to every recipient of this notification, all of
+       whom are internal; see the notifications.py module docstring for the
+       decision. Absent when the review carries no note, never an empty panel. -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0ede4;border:1.5px solid #1a1a1a;border-radius:0;margin-bottom:26px;">
+  <tr><td style="padding:20px 24px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td valign="top" width="32" style="padding-right:14px;padding-top:1px;">
+        <span style="display:inline-block;width:28px;height:28px;background-color:#1a1a1a;border-radius:50%;text-align:center;line-height:28px;font-size:15px;font-family:Georgia,Times New Roman,serif;color:#faf9f6;">&#167;</span>
+      </td>
+      <td>
+        <p style="margin:0 0 6px;font-size:12.5px;font-weight:700;color:#1a1a1a;text-transform:uppercase;letter-spacing:0.4px;">Internal footnotes</p>
+        <p style="margin:0;font-size:14px;color:#333333;line-height:1.7;">{{ footnotes|linebreaksbr }}</p>
+        <p style="margin:10px 0 0;font-size:11px;color:#666666;line-height:1.5;letter-spacing:0.2px;">Internal note from the reviewer. Not for the speaker, and not to be forwarded.</p>
+      </td>
+    </tr>
+    </table>
+  </td></tr>
+  </table>
+  {% endif %}
+
   <!-- BUTTON -->
   <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:26px;">
   <tr><td style="border-radius:0;background:#1a1a1a;border:1.5px solid #1a1a1a;">

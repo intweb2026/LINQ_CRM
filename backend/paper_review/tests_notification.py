@@ -221,7 +221,7 @@ class EmailFieldOrderTests(_Base):
         which has its own layout and carries no field table at all.
         """
         review = _review(self.event.event_code)
-        text, _ = notifications.render_body(review, include_internal_footnotes=True)
+        text, _ = notifications.render_body(review)
         positions = [text.index(label) for _, label in notifications.EMAIL_FIELDS]
         self.assertEqual(positions, sorted(positions))
 
@@ -312,9 +312,7 @@ class HandoffTemplateTests(_Base):
 
     def html(self, **over):
         _, html = notifications.render_body(
-            _review(self.event.event_code, **over),
-            include_internal_footnotes=False,
-        )
+            _review(self.event.event_code, **over))
         return html
 
     def test_no_token_is_left_unrendered(self):
@@ -424,6 +422,19 @@ class HandoffTemplateTests(_Base):
         self.assertNotIn("Agenda addition, use as written", html)
         self.assertNotIn("To raise with the speaker", html)
 
+    def test_the_footnotes_panel_renders_whoever_the_recipients_are(self):
+        """
+        The bug this pins: the panel existed in the text part only, so the note
+        never reached the HTML anyone actually reads.
+        """
+        html = self.html(internal_footnotes="Second submission.\nSponsor is open.")
+        self.assertIn("Internal footnotes", html)
+        self.assertIn("Second submission.<br>Sponsor is open.", html)
+
+    def test_the_footnotes_panel_is_absent_when_the_field_is_empty(self):
+        """A review with no note gets no panel, not an empty one."""
+        self.assertNotIn("Internal footnotes", self.html(internal_footnotes=""))
+
     def test_newlines_in_free_text_become_line_breaks(self):
         html = self.html(feedback_to_speaker="One line.\nTwo line.")
         self.assertIn("One line.<br>Two line.", html)
@@ -475,7 +486,7 @@ class HandoffTemplateTests(_Base):
         assign_reviewer(self.cc_market_research, junior_only, junior=True)
 
         _, html = notifications.render_body(
-            _review("MRE - JNR"), include_internal_footnotes=False)
+            _review("MRE - JNR"))
         expected = (self.cc_market_research.get_full_name()
                     or self.cc_market_research.username)
         self.assertIn(f"reviewed by {expected}", html)
@@ -494,14 +505,13 @@ class HandoffTemplateTests(_Base):
         bare.save()
 
         _, html = notifications.render_body(
-            _review("MRE - NONE", created_by=self.user),
-            include_internal_footnotes=False)
+            _review("MRE - NONE", created_by=self.user))
         self.assertIn(
             f"reviewed by {self.user.get_full_name() or self.user.username}", html)
 
         # Importer and webhook rows have neither a named reviewer nor an author.
         _, html = notifications.render_body(
-            _review("MRE - NONE"), include_internal_footnotes=False)
+            _review("MRE - NONE"))
         self.assertIn("reviewed by Linq CRM", html)
 
     def test_the_signature_is_the_crm_not_a_person(self):
@@ -586,8 +596,7 @@ class HandoffTemplateTests(_Base):
     def test_the_plain_text_part_is_stripped_too(self):
         """One helper, both parts; the text alternative had the same problem."""
         text, _ = notifications.render_body(
-            _review(self.event.event_code, agenda_addition=self.WORD_PASTE),
-            include_internal_footnotes=False)
+            _review(self.event.event_code, agenda_addition=self.WORD_PASTE))
         self.assertNotIn("<p style", text)
         self.assertNotIn("font-family", text)
         self.assertIn("UNLOCKING CORNWALL", text)
@@ -642,9 +651,7 @@ class HappyPathTests(_Base):
     def test_the_text_part_carries_the_deluge_field_table(self):
         self.create_review()
         text = mail.outbox[0].body
-        for field, label in notifications.EMAIL_FIELDS:
-            if field in notifications.MR_FIELDS:
-                continue          # excluded for this mixed recipient list
+        for _, label in notifications.EMAIL_FIELDS:
             with self.subTest(label=label):
                 self.assertIn(label, text)
         self.assertIn("Eli Jasso", text)
@@ -756,13 +763,16 @@ class FallbackTests(_Base):
         for sent in mail.outbox:
             self.assertEqual(sent.to, ["someone.else@example.invalid"])
 
-    def test_footnotes_never_ride_along_on_a_fallback(self):
-        review = _review("ORPH - AN", internal_footnotes="MR: do not send")
+    def test_footnotes_ride_along_on_a_fallback_too(self):
+        """
+        PAPER_REVIEW_ALERT_EMAIL is an internal watchdog inbox, so the note is no
+        more exposed there than in the notification it stands in for. It used to
+        be stripped, back when the field was withheld from anyone unvetted.
+        """
+        review = _review("ORPH - AN", internal_footnotes="MR: weak on region")
         send_paper_review_notification(review)
-        for sent in mail.outbox:
-            self.assertNotIn("do not send", sent.body)
-            self.assertNotIn("do not send", str(getattr(sent, "alternatives", "")))
-        self.assertFalse(NotificationLog.objects.get().included_internal_footnotes)
+        self.assertTrue(any("weak on region" in sent.body for sent in mail.outbox))
+        self.assertTrue(NotificationLog.objects.get().included_internal_footnotes)
 
 
 def _fail_the_notification_only(subject, text, html, to, cc=None):
@@ -871,87 +881,56 @@ class RollbackTests(_Base):
         self.assertEqual(NotificationLog.objects.count(), 0)
 
 
-class InternalFootnotesRuleTests(_Base):
+class InternalFootnotesReachEveryRecipientTests(_Base):
     """
-    B8 — internal_footnotes goes out only when EVERY resolved recipient may read
-    it. Mixed lists are all-or-nothing: one email, one body.
+    The rule that replaced B8. internal_footnotes used to go out only when every
+    resolved recipient was MR or Admin, which the standing Cc made unreachable in
+    production. This list is internal by construction, so the note rides in both
+    parts of every notification; what is pinned here is that no recipient shape
+    withholds it any more, and that the log column still says what went out.
     """
 
-    @classmethod
-    def setUpTestData(cls):
-        super().setUpTestData()
-        from django.contrib.auth import get_user_model
-        U = get_user_model()
+    NOTE = "MR: weak on region"
 
-        # An event whose entire recipient list is Market Research.
-        cls.mr_exec = U.objects.create_user(
-            username="pr_mr_exec", password="x", role="market_research",
-            email="mr.exec@example.com")
-        cls.mr_only_event = make_event("MRO - NL", "MR Only Event")
-        cls.mr_only_event.sales_executive = cls.mr_exec
-        cls.mr_only_event.save()
-        cls.mr_cc = U.objects.create_user(
-            username="pr_mr_cc", password="x", role="market_research",
-            email="mr.cc@example.com")
-        assign_reviewer(cls.mr_cc, cls.mr_only_event)
-        cls.assign_events(cls.mr_only_event)
-
-    def test_excluded_when_one_recipient_is_not_mr(self):
-        review = _review(self.event.event_code,
-                         internal_footnotes="MR: weak on region")
+    def sent_with_note(self, event_code=None):
+        review = _review(event_code or self.event.event_code,
+                         internal_footnotes=self.NOTE)
         send_paper_review_notification(review)
+        return mail.outbox[0]
 
-        sent = mail.outbox[0]
+    def test_a_mixed_recipient_list_gets_them(self):
+        """
+        cls.event is the production shape: a sales executive who is not MR, plus
+        the standing Cc. Both halves of the old rule closed the field here.
+        """
+        sent = self.sent_with_note()
         html = sent.alternatives[0][0]
-        self.assertNotIn("weak on region", sent.body)
-        self.assertNotIn("weak on region", html)
-        # Omitted, not blanked — the label itself is absent.
-        self.assertNotIn("Internal footnotes", html)
-        self.assertFalse(NotificationLog.objects.get().included_internal_footnotes)
-
-    @override_settings(PAPER_REVIEW_CC_EMAILS=[])
-    def test_included_when_every_recipient_is_mr(self):
-        """Only reachable with no fixed Cc configured — see the test below."""
-        review = _review(self.mr_only_event.event_code,
-                         internal_footnotes="MR: weak on region")
-        send_paper_review_notification(review)
-
-        sent = mail.outbox[0]
-        self.assertEqual(sent.to, ["mr.exec@example.com"])
-        self.assertEqual(sent.cc, [])
-        self.assertIn("weak on region", sent.body)
+        self.assertIn(self.NOTE, sent.body)
         self.assertIn("Internal footnotes", sent.body)
+        self.assertIn(self.NOTE, html)
+        self.assertIn("Internal footnotes", html)
         self.assertTrue(NotificationLog.objects.get().included_internal_footnotes)
 
-    def test_the_fixed_cc_closes_the_field_even_for_an_all_mr_event(self):
-        """
-        A fixed Cc address has no User row, so nothing can vouch for what its
-        reader may see. All-or-nothing therefore resolves to nothing — this is
-        the field's only remaining state in production, where the fixed list is
-        never empty.
-        """
-        review = _review(self.mr_only_event.event_code,
-                         internal_footnotes="MR: weak on region")
-        send_paper_review_notification(review)
-
-        sent = mail.outbox[0]
+    def test_the_standing_cc_no_longer_closes_the_field(self):
+        """The address with no User row behind it was the whole production case."""
+        sent = self.sent_with_note()
         self.assertEqual(sent.cc, FIXED_CC)
-        self.assertNotIn("weak on region", sent.body)
-        self.assertNotIn("Internal footnotes", sent.body)
-        # The HTML template has no footnotes field at all, in any state.
-        self.assertNotIn("weak on region", sent.alternatives[0][0])
+        self.assertIn(self.NOTE, sent.body)
+
+    def test_the_log_says_nothing_went_out_when_there_is_no_note(self):
+        """
+        The column means "did the body carry footnotes", which is now purely a
+        question about the review, so an empty field has to read as False.
+        """
+        send_paper_review_notification(_review(self.event.event_code))
         self.assertFalse(NotificationLog.objects.get().included_internal_footnotes)
 
-    def test_the_other_sixteen_fields_go_out_either_way(self):
-        review = _review(self.event.event_code, internal_footnotes="hidden")
-        send_paper_review_notification(review)
-        text = mail.outbox[0].body
-        labels = [label for field, label in notifications.EMAIL_FIELDS
-                  if field not in notifications.MR_FIELDS]
-        self.assertEqual(len(labels), 16)
-        for label in labels:
+    def test_all_seventeen_fields_go_out(self):
+        sent = self.sent_with_note()
+        self.assertEqual(len(notifications.EMAIL_FIELDS), 17)
+        for _, label in notifications.EMAIL_FIELDS:
             with self.subTest(label=label):
-                self.assertIn(label, text)
+                self.assertIn(label, sent.body)
 
 
 class NotificationLogAlwaysWrittenTests(_Base):

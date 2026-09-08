@@ -60,6 +60,12 @@ SAMPLE = {
                                    "Retrofitting shore power at a working berth",
     "feedback_to_speaker":         "Please add a case study with figures.\n"
                                    "Confirm the co-presenter before 1 October.",
+    # Every notification carries it now, so the sample does too; a review with
+    # this field empty is the only case where the panel is absent.
+    "internal_footnotes":          "Second submission from this speaker; "
+                                   "the first was pulled in June.\n"
+                                   "Sponsor conversation is open, so keep "
+                                   "the slot flexible.",
 }
 
 # Criteria in models.CRITERIA order, one combination per grade band, so --band
@@ -103,9 +109,6 @@ class Command(BaseCommand):
                                  "time and print the server's literal reply to "
                                  "each, including the queue id. Sends a one-line "
                                  "probe, not the template. Use with --to.")
-        parser.add_argument("--footnotes", action="store_true",
-                            help="Include internal_footnotes in the PLAIN-TEXT "
-                                 "part. The HTML has no such field.")
 
     def build_review(self, options):
         if options["review"]:
@@ -193,7 +196,7 @@ class Command(BaseCommand):
 
         review = self.build_review(options)
         subject = subject_for(review)
-        text, html = render_body(review, options["footnotes"])
+        text, html = render_body(review)
 
         if options["out"]:
             with open(options["out"], "w", encoding="utf-8") as handle:
