@@ -1,12 +1,18 @@
 """
 fix_ticket_number_types
 ───────────────────────
-Rewrites ticket_numbers whose leading segment is not the row's Type of Ticket.
+Puts the Type of Ticket into ticket_numbers that carry only the purpose.
 
 The canonical form is TYPE-PURPOSE NUMBER ('BX-CEU 10001', utils.build_ticket_number).
-Rows migrated from Zoho carry the PRIORITY there instead — 'SPEX-PPTX 10037' on a
-row whose purpose is PPTX and whose type is Blue - BX — so the type is missing
-from the number while the priority, which already has its own column, sits in it.
+Rows migrated from Zoho arrived carrying only the purpose, 'BRE 10330', so the
+type is missing from the number entirely.
+
+SCOPE, deliberately narrow. Only a number that is exactly PURPOSE NUMBER is
+rewritten. A number that already carries a prefix is left alone even when that
+prefix is not a type code: 'SPEX-PPTX 10037' and 'ASSOC-SCE 10194' hold the
+PRIORITY in that slot and stay as they are. They are a separate question from a
+missing type, and rewriting them would change identifiers already quoted
+outside this system.
 
 Only the prefix moves. The trailing number is copied across untouched, so no
 series is renumbered and TicketSequence is not consulted.
@@ -43,21 +49,23 @@ def retype(ticket_number, purpose, type_of_ticket):
     """
     The number rebuilt as TYPE-PURPOSE NUMBER, or None to leave the row alone.
 
-    None when: the row has no usable type or purpose, the stored number has no
-    numeric tail to carry over, or the prefix is already right.
+    None unless the number is exactly PURPOSE NUMBER and the row has a usable
+    Type of Ticket. Anything already prefixed, and anything with no numeric
+    tail, is left alone.
     """
     code = extract_type_code(type_of_ticket)
     purpose_code = extract_purpose_code(purpose)
     if code not in TYPE_CODES or not purpose_code:
         return None
 
-    head, _, tail = (ticket_number or "").rpartition(" ")
-    if not head or not _TAIL_RE.match(tail):
+    body, _, tail = (ticket_number or "").rpartition(" ")
+    if not body or not _TAIL_RE.match(tail):
         return None
-    # Any type code in the lead segment counts as "has a type". A handful of rows
-    # carry one that no longer matches their Type of Ticket column; those are a
-    # different question from a missing type, so they are left alone.
-    if head.split("-")[0] in TYPE_CODES:
+    # The whole test. Anything ahead of the number that is not the purpose itself
+    # is an existing prefix, and an existing prefix is out of scope. Compared
+    # against the normalised purpose rather than split on "-", so a purpose that
+    # itself contains a dash is matched instead of being read as prefixed.
+    if body.strip().upper() != purpose_code:
         return None
 
     rebuilt = build_ticket_number(purpose_code, tail, code)
@@ -65,7 +73,7 @@ def retype(ticket_number, purpose, type_of_ticket):
 
 
 class Command(BaseCommand):
-    help = "Put the Type of Ticket into ticket_numbers that are missing it."
+    help = "Prefix the Type of Ticket onto ticket_numbers that hold only the purpose."
 
     def add_arguments(self, parser):
         parser.add_argument(
