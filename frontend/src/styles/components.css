@@ -34,7 +34,17 @@
    its scrim was in there too, so the chrome never got covered, and — more
    than cosmetic — the sidebar kept catching clicks a modal's scrim is
    supposed to be capturing instead. */
-#main{position:fixed;top:var(--top-h);left:var(--rail-w);right:0;bottom:0;padding:20px 22px 56px;display:flex;flex-direction:column;overflow-y:auto;z-index:81;transition:left .22s var(--ease)}
+/* padding-bottom matches the top, 20px, and is deliberately no longer 56px.
+   That figure was the exact top edge of the floating bulk-selection bar,
+   .bulk at bottom:18px and about 38px tall, so every page reserved a strip
+   of dead space for a bar that is only up while rows are selected. On a
+   list page .dt-tw claims the leftover height, so the reserve read as the
+   table box stopping short of the page with 56px of empty canvas under it,
+   most visibly on an empty table where the box is all there is. The bar
+   floats over the footer strip now while a selection is active; it is
+   centred and the footer keeps its count at the far left and its button at
+   the far right, so neither goes under it. */
+#main{position:fixed;top:var(--top-h);left:var(--rail-w);right:0;bottom:0;padding:20px 22px;display:flex;flex-direction:column;overflow-y:auto;z-index:81;transition:left .22s var(--ease)}
 
 /* ═══ PAGE HEAD ═══  [page_head_actions]
    An action row and nothing else — no title (the breadcrumb names the page)
@@ -456,6 +466,18 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
    same pattern .md-b.fill uses for a scrolling grid inside a modal. */
 #main>.dt-tw{flex:1;min-height:280px;display:flex;flex-direction:column}
 #main>.dt-tw>.tsc{flex:1;min-height:0;max-height:none}
+/* .dt-empty is that same box with no rows in it, holding the empty state or the
+   loading line instead. margin:auto centres the message in the height the box
+   claimed; without it the message pinned to the top of a tall blank box, which
+   is the shape that made a cleared module look half-rendered. An entry band, if
+   the page has one, keeps its place at the foot of the box. */
+.dt-empty>.mt{margin:auto}
+/* The loading line borrows .more, whose border-top is a divider under rows it
+   does not have here. */
+.dt-empty>.more{margin:auto;border-top:none}
+/* Drafts are what the user is typing; the empty message above them is what
+   gives way if the box runs short, not the rows. */
+.dt-empty>.dt-band{flex-shrink:0}
 /* Every OTHER direct child of #main — the hero banner, page heads, filter
    rows, KPI cards, whatever a given page renders — must not flex at all. A
    flex child defaults to flex-shrink:1, so without this a page whose content
@@ -931,3 +953,291 @@ table.dt tbody tr.pm-done .pm-n,table.dt tbody tr.pm-done .pm-code,table.dt tbod
    read off the same .vd-* class the row uses, so the menu previews the row. */
 .pm-opt{display:inline-flex;align-items:center;gap:9px}
 .pm-opt i{width:12px;height:12px;border-radius:3px;background:var(--vd-fill,var(--n-75));box-shadow:inset 0 0 0 1.5px var(--vd,var(--n-300));flex-shrink:0}
+/* ═══ Pre-Event Docs ═══  [pre_event_docs]
+   The badge lists, the change lists and the networking draw. Tables here are
+   plain <table>, not DataTable: they are read, printed and exported rather than
+   sorted and filtered, and DataTable's virtualisation is actively wrong for a
+   list that has to print whole — see [pre_event_docs_print]. */
+.ped-picker{min-width:230px}
+.ped-none{margin:0;padding:16px 0;font-size:12.5px;color:var(--text-4)}
+.ped-err{margin:0 0 12px;font-size:12.5px;color:var(--red)}
+.ped-note{margin:6px 0 0;font-size:11.5px;color:var(--text-4)}
+
+/* One table shape for every list on the page, so the badge list, the change
+   lists and the networking draw all print alike. */
+.ped-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.ped-tbl th{text-align:left;padding:0 12px 7px 0;font-size:10px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);
+  border-bottom:1px solid var(--border);white-space:nowrap}
+.ped-tbl td{padding:8px 12px 8px 0;border-bottom:1px solid var(--border);
+  vertical-align:top;color:var(--text)}
+.ped-tbl tbody tr:last-child td{border-bottom:none}
+.ped-tbl.wide{margin-top:4px}
+.ta-r{text-align:right}
+
+/* ═══ Pre-Event Docs, change lists ═══  [pre_event_docs_changes]
+   Three stacked sections rather than side-by-side columns. The workbook put To
+   print and Take out beside each other, which works on a spreadsheet page and
+   not in a browser, where one list of 170 rows next to one of 3 leaves a column
+   of dead space as tall as the long one. */
+.ped-changes{display:flex;flex-direction:column;gap:30px}
+.ped-sec-h{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:16px;padding-bottom:9px;border-bottom:1px solid var(--border)}
+.ped-sec-h h3{margin:0 0 3px;font-size:13.5px;font-weight:650;color:var(--text)}
+.ped-sec-h p{margin:0;font-size:11.5px;color:var(--text-4);max-width:62ch}
+
+/* ═══ Pre-Event Docs, badge run modal ═══  [pre_event_docs_badge_run]
+   The consequence of the button is stated above it, because this modal is the
+   one place where exporting also WRITES the badge log. */
+.ped-run{display:flex;flex-direction:column;gap:14px;min-height:0}
+.ped-run-opts{display:flex;flex-direction:column;gap:7px;align-items:flex-start}
+.ped-run-warn{display:flex;gap:10px;padding:11px 13px;border-radius:var(--r-md);
+  background:var(--n-50);border:1px solid var(--border);font-size:12px;
+  line-height:1.5;color:var(--text-2)}
+.ped-run-warn svg{flex-shrink:0;margin-top:2px;color:var(--text-3)}
+.ped-run-warn b{color:var(--text);font-weight:650}
+.ped-run-warn.amber{border-color:var(--amber);
+  background:color-mix(in srgb,var(--amber) 8%,transparent)}
+.ped-run-warn.amber svg{color:var(--amber)}
+/* The rows about to print, inside the modal, scrolling on their own so the
+   warnings above them stay visible. Modal's bodyFill hands the height here. */
+.ped-sheet{overflow:auto;border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px 16px;background:var(--surface-2);min-height:0}
+.ped-sheet-h h3{margin:0 0 2px;font-size:13px;font-weight:650;color:var(--text)}
+.ped-sheet-h p{margin:0 0 12px;font-size:11px;color:var(--text-4)}
+
+/* ═══ Pre-Event Docs, networking ═══  [pre_event_docs_networking]
+   .ped-quality is one sentence about the draw rather than a row of stat tiles.
+   The only figures that change a decision are whether the draw is the best
+   available and, when it is not, what would fix it. */
+.ped-draw-bar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;
+  margin-bottom:16px}
+.ped-draw-bar .fd.inline{gap:4px}
+.ped-draw-bar .fd.inline .in{width:82px}
+.ped-quality{display:flex;gap:10px;padding:11px 13px;margin-bottom:16px;
+  border-radius:var(--r-md);border:1px solid var(--border);background:var(--n-50);
+  font-size:12px;line-height:1.55;color:var(--text-2)}
+.ped-quality svg{flex-shrink:0;margin-top:2px}
+.ped-quality b{color:var(--text);font-weight:650}
+.ped-quality.ok{border-color:var(--green);
+  background:color-mix(in srgb,var(--green) 7%,transparent)}
+.ped-quality.ok svg{color:var(--green)}
+.ped-quality.warn{border-color:var(--amber);
+  background:color-mix(in srgb,var(--amber) 8%,transparent)}
+.ped-quality.warn svg{color:var(--amber)}
+.lnk-btn{background:none;border:none;padding:0;font:inherit;color:var(--t-600);
+  text-decoration:underline;cursor:pointer}
+.lnk-btn:disabled{opacity:.5;cursor:default}
+.ped-net .seg{margin-bottom:14px}
+.ped-rooms{display:flex;flex-direction:column;gap:26px}
+.ped-rooms h4{margin:0 0 10px;font-size:12px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+/* auto-fill, not auto-fit: a round with three tables should show three cards at
+   their real width, not three stretched across the whole row. */
+.ped-room-grid{display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:12px}
+.ped-table{border:1px solid var(--border);border-radius:var(--r-md);
+  background:var(--surface-2);overflow:hidden}
+.ped-table header{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px;border-bottom:1px solid var(--border);background:var(--n-50);
+  font-size:11.5px;font-weight:650;color:var(--text)}
+.ped-table header span{font-size:10.5px;color:var(--text-4);
+  font-variant-numeric:tabular-nums}
+.ped-table ul{margin:0;padding:8px 12px;list-style:none;display:flex;
+  flex-direction:column;gap:7px}
+.ped-table li{display:flex;flex-direction:column;gap:1px;min-width:0}
+.ped-table li b{font-size:12px;font-weight:600;color:var(--text)}
+.ped-table li span{font-size:10.5px;color:var(--text-4);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
+/* ═══ Pre-Event Docs, print ═══  [pre_event_docs_print]
+   WHAT ACTUALLY GOES ON PAPER, and why it is a second render of the rows rather
+   than the table on screen. DataTable is virtualised, so only the visible rows
+   are in the DOM; printing it yields one screenful and silently drops the rest,
+   which on a badge list is the whole point of printing. .ped-print carries every
+   row and no chrome, and stays hidden until lib/exportSheet.js marks it. Save as
+   PDF in the print dialog is what produces a PDF, and there is no PDF library
+   here on purpose, because it would be a second definition of every table above. */
+.ped-print{display:none}
+@media print{
+  /* Everything outside the marked element goes, including the rail and the
+     topbar, which are position:fixed and would otherwise print on every page. */
+  body.printing .rail,body.printing .top,body.printing .tabs,
+  body.printing .modal-scrim,body.printing .tw,
+  body.printing .bulk{display:none!important}
+  body.printing #main{margin:0!important;padding:0!important;
+    overflow:visible!important}
+  body.printing .mw,body.printing .md{position:static!important;inset:auto!important;
+    box-shadow:none!important;border:none!important;background:#fff!important;
+    max-height:none!important;width:auto!important}
+  body.printing .md-h,body.printing .md-f,body.printing .ped-run-opts,
+  body.printing .ped-run-warn{display:none!important}
+  .printing-now{display:block!important;overflow:visible!important;
+    max-height:none!important;border:none!important;background:#fff!important;
+    padding:0!important;color:#000!important}
+  .printing-now .ped-tbl th{color:#000;border-bottom:1px solid #000}
+  .printing-now .ped-tbl td{color:#000;border-bottom:1px solid #ccc}
+  /* A row split across a page break is a badge somebody misreads. */
+  .printing-now tr{break-inside:avoid}
+  .printing-now thead{display:table-header-group}
+  .printing-now .ped-sheet-h h3{font-size:15px}
+  .ped-print-room{break-inside:avoid;margin-top:14px}
+  .ped-print-room p{margin:0 0 5px;font-size:11px;line-height:1.5}
+  @page{margin:14mm}
+}
+
+/* One line above the check-in table, mirroring the header the real
+   Report_CheckIn carries. Not a card: it is a note to the person on the desk,
+   not an object on the page.  [pre_event_docs_upcoming] */
+.ped-upcoming{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-bottom:12px;font-size:11.5px;color:var(--text-4)}
+.ped-upcoming span{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.07em}
+.ped-upcoming b{padding:2px 7px;border:1px solid var(--border);
+  border-radius:var(--r-sm);background:var(--n-50);color:var(--text);
+  font-weight:600}
+
+/* ═══ Pre-Event Docs, report density ═══  [pre_event_docs_density]
+   COMPACT ON PURPOSE. These are reports somebody reads down a column of, on
+   screen and on paper, so vertical rhythm matters more than breathing room:
+   row padding is 5px rather than the 8px the shared table uses, the header sits
+   tight to the first row, and the page header above the table is one line and a
+   subtitle instead of a block. A denser sheet also means fewer printed pages,
+   which is the actual deliverable. */
+.ped-report{display:flex;flex-direction:column;gap:10px}
+.ped-report .ped-sheet-h h3{margin:0;font-size:13px;font-weight:650;
+  color:var(--text);letter-spacing:-.005em}
+.ped-report .ped-sheet-h p{margin:2px 0 0;font-size:11px;color:var(--text-4)}
+.ped-report .ped-tbl td{padding:5px 12px 5px 0}
+.ped-report .ped-tbl th{padding:0 12px 5px 0}
+.ped-report .ped-none{padding:12px 0}
+/* Zebra, because a two-column report of 75 rows is otherwise hard to track
+   across; it costs no vertical space, which extra padding would. */
+.ped-report .ped-tbl tbody tr:nth-child(even){background:var(--surface-2)}
+.ped-runs{margin-top:16px;padding-top:4px}
+
+/* ═══ Pre-Event Docs, Check-In Sheet ═══  [pre_event_docs_checkin]
+   THE TWO-ROW HEADER. Upcoming Events spans the three event columns and their
+   codes sit beneath it, which is the workbook's own layout. The cells under
+   them are empty by design: the desk marks which upcoming event a delegate
+   wants, so they are boxes to write in rather than data. Same for IN?, which is
+   deliberately unwired. */
+.ped-checkin th{vertical-align:bottom}
+.ped-checkin .ped-grp{text-align:center;border-bottom:1px solid var(--border);
+  padding-bottom:4px;color:var(--text-3)}
+.ped-checkin .ped-sub{text-align:center;font-size:9.5px;padding-top:4px;
+  color:var(--text-4);font-weight:650;letter-spacing:.04em;
+  border-left:1px solid var(--border)}
+.ped-checkin .w-in,.ped-checkin .ped-up{width:44px;text-align:center;
+  border-left:1px solid var(--border)}
+/* An empty cell has to LOOK writable on paper, or the desk cannot tell a box
+   from a gap. On screen it stays quiet. */
+.ped-checkin tbody .w-in,.ped-checkin tbody .ped-up{background:var(--n-50)}
+
+/* ═══ Pre-Event Docs, event picker ═══  [pre_event_docs_event_picker]
+   NOT A DROPDOWN, and the reason is in EventPicker.jsx: 241 events, each needing
+   a code, a name, a place and a date to be identified, which is four facts a
+   one-line <option> cannot carry. The trigger shows the current event in full
+   and opens a searchable overlay of cards. */
+.ped-ev-trigger{display:flex;align-items:center;gap:10px;min-width:0;
+  max-width:420px;padding:5px 10px;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer;
+  text-align:left;color:var(--text)}
+.ped-ev-trigger:hover{border-color:var(--t-600);background:var(--n-50)}
+.ped-ev-trigger svg{flex-shrink:0;color:var(--text-4)}
+.ped-ev-code{flex-shrink:0;font-family:var(--mono,ui-monospace),monospace;
+  font-size:11px;font-weight:700;letter-spacing:.02em;padding:3px 7px;
+  border-radius:var(--r-sm);background:var(--t-100,var(--n-50));
+  color:var(--t-700,var(--text));white-space:nowrap}
+.ped-ev-meta{display:flex;flex-direction:column;gap:1px;min-width:0}
+.ped-ev-meta b{font-size:12px;font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ped-ev-meta span{font-size:10.5px;color:var(--text-4);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+
+/* z-index 110, the level .mw uses for a modal. It was 60, BELOW .modal-scrim at
+   90, so the scrim covered the overlay, blurred it through its backdrop-filter
+   and took every click. The rungs in overlays.css are .scrim 90, .dr 100,
+   .mw 110, .tst 125, .plw 130; a dialog belongs on the modal rung, and toasts
+   stay above it deliberately. */
+.ped-ev-pop{position:fixed;top:88px;left:50%;transform:translateX(-50%);
+  width:min(620px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 130px));
+  display:flex;flex-direction:column;z-index:110;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--sh-xl);overflow:hidden}
+.ped-ev-search{display:flex;align-items:center;gap:9px;padding:10px 13px;
+  border-bottom:1px solid var(--border)}
+.ped-ev-search svg{flex-shrink:0;color:var(--text-4)}
+.ped-ev-search .in{border:none;background:none;padding:0;font-size:13px;flex:1}
+.ped-ev-search .in:focus{outline:none;box-shadow:none}
+.ped-ev-count{font-size:10.5px;color:var(--text-4);
+  font-variant-numeric:tabular-nums}
+.ped-ev-list{overflow-y:auto;padding:5px}
+.ped-ev-row{display:flex;align-items:center;gap:11px;width:100%;padding:7px 9px;
+  border:none;border-radius:var(--r-md);background:none;cursor:pointer;
+  text-align:left;color:var(--text)}
+.ped-ev-row.cur{background:var(--n-50)}
+.ped-ev-row.on .ped-ev-code{background:var(--t-600);color:#fff}
+.ped-ev-rmeta{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.ped-ev-rmeta b{font-size:12px;font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ped-ev-rmeta span{font-size:10.5px;color:var(--text-4);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ped-ev-n{flex-shrink:0;font-size:10.5px;color:var(--text-4);
+  font-variant-numeric:tabular-nums}
+
+/* ═══ Pre-Event Docs, round numbers ═══  [pre_event_docs_round]
+   The word "Table" is gone from every cell. It appeared three times per
+   attendee and repeated what the column header already said, so on a 170 person
+   draw it was 510 redundant words competing with the number somebody is
+   actually reading off the sheet. The number is what matters, so it is larger
+   and tabular. */
+.ped-round{font-size:15px;font-weight:650;color:var(--text);
+  font-variant-numeric:tabular-nums;text-align:center;width:66px}
+@media print{
+  .ped-round{font-size:14px;font-weight:700;color:#000}
+  .ped-checkin tbody .w-in,.ped-checkin tbody .ped-up{background:none;
+    border:1px solid #bbb}
+  .ped-checkin .ped-grp,.ped-checkin .ped-sub{color:#000}
+  .ped-report .ped-tbl tbody tr:nth-child(even){background:none}
+}
+
+/* ═══ Pre-Event Docs, frozen runs ═══  [pre_event_docs_frozen_runs]
+   A run expands INTO THE TABLE rather than into a drawer or a modal, because
+   the question being answered is a comparison: what did this run freeze, and
+   does it still match. Keeping the snapshot under its own row means the run it
+   belongs to stays on screen above it. A drawer would put the two on separate
+   surfaces and a modal would hide the history entirely.
+
+   The nested table reuses .ped-tbl, so a frozen row reads exactly like a row on
+   the report it came from. */
+.ped-run-x{width:30px;padding-right:0!important}
+.ped-run-t{display:flex;align-items:center;justify-content:center;width:22px;
+  height:22px;border:none;background:none;border-radius:var(--r-sm);
+  cursor:pointer;color:var(--text-4)}
+.ped-run-t:hover{background:var(--n-50);color:var(--text)}
+.ped-run-on{background:var(--n-50)}
+.ped-run-on td{font-weight:600}
+.ped-run-d{padding:0 0 14px 30px!important;background:var(--surface-2)}
+.ped-run-bar{display:flex;align-items:center;justify-content:space-between;
+  gap:14px;flex-wrap:wrap;padding:10px 12px 10px 0}
+.ped-run-bar span{font-size:11px;color:var(--text-4)}
+/* The nested header is quieter than the outer one, so the eye reads the run row
+   as the parent and these as its contents. */
+.ped-run-d .ped-tbl th{font-size:9.5px;color:var(--text-4)}
+.ped-run-d .ped-tbl td{padding:4px 12px 4px 0;font-size:12px}
+@media print{
+  /* A frozen snapshot prints as the plain comparison it is. */
+  .ped-run-t,.ped-run-x{display:none}
+  .ped-run-d{background:none;padding-left:0!important}
+  .ped-run-on{background:none}
+}
+
+/* ═══ Pre-Event Docs, cancellations ═══  [pre_event_docs_cancellations]
+   The workbook's second half of Report_Additional, and it sits under the Name
+   Badges list rather than on the Additional tab because it is about the badge
+   TABLE: somebody walks along it pulling cards off. A rule above it separates
+   the two lists without a card, which would read as a different kind of object
+   on a page whose every other block is a plain table. */
+.ped-cancel{margin-top:22px;padding-top:4px;border-top:2px solid var(--border)}
+.ped-cancel .ped-sec-h h3{color:var(--red)}

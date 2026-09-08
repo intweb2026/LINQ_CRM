@@ -385,14 +385,23 @@ class PaymentStatusChoiceTests(TestCase):
                         payment_status="IQ Staff")
         inv.full_clean(exclude=["sales_executive", "team_leader", "updated_by"])
 
-    def test_the_statuses_the_bookings_tab_no_longer_offers_are_still_accepted(self):
+    def test_free_is_off_the_ui_list_but_still_accepted_by_the_model(self):
         """
-        'Unpaid' and 'Free' were dropped from the UI list, not from the model: one
-        delegate override in the live data holds 'Free', and a value the model
-        refuses cannot be read back through a choice-validated filter.
+        'Free' was dropped from the UI list, not from the model: a value the
+        model refuses cannot be read back through a choice-validated filter, so
+        a stored one would vanish from the Bookings table entirely.
         """
-        for legacy in ("Unpaid", "Free"):
-            self.assertIn(legacy, BookEvent.PaymentStatus.values)
+        self.assertIn("Free", BookEvent.PaymentStatus.values)
+
+    def test_unpaid_is_gone_from_the_model_entirely(self):
+        """
+        Removed on request, and safe because nothing stored it: zero rows on
+        book_events.payment_status and zero on
+        book_delegates.delegate_payment_status. This asserts the removal rather
+        than merely allowing it, so nobody restores the choice by reflex when an
+        old fixture mentions it.
+        """
+        self.assertNotIn("Unpaid", BookEvent.PaymentStatus.values)
 
 
 class SppClearsTheDatePaidTests(TestCase):

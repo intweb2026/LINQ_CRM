@@ -532,6 +532,17 @@ CRM_MODULES = [
     # and its create/update rights. Backfilled all-False by migration 0029, so
     # nothing is visible until it is granted.
     "mining_matrix",
+    # Pre-Event Docs. Its own module rather than a corner of "bookings": the
+    # audience is whoever runs the badge table and the check-in desk, and the
+    # bookings grant carries create/update/delete over every delegate row in the
+    # CRM. Backfilled all-False by migration 0032, so nothing is visible until
+    # it is granted.
+    #
+    # NOT in SCOPED_MODULES, deliberately. Bookings is scoped so a sales
+    # executive sees their own rows; a badge list showing one person's own
+    # bookings would be useless, because whoever works the desk works the whole
+    # event.
+    "pre_event_docs",
 ]
 
 # "all" is not a verb like the other four. The first four say whether a module

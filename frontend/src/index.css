@@ -154,7 +154,8 @@
    [datepicker_calendar]       .dpk, the hand-built calendar
    [filter_panel_search]       .pop-hd .flt-search .flt-pill .flt-op
    [filter_panel_large]        .pop-lg, the same panel at full height
-   [table_shell]               .tw .tsc .dt-tw, the table box and its scroller
+   [table_shell]               .tw .tsc .dt-tw .dt-empty, the table box, its
+                               scroller, and the box with no rows in it
    [table_grid_widths]         .dt-grid .dt-form and the column alignment rule
    [table_column_header]       .th-sort .th-flt .th-flt-btn .th-w .th-sp
    [table_cells]               row, cell, .num, identity and sticky cells
@@ -165,6 +166,18 @@
    [bulk_update_modal]         .bu-, the Mass Update dialog
    [table_filled_cells]        a status inside a cell paints the whole cell
    [performance_matrix]        .vd- row tints, .pm-done, .pm-dense and the year chips
+   [pre_event_docs]            .ped- shared bits, and the .ped-tbl every list uses
+   [pre_event_docs_changes]    .ped-changes .ped-sec-h, To print and Take out
+   [pre_event_docs_badge_run]  .ped-run .ped-sheet, the print-and-log modal
+   [pre_event_docs_networking] .ped-draw-bar .ped-quality .ped-table, the draw
+   [pre_event_docs_print]      .ped-print, what goes on paper and how
+   [pre_event_docs_upcoming]   .ped-upcoming, the promote-at-the-desk line
+   [pre_event_docs_density]    .ped-report, why the reports are tight
+   [pre_event_docs_checkin]    .ped-checkin, the two-row header block
+   [pre_event_docs_event_picker] .ped-ev-, the searchable event overlay
+   [pre_event_docs_round]      .ped-round, the speed networking numbers
+   [pre_event_docs_frozen_runs] .ped-run-, a frozen run and its snapshot
+   [pre_event_docs_cancellations] .ped-cancel, badges to pull off the table
 
    ─────────────────────────────────────────────────────────────────────────────
    styles/overlays.css — the dashboard, and everything floating above a page

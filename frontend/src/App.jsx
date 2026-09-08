@@ -32,6 +32,7 @@ const TicketCentralPage = lazy(() => import('./pages/TicketCentralPage'));
 const EventsPage = lazy(() => import('./pages/EventsPage'));
 const PerformanceMatrixPage = lazy(() => import('./pages/PerformanceMatrixPage'));
 const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
+const PreEventDocsPage = lazy(() => import('./pages/PreEventDocsPage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
@@ -123,6 +124,10 @@ export default function App() {
                     bookmark lands on its replacement rather than on the home page. */}
                 <Route path="performance" element={<Navigate to="/performance-matrix" replace />} />
                 <Route path="mining-matrix" element={<MiningMatrixPage />} />
+                {/* Tab in the URL, the way Bookings and Tickets do it, so a
+                    badge run or a check-in sheet is a shareable link. */}
+                <Route path="pre-event-docs" element={<PreEventDocsPage />} />
+                <Route path="pre-event-docs/:tab" element={<PreEventDocsPage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />
                 <Route path="teams" element={<TeamsManagementPage />} />

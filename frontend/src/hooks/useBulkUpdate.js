@@ -136,8 +136,11 @@ export function mergePlans(plans) {
 export function useBulkUpdate(resource, refresh) {
   const toast = useToast();
   // { ids, clear } — `clear` is DataTable's own selection reset, handed to the
-  // bulk bar. Held here so a committed update empties the checkboxes it applied to
-  // rather than leaving a selection that no longer describes anything.
+  // bulk bar. NOTHING IN THIS HOOK CALLS IT any more: a committed update used to
+  // empty the checkboxes it applied to, and ops asked for the opposite so they
+  // can make several passes over one set of rows (see onCommit). The parameter
+  // stays because `open(ids, clear)` is the call shape all five bulk bars use;
+  // the pages still clear on their own delete and submit handlers.
   const [selection, setSelection] = useState(null);
   const [schema, setSchema] = useState(null);
 
@@ -227,7 +230,15 @@ export function useBulkUpdate(resource, refresh) {
         if (onProgress) onProgress({ done, total: batches.length, updated });
       }
 
-      selection.clear();
+      // The selection SURVIVES a successful commit. Ops make several passes over
+      // one set of rows — set the priority, then the assignee, then the type —
+      // and re-ticking the same rows between each pass was the whole cost.
+      //
+      // Not a leak of stale ids: refresh() re-fetches, and DataTable's prune
+      // effect then drops any id no longer in the returned rows, so a row the
+      // update pushed out of the current query leaves the selection on its own.
+      // The failure path above already left the selection alone; this is the
+      // same rule applied to the path that worked.
       refresh();
       return { updated, no_op: noOp, batches: batches.length };
     },

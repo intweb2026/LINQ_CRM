@@ -65,6 +65,9 @@ urlpatterns = [
     # a paginated list, so it is its own include and not a router entry above.
     path("api/mining-matrix/", include("mining_matrix.urls")),
     path("api/historical-events/", include("historical_event_registry.urls")),
+    # Pre-Event Docs. One aggregate response per event rather than a paginated
+    # list, so it is its own include and not a router entry above.
+    path("api/pre-event-docs/", include("pre_event_docs.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),
     # GROUP BY aggregates for the Dashboard. Replaces ~350 sequential

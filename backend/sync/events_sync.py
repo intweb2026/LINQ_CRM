@@ -31,7 +31,13 @@ def sync_events(full=False):
         headers = [
             "ID", "Event Name", "Event Code", "Event Date", "Event Status",
             "SCA", "SpEx Team", "Tele Marketing Team", "Market Research Team",
-            "City", "Country", "Venue", "End Date", "Capacity", "Expected Revenue"
+            "City", "Country", "Venue", "End Date",
+            # Capacity and Expected Revenue are GONE, with the columns they read.
+            # events/0019 removed both from the model; every one of the 244 rows
+            # held the field default, 500 and 0, so the sheet was publishing two
+            # columns of constants. Reading them after that migration raises
+            # AttributeError, and this runs from the Google Sync page, from
+            # sync_to_sheets and from crm_mirror.
         ]
         
         rows = []
@@ -57,8 +63,6 @@ def sync_events(full=False):
                 e.country,
                 e.venue,
                 str(e.end_date) if e.end_date else "",
-                e.capacity,
-                float(e.expected_revenue)
             ])
 
         # 4. Push

@@ -151,6 +151,11 @@ INSTALLED_APPS = [
     # authenticator is wired per-view in dataapi/views.py and must NEVER be
     # added to REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] below.
     "dataapi",
+    # Pre-Event Docs. Replaces the PRE EVENT DOCS workbook: badge lists, the
+    # change lists against a badge issue log, the check-in sheet and the speed
+    # networking draw. Reads book_delegate and events, owns two tables of its
+    # own, so it sits AFTER book_delegate.
+    "pre_event_docs",
 ]
 
 MIDDLEWARE = [
@@ -424,6 +429,24 @@ IMPORT_ALERT_EMAILS_ENABLED = os.environ.get(
 # real distinct-value list is unknown until the Zoho export lands. Run
 # `manage.py analyse_zoho_export <file>` against it and correct these lists
 # before trusting any figure that depends on them.
+# Pre-Event Docs exclusions. Same CONFIG NOT CODE reasoning as the booking code
+# markers below: these are operational rules about who is not a badge-wearing
+# delegate, and they must be changeable without a deployment.
+#
+# THE COMPANY NAME IS THE REAL RULE, read out of the workbook itself, whose
+# check-in filter is `SMZoho!H:H <> "iQ-Hub"`, an exact whole-cell comparison.
+# The key is _NAMES and not _MARKERS for that reason: it is matched with iexact,
+# so a company merely containing our name is not swept up. An earlier guess here
+# used _MARKERS with a substring match, and the name is spelled out so nobody
+# reinstates that by pattern-matching on the old key.
+PRE_EVENT_DOCS_INTERNAL_COMPANY_NAMES   = ["iQ-Hub"]
+# The domain is a spare, for a booking typed under some other company spelling.
+PRE_EVENT_DOCS_INTERNAL_EMAIL_DOMAINS   = ["iq-hub.com"]
+# Days after a badge run in which a name or company change still has to be
+# actioned. The change lists carry the window on every row and the page defaults
+# to what is still inside it.
+PRE_EVENT_DOCS_CHANGE_WINDOW_DAYS = 14
+
 BOOKING_CODE_SPEX_MARKERS    = ["spex"]
 BOOKING_CODE_SPEAKER_MARKERS = ["speaker", "spp"]
 BOOKING_CODE_SPEX_EXACT      = ["Add-Ons"]

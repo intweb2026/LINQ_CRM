@@ -1,5 +1,6 @@
 import django_filters
 from django.db.models import Q
+from .effective import effective_q
 from .models import BookDelegate
 from book_event.models import BookEvent
 
@@ -52,17 +53,16 @@ class BookDelegateFilter(django_filters.FilterSet):
     payment_date_to   = django_filters.DateFilter(field_name="invoice__payment_date", lookup_expr="lte")
 
     def _effective_filter(self, queryset, delegate_field, invoice_field, values):
-        """Filter on effective value: delegate override if set, else invoice value."""
+        """
+        Filter on the effective value, delegate override if set, else invoice.
+
+        The rule itself moved to book_delegate/effective.py when Pre-Event Docs
+        became a second caller; this stays as the filter set's way in, so the
+        four filter_* methods below read the same as they always did.
+        """
         if not values:
             return queryset
-        q = Q()
-        for v in values:
-            q |= (
-                Q(**{f"{delegate_field}__iexact": v}) |
-                Q(**{f"{delegate_field}__isnull": True, f"{invoice_field}__iexact": v}) |
-                Q(**{f"{delegate_field}": "", f"{invoice_field}__iexact": v})
-            )
-        return queryset.filter(q)
+        return queryset.filter(effective_q(delegate_field, invoice_field, values))
 
     def filter_payment_status(self, queryset, name, value):
         return self._effective_filter(

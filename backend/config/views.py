@@ -294,8 +294,6 @@ class DashboardAggregateView(APIView):
             return "free"
         if s.startswith("Credit"):
             return "credit"
-        if s == "Unpaid":
-            return "unpaid"
         if s in ("Cancelled", "Refunded"):
             return "cancelled"
         return "pending"

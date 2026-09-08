@@ -21,7 +21,6 @@ class BookEvent(models.Model):
     class PaymentStatus(models.TextChoices):
         PENDING              = "Pending",              "Pending"
         PAID                 = "Paid",                 "Paid"
-        UNPAID               = "Unpaid",               "Unpaid"
         CANCELLED            = "Cancelled",            "Cancelled"
         REFUNDED             = "Refunded",             "Refunded"
         FREE                 = "Free",                 "Free"
@@ -30,12 +29,22 @@ class BookEvent(models.Model):
         CREDIT_TRANSFERRED   = "Credit Transferred",     "Credit Transferred"
         PAID_TRANSFERRED     = "Paid (Transferred)",     "Paid (Transferred)"
         # A booking held by an IQ-Hub staff member rather than a paying delegate.
-        # UNPAID and FREE stay declared below them: no row in the export carries
-        # "Unpaid", and exactly one delegate override carries "Free", but dropping
-        # a choice a stored value uses would make that row fail full_clean() and
-        # vanish from every choice-validated filter. The Bookings UI no longer
-        # OFFERS them (frontend/src/lib/constants.js PAYMENT_STATUSES); the model
-        # continues to accept what is already in the database.
+        #
+        # FREE stays declared and is NOT offered by the Bookings UI (see
+        # PAYMENT_STATUSES in frontend/src/lib/constants.js). Dropping a choice
+        # that a stored value uses makes that row fail full_clean() and vanish
+        # from every choice-validated filter, so the model goes on accepting
+        # what the database already holds even where the UI has moved on.
+        #
+        # "Unpaid" USED TO SIT HERE FOR THE SAME REASON AND IS NOW GONE. It was
+        # removed on request, and safely: the count of rows holding it was zero
+        # on both book_events.payment_status and
+        # book_delegates.delegate_payment_status. If a deployment somewhere DOES
+        # hold one, that row is the case this comment is warning about, so check
+        # before shipping:
+        #   select count(*) from book_events where payment_status = 'Unpaid';
+        #   select count(*) from book_delegates
+        #    where delegate_payment_status = 'Unpaid';
         IQ_STAFF             = "IQ Staff",               "IQ Staff"
 
     class PaymentType(models.TextChoices):

@@ -68,14 +68,14 @@ class ResolvedOrderingTests(TestCase):
         # ordering by the resolved value.
         #
         #   row   invoice.payment_status   override      resolved
-        #   A     "Unpaid"                 "Cancelled"   "Cancelled"
-        #   B     "Cancelled"              "Unpaid"      "Unpaid"
+        #   A     "Refunded"                 "Cancelled"   "Cancelled"
+        #   B     "Cancelled"              "Refunded"      "Refunded"
         #
-        # ascending by resolved  -> A ("Cancelled"), then B ("Unpaid")
-        # ascending by invoice   -> B ("Cancelled"), then A ("Unpaid")   <- wrong
+        # ascending by resolved  -> A ("Cancelled"), then B ("Refunded")
+        # ascending by invoice   -> B ("Cancelled"), then A ("Refunded")   <- wrong
         inv_a = BookEvent.objects.create(
             invoice_number="RO-A", event_code="RO - AA",
-            payment_status="Unpaid", request_date=date(2026, 1, 1),
+            payment_status="Refunded", request_date=date(2026, 1, 1),
         )
         inv_b = BookEvent.objects.create(
             invoice_number="RO-B", event_code="RO - AA",
@@ -87,7 +87,7 @@ class ResolvedOrderingTests(TestCase):
         )
         self.b = BookDelegate.objects.create(
             invoice=inv_b, event_code="RO - AA", first_name="B", last_name="Row",
-            email="b@example.com", delegate_payment_status="Unpaid",
+            email="b@example.com", delegate_payment_status="Refunded",
         )
 
     def _ids_in_order(self, ordering):
@@ -113,8 +113,8 @@ class ResolvedOrderingTests(TestCase):
             "expected the INVOICE-column order (B then A) — if this changed, "
             "_sort_status is no longer annotating invoice__payment_status",
         )
-        # The displayed values are therefore NOT ascending: "Unpaid" before "Cancelled".
-        self.assertEqual(shown, ["Unpaid", "Cancelled"])
+        # The displayed values are therefore NOT ascending: "Refunded" before "Cancelled".
+        self.assertEqual(shown, ["Refunded", "Cancelled"])
         self.assertNotEqual(
             shown, sorted(shown),
             "the whole point: ordering by the invoice column leaves the DISPLAYED "
@@ -152,7 +152,7 @@ class ResolvedOrderingTests(TestCase):
         shown = {r["id"]: r["effective_payment_status"] for r in rows}
 
         self.assertEqual(shown[c.id], "Paid")
-        # Cancelled < Paid < Unpaid alphabetically.
+        # Cancelled < Paid < Refunded alphabetically.
         self.assertEqual(ids, [self.a.id, c.id, self.b.id])
 
     def test_every_resolved_field_has_a_resolved_ordering_term(self):
