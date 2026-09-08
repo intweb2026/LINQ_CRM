@@ -915,6 +915,11 @@ export default function DataTable({
   // of adjacent columns sharing a group. Opt-in: `groups` alone only shapes
   // the Columns menu, which is all the older tables ever asked of it.
   groupHeader = false,
+  // A row of column totals under the header, frozen with it. Every `num` column
+  // is summed over the rows the table is showing, after search and filters; a
+  // column opts out with `sum: false` (a countdown has no meaningful total) and
+  // the first column carries the label. Opt-in like groupHeader.
+  sumRow = false,
   /**
    * Show the admin Export button. OFF by default, and server mode only.
    *
@@ -1458,6 +1463,40 @@ export default function DataTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceRows, scope, q, conds, sort, serverMode, split.clientConds, ordering]);
 
+  /**
+   * SUM ROW. Totals over `data`, the rows on screen after search and filters,
+   * so a narrowed table totals what it shows. It lives in <thead> so the header
+   * rules make it stick; its `top` is where the header row ends, MEASURED and
+   * written to --sum-top rather than hardcoded, because the header's height
+   * follows the page's face and density (.pm-dense is shorter than the base).
+   * The ResizeObserver re-measures when the fonts land or the columns change.
+   */
+  const sums = useMemo(() => {
+    if (!sumRow) return null;
+    const out = {};
+    activeCols.forEach((c) => {
+      if (!c.num || c.sum === false) return;
+      out[c.key] = data.reduce((acc, r) => acc + (typeof r[c.key] === 'number' ? r[c.key] : 0), 0);
+    });
+    return out;
+  }, [sumRow, activeCols, data]);
+  const sumRef = useRef(null);
+  useEffect(() => {
+    const tr = sumRef.current;
+    if (!tr) return undefined;
+    const fit = () => {
+      const th = tr.previousElementSibling && tr.previousElementSibling.firstElementChild;
+      if (!th) return;
+      const top = (parseFloat(getComputedStyle(th).top) || 0) + th.getBoundingClientRect().height;
+      tr.style.setProperty('--sum-top', `${Math.floor(top)}px`);
+    };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(fit);
+    ro.observe(tr.parentElement);
+    return () => ro.disconnect();
+  }, [sumRow]);
+
   // Total the footer reports. In server mode that is the server's `count` —
   // except when a client-only condition is also narrowing the page, where the
   // true total is unknowable without fetching everything, so the count shown is
@@ -1959,6 +1998,22 @@ export default function DataTable({
                     );
                   })}
                 </tr>
+                {sums ? (
+                  <tr className="sum" ref={sumRef}>
+                    {select ? <th className={pins.size ? 'pin-col' : ''} style={pins.size ? { left: 0 } : undefined} /> : null}
+                    {activeCols.map((c, i) => {
+                      const p = pins.get(c.key);
+                      return (
+                        <th key={c.key}
+                          className={(c.num ? 'num ' : '') + (c.cls ? c.cls + ' ' : '')
+                            + (p ? 'pin-col' + (p.last ? ' pin-last' : '') : '')}
+                          style={p ? { left: p.left } : undefined}>
+                          {c.key in sums ? nf(sums[c.key]) : i === 0 ? 'Total' : ''}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                ) : null}
               </thead>
               <tbody>
                 {/* Spacer rows stand in for the rows scrolled past, so the

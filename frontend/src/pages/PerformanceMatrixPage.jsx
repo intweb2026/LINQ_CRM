@@ -22,12 +22,15 @@ import NoAccessPage from './NoAccessPage';
  * nothing here derives a number. The one thing this page WRITES is the Verdict,
  * which is stored on the Event and paints the whole row in its colour.
  *
- * The table IS the page: no summary bar above it, so the rows start at the top
- * and the horizontal scrollbar sits at the foot of the visible box. The page
+ * The table IS the page: no summary bar above it, the column totals are a row
+ * frozen under the header, so the rows start at the top and the horizontal
+ * scrollbar sits at the foot of the visible box. The page
  * root (.gs-page, shared with Events) sets the module's own face, Google Sans Flex, and the type
- * ladder: block title, column header, data, each one step smaller. The first
- * four columns are frozen; the event NAME is not a column, it is the hover on
- * the code, along with every team owner, so the frozen block stays narrow.
+ * ladder: block title, column header, data, each one step smaller. Event,
+ * Previous edition and Live position are frozen, so the momentum blocks scroll
+ * against the figures they explain. The Event cell is the family's base code
+ * with the edition year as a quiet italic suffix; the event NAME is not a
+ * column, it is the hover on the cell, with the internal code and every owner.
  */
 
 const TABS = [
@@ -51,6 +54,7 @@ const GROUPS = [
   { key: 'ev', label: 'Event' },
   { key: 'ly', label: 'Previous edition' },
   { key: 'lv', label: 'Live position' },
+  { key: 'pj', label: 'Projection' },
   { key: 'bk', label: 'Bookings · by request date' },
   { key: 'py', label: 'Payments · by payment date' },
   { key: 'tk', label: 'Tickets · unmined' },
@@ -76,8 +80,12 @@ export function dateRange(start, end) {
   return `${d1} ${MON[m1 - 1]}, ${y1} - ${d2} ${MON[m2 - 1]}, ${y2}`;
 }
 
-/** The hover on the event code: the name, then every team owner. */
-const tipFor = (r) => [r.name, ...Object.entries(r.owners || {}).map(([k, v]) => `${k}: ${v}`)].join('\n');
+/** The hover on the event cell: the internal code when it says more than the
+ *  base code, the name, then every team owner. */
+const tipFor = (r) => [
+  r.event_code !== r.base_code ? r.event_code : null, r.name,
+  ...Object.entries(r.owners || {}).map(([k, v]) => `${k}: ${v}`),
+].filter(Boolean).join('\n');
 
 /** Days to go, banded: a week out is red, a month amber, a quarter blue.
  *  A completed edition's row is sepia throughout and recolours this cell too. */
@@ -93,11 +101,28 @@ function VerdictPill({ value }) {
   return <span className={'pm-vd ' + pmApi.verdictClass(v)}>{v}</span>;
 }
 
+/** A projected finish with a dot for where it lands: green from the target,
+ *  amber from the floor under it, dark red below that. Attendance targets 65
+ *  over a floor of 40; payments target the benchmark over a floor of 25. */
+const ATT_BANDS = [40, 65];
+const PAY_FLOOR = 25;
+const pending = (hint) => <span className="dim" title={hint}>Pending</span>;
+function Health({ value, bands: [floor, target], hint }) {
+  if (value == null) return pending('The weekly curve starts 21 weeks out');
+  const tone = value >= target ? 'green' : value >= floor ? 'amber' : 'red';
+  return <span className={'pm-hl ' + tone} title={hint}><i /><b className="pm-n">{nf(value)}</b></span>;
+}
+
 function buildCols(onVerdict, benchmark, ticketTypes) {
   const cols = [
     {
       key: 'event_code', label: 'Event', group: 'ev', pin: true, w: 126,
-      cell: (v, r) => <span className="mono pm-code" title={tipFor(r)}>{v}</span>,
+      cell: (v, r) => (
+        <span className="pm-ev" title={tipFor(r)}>
+          <span className="mono pm-code">{r.base_code || v}</span>
+          {r.year ? <span className="pm-yr">{r.year}</span> : null}
+        </span>
+      ),
     },
     {
       key: 'start_date', label: 'Dates', type: 'date', group: 'ev', pin: true, w: 146,
@@ -108,11 +133,11 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
       cell: (v) => (v ? <span className="pm-loc" title={v}>{v}</span> : dim()),
     },
     {
-      key: 'days_left', label: 'Countdown', group: 'ev', num: true, pin: true, w: 92,
+      key: 'days_left', label: 'Countdown', group: 'ev', num: true, sum: false, pin: true, w: 92,
       cell: (v, r) => <Countdown days={v} label={r.countdown} />,
     },
     {
-      key: 'prev_status', label: 'Last edition', group: 'ly', cls: 'sec', w: 112,
+      key: 'prev_status', label: 'Last edition', group: 'ly', cls: 'sec', pin: true, w: 112,
       opts: () => Object.keys(PREV_TONE),
       cell: (v, r) => (
         <span className={'bg bg-' + (PREV_TONE[v] || 'neutral')}
@@ -122,7 +147,7 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
       ),
     },
     {
-      key: 'live_prev_year', label: 'Live then', group: 'ly', num: true, w: 90,
+      key: 'live_prev_year', label: 'Live then', group: 'ly', num: true, pin: true, w: 90,
       cell: (v, r) => (v == null ? dim() : (
         <span title="Live count the previous edition had with this many days to go">
           {nf(v)}
@@ -132,19 +157,38 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
         </span>
       )),
     },
-    { key: 'live_count', label: 'Live', group: 'lv', num: true, cls: 'sec', w: 70, cell: num },
-    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, w: 70, cell: num },
+    { key: 'live_count', label: 'Live', group: 'lv', num: true, cls: 'sec', pin: true, w: 70, cell: num },
+    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, pin: true, w: 70, cell: num },
     {
-      key: 'pending', label: 'Pending', group: 'lv', num: true, w: 80,
+      key: 'pending', label: 'Pending', group: 'lv', num: true, pin: true, w: 80,
       cell: (v) => (v ? <b style={{ color: 'var(--red-tx)' }}>{nf(v)}</b> : zero()),
     },
     {
-      key: 'expected', label: 'Expected', group: 'lv', num: true, w: 84,
+      key: 'expected', label: 'Expected', group: 'lv', num: true, pin: true, w: 84,
       cell: (v) => (v ? <b style={{ color: 'var(--amber-tx)' }}>{nf(v)}</b> : zero()),
     },
     {
-      key: 'shortfall', label: `Short of ${benchmark}`, group: 'lv', num: true, w: 92,
+      key: 'shortfall', label: `Short of ${benchmark}`, group: 'lv', num: true, pin: true, w: 92,
       cell: (v) => (v ? <span className="tg bg-red">{nf(v)}</span> : <span className="tg bg-green">Met</span>),
+    },
+    // Projection: where today's figures land the edition. The 33% curve scales
+    // the live count by the share of the six-month sales span elapsed; the two
+    // health readings do the same on the team's weekly curves (services.py).
+    {
+      key: 'proj', label: '33% curve', group: 'pj', num: true, cls: 'sec', w: 96,
+      cell: (v) => (v == null
+        ? pending('Sales open six months before the event')
+        : <b className="pm-n" title="Live count over the share of the sales curve elapsed: 33% at three months in, 66% at five, 100% on the day">{nf(v)}</b>),
+    },
+    {
+      key: 'att_proj', label: 'Health · attendees', group: 'pj', num: true, w: 150,
+      cell: (v) => <Health value={v} bands={ATT_BANDS}
+        hint="Live count over the attendance the weekly curve expects banked by now; green from 65, amber from 40" />,
+    },
+    {
+      key: 'paid_proj', label: 'Health · payments', group: 'pj', num: true, w: 150,
+      cell: (v) => <Health value={v} bands={[PAY_FLOOR, benchmark]}
+        hint={`Paid heads over the share the weekly curve expects banked by now; green from ${benchmark}, amber from ${PAY_FLOOR}`} />,
     },
   ];
   WINDOWS.forEach(([k, label], i) => cols.push({
@@ -276,6 +320,7 @@ export default function PerformanceMatrixPage() {
           cols={cols}
           groups={GROUPS}
           groupHeader
+          sumRow
           noun="editions"
           pageSize={1000}
           // Nearest first: the matrix is read top-down as a queue. Past editions

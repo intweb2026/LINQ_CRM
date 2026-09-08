@@ -77,6 +77,23 @@ RELAUNCH_FROM = frozenset({"Cancelled"})
 # (key, min age in days, max age in days) — how old a date is from today.
 WINDOWS = (("today", 0, 0), ("d7", 0, 7), ("d14", 8, 14), ("d21", 15, 21), ("d30", 0, 30))
 
+# ── Projection ────────────────────────────────────────────────────────────────
+# Sales open six months before the event and heads land on a front-loaded
+# curve: a third by three months in, a third more by five, the rest in the last
+# month. Today's live count over the share elapsed is the finish it points to.
+SALES_MONTHS = 6
+CURVE = ((3, 0.33), (5, 0.33), (None, 0.34))   # (months after opening, share landed by then); None = event day
+
+# The weekly curves the team runs in Sheets: the share of the FINAL attendance
+# and paid heads an edition should have banked with this many whole weeks to go,
+# read top-down as "more than N weeks out". Nothing is expected beyond 21 weeks
+# and the -1 row is the event week. The health columns divide today's figure by
+# this share; the colour bands over the result live with the page.
+ATT_CURVE = ((21, 0), (18, .225), (16, .346), (13, .413), (11, .549), (9, .607),
+             (7, .7), (5, .729), (3, .855), (1, .943), (-1, 1))
+PAY_CURVE = ((21, 0), (18, .2), (16, .343), (13, .423), (11, .571), (9, .667),
+             (7, .769), (5, .833), (3, .9), (1, .976), (-1, 1))
+
 # The owner columns the hover card shows, in reading order. A blank column
 # inherits the owning team's lead exactly as the Events table does
 # (events.serializers.team_owner_defaults); the values that mean "nobody" mirror
@@ -134,6 +151,43 @@ def countdown(today, d):
              f"{rd.days}d" if rd.days else ""]
     label = " ".join(p for p in parts if p)
     return label if d > today else label + " ago"
+
+
+def _round(x):
+    return int(x + 0.5)     # half up, as the Sheets formulas round
+
+
+def curve_share(today, event_date):
+    """Share of the sales curve elapsed: 0 before sales open, 1 from the event day."""
+    start = event_date - relativedelta(months=SALES_MONTHS)
+    if today < start:
+        return 0.0
+    if today >= event_date:
+        return 1.0
+    lo, done = start, 0.0
+    for months, share in CURVE:
+        hi = start + relativedelta(months=months) if months else event_date
+        if today <= hi:
+            return done + share * (today - lo).days / (hi - lo).days
+        lo, done = hi, done + share
+    return 1.0
+
+
+def projection(today, event_date, live):
+    """The finish today's live count points to; None before sales open (the UI reads Pending)."""
+    share = curve_share(today, event_date)
+    return _round(live / share) if share else None
+
+
+def curve_projection(today, event_date, actual, curve):
+    """
+    The finish `actual` points to on a weekly curve: the actual over the share
+    the curve expects banked with this many whole weeks to go, so it IS the
+    actual from the event week on. None while the curve expects nothing yet.
+    """
+    weeks = max(0, (event_date - today).days // 7)
+    share = next(s for lo, s in curve if weeks > lo)
+    return _round(actual / share) if share else None
 
 
 def _families(events):
@@ -322,6 +376,9 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             "shortfall": max(0, BENCHMARK - s["paid"]),
             "live_prev_year": live_prev,
             "live_delta": (s["live"] - live_prev) if live_prev is not None else None,
+            "proj": projection(today, e.event_date, s["live"]),
+            "att_proj": curve_projection(today, e.event_date, s["live"], ATT_CURVE),
+            "paid_proj": curve_projection(today, e.event_date, s["paid"], PAY_CURVE),
             **{"bk_" + k: s["bk_" + k] for k, _, _ in WINDOWS},
             **{"pay_" + k: s["pay_" + k] for k, _, _ in WINDOWS},
             "pr_total": s["pr_total"],

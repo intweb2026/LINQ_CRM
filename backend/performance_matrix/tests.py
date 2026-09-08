@@ -19,7 +19,10 @@ from ticket_central.models import Ticket
 from .management.commands.sync_verdicts_from_sheet import (
     apply_changes, column_index, normalise_status, plan_changes,
 )
-from .services import BENCHMARK, build_payload, countdown, previous_edition_label
+from .services import (
+    ATT_CURVE, BENCHMARK, PAY_CURVE, build_payload, countdown, curve_projection,
+    previous_edition_label, projection,
+)
 
 TODAY = date(2026, 1, 12)
 
@@ -101,6 +104,16 @@ class MatrixTests(TestCase):
         self.assertEqual(prev["live_count"], 3)
         self.assertIsNone(prev["live_prev_year"])
 
+        # 30 days out is 4 whole weeks: five live heads against the 85.5% the
+        # attendance curve expects by then project to 6, two paid against 90% to
+        # 2. The 33% curve opened sales on 11 Aug 2025 and is one day into its
+        # last month: 5 / (0.66 + 0.34 / 31) rounds to 7.
+        self.assertEqual(cur["proj"], 7)
+        self.assertEqual(cur["att_proj"], 6)
+        self.assertEqual(cur["paid_proj"], 2)
+        # A finished edition's projection is its count.
+        self.assertEqual((prev["proj"], prev["att_proj"], prev["paid_proj"]), (3, 3, 3))
+
         # Tickets sit on the nearest upcoming edition only; the mined one is out.
         self.assertTrue(cur["tk_here"])
         self.assertFalse(prev["tk_here"])
@@ -130,6 +143,25 @@ class MatrixTests(TestCase):
         prior.verdict = ""
         self.assertEqual(previous_edition_label(prior), "Repeat")   # no verdict recorded: it ran
         self.assertEqual(previous_edition_label(None), "Fresh")
+
+    def test_projections(self):
+        ev = date(2026, 8, 11)                                          # sales open 11 Feb 2026
+        self.assertIsNone(projection(date(2026, 2, 11), ev, 4))         # nothing elapsed: Pending
+        self.assertEqual(projection(date(2026, 5, 11), ev, 33), 100)    # a third of the curve, a third of the heads
+        self.assertEqual(projection(date(2026, 7, 11), ev, 33), 50)
+        self.assertEqual(projection(date(2026, 9, 1), ev, 70), 70)      # over: the count is the finish
+
+        # More than 21 weeks out the weekly curves expect nothing yet.
+        self.assertIsNone(curve_projection(date(2026, 1, 12), ev, 5, ATT_CURVE))
+        # 20 weeks out attendance expects 22.5% and payments 20%: 15 live project
+        # to 67, 14 to 62; 14 paid to 70.
+        d = ev - timedelta(weeks=20)
+        self.assertEqual(curve_projection(d, ev, 15, ATT_CURVE), 67)
+        self.assertEqual(curve_projection(d, ev, 14, ATT_CURVE), 62)
+        self.assertEqual(curve_projection(d, ev, 14, PAY_CURVE), 70)
+        # From the event week the curve is complete and the count is the finish.
+        self.assertEqual(curve_projection(ev, ev, 40, PAY_CURVE), 40)
+        self.assertEqual(curve_projection(ev + timedelta(days=9), ev, 64, ATT_CURVE), 64)
 
     def test_countdown(self):
         self.assertEqual(countdown(TODAY, TODAY), "Today")
