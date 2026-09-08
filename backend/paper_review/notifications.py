@@ -444,8 +444,8 @@ def template_context(review):
         "record_url":    f"{settings.CRM_BASE_URL}/paper-review",
         # Named in the HEADER line, "reviewed by ...". The event's assigned MRE,
         # not the submitter — see event_mre_name. NOT the signature either; the
-        # message is from the CRM rather than from a person, so the sign-off is
-        # constant in the template.
+        # sign-off is a constant in the template, James Trevino and the company,
+        # whoever reviewed the paper.
         "mre_name":      event_mre_name(review),
     }
     for field, token in SCORE_TOKENS:
@@ -471,7 +471,7 @@ def render_body(review):
     text = (
         "A new paper review has been submitted.\n\n"
         + "\n".join(rows_text)
-        + "\n\n\u2014 Linq CRM"
+        + "\n\n\u2014 James Trevino\nIQ International Pte. Ltd."
     )
     html = render_to_string("paper_review/handoff_email.html",
                             template_context(review))

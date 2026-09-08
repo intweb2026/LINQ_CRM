@@ -514,16 +514,17 @@ class HandoffTemplateTests(_Base):
             _review("MRE - NONE"))
         self.assertIn("reviewed by Linq CRM", html)
 
-    def test_the_signature_is_the_crm_not_a_person(self):
+    def test_the_signature_is_constant_and_never_the_reviewer(self):
         """
-        The message is from the system, so the sign-off is constant. A person's
-        name there reads as a note they wrote and invites a reply to them.
+        The sign-off is a fixed name and the company, not whoever reviewed the
+        paper; a reviewer name there reads as a note they wrote and invites a
+        reply to them.
         """
         assign_reviewer(self.cc_market_research, self.event)
         html = self.html(created_by=self.user)
-        self.assertIn("LINQ CRM", html)
-        self.assertIn("Automated notification", html)
+        self.assertIn("James Trevino", html)
         self.assertIn("IQ International Pte. Ltd.", html)
+        self.assertNotIn("Automated notification", html)
         expected = (self.cc_market_research.get_full_name()
                     or self.cc_market_research.username)
         # Named once, on the header line, and never as the sign-off.
