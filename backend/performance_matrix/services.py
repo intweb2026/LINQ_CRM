@@ -67,7 +67,7 @@ PAYABLE = "Paid"
 DEAD_STATUSES = frozenset({"Cancelled", "Refunded"})
 
 BENCHMARK = 40                    # paid heads every edition is measured against
-PENDING_GRACE_DAYS = 14           # an invoice older than this is Pending, younger is Expected
+PENDING_GRACE_DAYS = 14           # a pending invoice older than this is Pending, 14 days or newer is Expected, none yet is Not invoiced
 FIRST_EDITION_LOOKBACK_DAYS = 365
 
 # Prior edition's verdict -> this edition's label.
@@ -99,15 +99,37 @@ PAY_CURVE = ((21, 0), (18, .2), (16, .343), (13, .423), (11, .571), (9, .667),
 # (events.serializers.team_owner_defaults); the values that mean "nobody" mirror
 # OwnerResolutionMixin._BLANK_OWNER_VALUES.
 OWNER_FIELDS = (
-    ("sales_team", "SCA"), ("team_leader", "Sales lead"),
+    ("sales_team", "SCA"),
     ("telemarketing_team", "Telemarketing"), ("market_research_senior", "MR senior"),
     ("market_research_junior", "MR junior"), ("spex_team", "SpEx"),
 )
 BLANK_OWNER = frozenset({"", "-", "–", "—"})
 
+# Booking codes are free text in a house vocabulary ("Speaker", "Speaker / SLV
+# SpEx", "Upgraded to GLD SpEx", "Group Pass", "Speaker Table"). Every test on
+# them is a casefolded substring, so a code naming two things counts for both;
+# "Speaker Table" is a sponsor, not a speaker, and is carved out by name.
+PAID_STATUSES = frozenset({"Paid", "Paid (Transferred)"})
+FREE = "Free"
+CANCELLED = "Cancelled"
+SPEX_TIERS = (("ptn", "ptn"), ("plt", "plt"), ("gld", "gld"), ("slv", "slv"),
+              ("table", "speaker table"), ("upgraded", "upgraded"))
+SPEX_STATES = ("all", "paid", "pending")
+SPEX_KEYS = tuple(f"spex_{st}_{t}" for st in SPEX_STATES for t in ("total",) + tuple(k for k, _ in SPEX_TIERS))
+
+
+def _is_speaker(lc):
+    return ("speaker" in lc or "spp" in lc) and "speaker table" not in lc
+
+
+def _is_spex(lc):
+    return "spex" in lc or "speaker table" in lc
+
 
 def _blank():
-    z = {k: 0 for k in ("live", "paid", "pending", "expected", "pr_total")}
+    z = {k: 0 for k in ("live", "paid", "pending", "expected", "not_invoiced", "free", "cancelled",
+                        "sp_total", "sp_booked", "sp_paid", "sp_free", "pr_total")}
+    z.update(bk_last=None, pay_last=None, sp_first=None)
     for key, _, _ in WINDOWS:
         z["bk_" + key] = 0
         z["pay_" + key] = 0
@@ -117,9 +139,10 @@ def _blank():
 
 def _delegate_rows():
     """
-    (code, edition, status, payable/free, payment date, invoice date, booked_on)
-    per delegate, with every per-delegate override already resolved against its
-    invoice. The overrides are NULL-or-blank when not set, hence NullIf.
+    (code, edition, status, payable/free, payment date, invoice date, booked_on,
+    booking code, company) per delegate, with every per-delegate override already
+    resolved against its invoice. The overrides are NULL-or-blank when not set,
+    hence NullIf.
     """
     blank = Value("")
     return (
@@ -136,7 +159,7 @@ def _delegate_rows():
                              output_field=DateField()),
         )
         .values_list("code", "invoice__edition", "eff_status", "eff_pof",
-                     "eff_pay", "eff_inv", "booked_on")
+                     "eff_pay", "eff_inv", "booked_on", "invoice__booking_code", "invoice__company_name")
         .iterator(chunk_size=2000)
     )
 
@@ -288,9 +311,10 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
 
     stats = defaultdict(_blank)
     live_dates = defaultdict(list)      # event pk -> booked_on of every live delegate
+    companies = defaultdict(lambda: defaultdict(set))   # event pk -> {"gp" | spex key: {company}}
     grace = today - timedelta(days=PENDING_GRACE_DAYS)
 
-    for code, edition, status, pof, pay_date, inv_date, booked_on in _delegate_rows():
+    for code, edition, status, pof, pay_date, inv_date, booked_on, bcode, company in _delegate_rows():
         base = code_to_base.get(code or "")
         if base is None:
             continue
@@ -300,6 +324,11 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         s = stats[ed.pk]
         live = status in LIVE_STATUSES
         payable = pof == PAYABLE
+        paid_status = status in PAID_STATUSES
+        lc = (bcode or "").casefold()
+        co = (company or "").strip().casefold()
+        if booked_on:
+            s["bk_last"] = max(s["bk_last"] or booked_on, booked_on)    # any booking, cancelled included
         if live:
             s["live"] += 1
             if booked_on:
@@ -307,13 +336,48 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
                 _age_buckets(s, "bk_", today, booked_on)
         if pay_date and payable and status not in DEAD_STATUSES:
             s["paid"] += 1
+        if paid_status and pof == FREE:
+            s["free"] += 1
+        if status == CANCELLED and payable and pay_date:
+            s["cancelled"] += 1
         if status == PENDING and payable:
-            if inv_date and inv_date < grace:
+            if inv_date is None:
+                s["not_invoiced"] += 1
+            elif inv_date < grace:
                 s["pending"] += 1
             else:
                 s["expected"] += 1
         if status == PAID and payable and pay_date:
             _age_buckets(s, "pay_", today, pay_date)
+            s["pay_last"] = max(s["pay_last"] or pay_date, pay_date)
+        if not live:
+            continue
+        # Speakers, sponsors and group passes, read off the booking code. A
+        # sponsor is a COMPANY, counted once per column however many seats it
+        # holds; the code's tier words each add it to that tier's set.
+        if co and "group pass" in lc:
+            companies[ed.pk]["gp"].add(co)
+        if _is_speaker(lc):
+            s["sp_total"] += 1
+            if booked_on:
+                s["sp_first"] = min(s["sp_first"] or booked_on, booked_on)
+            if status == PENDING and not pay_date:
+                s["sp_booked"] += 1
+            if paid_status and payable:
+                s["sp_paid"] += 1
+            if paid_status and pof == FREE:
+                s["sp_free"] += 1
+        if co and _is_spex(lc):
+            states = ["all"]
+            if paid_status and payable:
+                states.append("paid")
+            elif status == PENDING:
+                states.append("pending")
+            for st in states:
+                companies[ed.pk][f"spex_{st}_total"].add(co)
+                for tier, needle in SPEX_TIERS:
+                    if needle in lc:
+                        companies[ed.pk][f"spex_{st}_{tier}"].add(co)
 
     for dates in live_dates.values():
         dates.sort()
@@ -353,6 +417,9 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
 
         bucket = buckets.get(base) if ticket_target.get(e.pk) == base else None
         type_links = {k: v["links"] for k, v in bucket["splits"][SPLIT_TYPE].items()} if bucket else {}
+        cos = companies.get(e.pk) or {}
+        paid_proj = curve_projection(today, e.event_date, s["paid"], PAY_CURVE)
+        iso = lambda d: d.isoformat() if d else None  # noqa: E731
 
         rows.append({
             "id": e.pk,
@@ -373,14 +440,25 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             "paid_heads": s["paid"],
             "pending": s["pending"],
             "expected": s["expected"],
-            "shortfall": max(0, BENCHMARK - s["paid"]),
+            "not_invoiced": s["not_invoiced"],
+            "free": s["free"],
+            "cancelled": s["cancelled"],
+            "group_pass": len(cos.get("gp", ())),
+            # Short of the benchmark on the PAYMENTS PROJECTION, not today's paid
+            # heads; None while the curve expects nothing yet.
+            "shortfall": max(0, BENCHMARK - paid_proj) if paid_proj is not None else None,
             "live_prev_year": live_prev,
             "live_delta": (s["live"] - live_prev) if live_prev is not None else None,
             "proj": projection(today, e.event_date, s["live"]),
             "att_proj": curve_projection(today, e.event_date, s["live"], ATT_CURVE),
-            "paid_proj": curve_projection(today, e.event_date, s["paid"], PAY_CURVE),
+            "paid_proj": paid_proj,
             **{"bk_" + k: s["bk_" + k] for k, _, _ in WINDOWS},
+            "bk_last": iso(s["bk_last"]),
             **{"pay_" + k: s["pay_" + k] for k, _, _ in WINDOWS},
+            "pay_last": iso(s["pay_last"]),
+            "sp_first": iso(s["sp_first"]),
+            **{k: s[k] for k in ("sp_total", "sp_booked", "sp_paid", "sp_free")},
+            **{k: len(cos.get(k, ())) for k in SPEX_KEYS},
             "pr_total": s["pr_total"],
             **{"pr_" + k: s["pr_" + k] for k, _, _ in WINDOWS},
             "tk_unmined": bucket["links"] if bucket else 0,
@@ -388,6 +466,7 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             "tk_types": type_links,
             "tk_here": bucket is not None,
             "verdict": e.verdict or "",
+            "website": e.website or "",
         })
 
     rows.sort(key=lambda r: (r["days_left"] < 0, abs(r["days_left"]), r["start_date"]))
@@ -398,7 +477,8 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         "paid": sum(r["paid_heads"] for r in rows),
         "pending": sum(r["pending"] for r in rows),
         "expected": sum(r["expected"] for r in rows),
-        "below_benchmark": sum(1 for r in rows if r["shortfall"] > 0),
+        "not_invoiced": sum(r["not_invoiced"] for r in rows),
+        "below_benchmark": sum(1 for r in rows if (r["shortfall"] or 0) > 0),
         "bk_d7": sum(r["bk_d7"] for r in rows),
         "pay_d7": sum(r["pay_d7"] for r in rows),
         "pr_d7": sum(r["pr_d7"] for r in rows),

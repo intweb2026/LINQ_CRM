@@ -22,7 +22,7 @@ BOOKINGS_HEADERS = [
     "Currency", "Paid/Free",
     "Pre-Tax Amount", "Tax Amount", "Total Amount", "Add-Ons Total", "Discount", "Discount Code",
     # Payment
-    "Payment Type", "Date Paid", "Payment Due Date", "Ref Number", "Add-Ons Notes",
+    "Payment Type", "Date Paid", "Ref Number", "Add-Ons Notes",
     # Internal
     "Sales Executive", "Team Leader",
     # Audit
@@ -87,7 +87,6 @@ def _row(inv, delegate=None):
         inv.discount_code,
         (delegate.delegate_payment_type or inv.payment_type) if delegate else inv.payment_type,
         str(delegate.delegate_payment_date or inv.payment_date) if (delegate and (delegate.delegate_payment_date or inv.payment_date)) else (str(inv.payment_date) if inv.payment_date else ""),
-        str(inv.payment_due_date) if inv.payment_due_date else "",
         inv.reference,
         inv.add_ons,
         se,

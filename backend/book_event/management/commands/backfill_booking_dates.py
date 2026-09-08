@@ -5,8 +5,8 @@ Fills the booking date columns that are empty in production from a Zoho-style
 export, and writes nothing else. The logic lives in book_event/date_backfill.py;
 this is the CLI around it.
 
-    Request Date -> request_date        Payment Due -> payment_due_date
-    Invoice Date -> invoice_date        Date Paid   -> payment_date
+    Request Date -> request_date        Date Paid -> payment_date
+    Invoice Date -> invoice_date
     and BookDelegate.booked_on, which is COALESCE(request_date, invoice_date)
 
 Blank-only by default: a stored date is never moved, a blank cell never clears
@@ -24,7 +24,7 @@ Usage:
 
     # one column only
     python manage.py backfill_booking_dates "remaining data.xlsx" \
-        --fields payment_due_date
+        --fields payment_date
 
     # replace stored dates that differ from the workbook (NOT the default)
     python manage.py backfill_booking_dates "remaining data.xlsx" --overwrite

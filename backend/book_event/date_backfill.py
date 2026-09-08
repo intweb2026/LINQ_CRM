@@ -17,7 +17,6 @@ So this module names its columns and writes exactly those:
 
     Request Date  -> BookEvent.request_date
     Invoice Date  -> BookEvent.invoice_date
-    Payment Due   -> BookEvent.payment_due_date
     Date Paid     -> BookEvent.payment_date
 
 plus the one column that is DERIVED from two of them, and which would otherwise
@@ -37,9 +36,9 @@ database is never moved unless the caller passes overwrite=True, and a blank cel
 in the workbook never clears a stored date. Re-running is therefore a no-op.
 
 ONE VALUE PER INVOICE
-The workbook is delegate-grained, and these four columns are invoice-level: 159
-invoices list more than one Request Date across their delegates, 162 more than
-one Payment Due, 305 more than one Date Paid. An invoice can hold one, so the
+The workbook is delegate-grained, and these three columns are invoice-level:
+159 invoices list more than one Request Date across their delegates, 305 more
+than one Date Paid. An invoice can hold one, so the
 FIRST row's value wins — which is what every already-populated row in the
 database holds — and every such invoice is listed in the result as `varied` so
 the disagreement is visible rather than silently resolved.
@@ -58,7 +57,6 @@ from django.db import transaction
 DATE_COLUMNS: dict[str, str] = {
     "request_date":     "Request Date",
     "invoice_date":     "Invoice Date",
-    "payment_due_date": "Payment Due",
     "payment_date":     "Date Paid",
 }
 

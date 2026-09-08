@@ -71,7 +71,6 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
     # the invoice's date would disagree with the CRM for exactly those rows.
     request_date = serializers.SerializerMethodField()
     invoice_date = serializers.SerializerMethodField()
-    payment_due_date = serializers.DateField(source="invoice.payment_due_date", read_only=True)
     event_name = serializers.CharField(source="invoice.event_name", read_only=True)
     parent_code = serializers.CharField(source="invoice.parent_code", read_only=True)
     # The BILLING company on the invoice, which is not always the delegate's own
@@ -114,7 +113,6 @@ class DataApiDelegateSerializer(serializers.ModelSerializer):
             "booking_code",               # Booking Code
             "request_date",               # Request Date
             "invoice_date",               # Invoice Date
-            "payment_due_date",           # Payment Due
             "invoice_number",             # Invoice Number
             "full_name",                  # Name
             "position",                   # Job Title

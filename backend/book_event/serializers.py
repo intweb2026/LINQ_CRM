@@ -202,7 +202,7 @@ class BookEventDetailSerializer(serializers.ModelSerializer):
             # write-only company address fields
             "company_address", "company_city", "company_state",
             "company_country", "company_postal_code", "company_website",
-            "payment_status", "payment_type", "payment_date", "payment_due_date",
+            "payment_status", "payment_type", "payment_date",
             "paid_or_free", "paid_free",
             "request_date", "invoice_date", "booking_code",
             "sales_executive", "sales_executive_name",

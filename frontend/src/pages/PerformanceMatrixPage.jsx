@@ -29,8 +29,10 @@ import NoAccessPage from './NoAccessPage';
  * ladder: block title, column header, data, each one step smaller. Event,
  * Previous edition and Live position are frozen, so the momentum blocks scroll
  * against the figures they explain. The Event cell is the family's base code
- * with the edition year as a quiet italic suffix; the event NAME is not a
- * column, it is the hover on the cell, with the internal code and every owner.
+ * with a quiet italic suffix, the market research owner's initials and the
+ * edition year; the event NAME is not a column, it is the hover on the cell,
+ * with the internal code and every owner. Every block folds from the toggle in
+ * its header to its leading columns, so the table can be read a block at a time.
  */
 
 const TABS = [
@@ -50,22 +52,35 @@ const PREV_HINT = {
   Relaunch: 'The previous edition was Cancelled and the family is back',
 };
 
+// `min` is how many leading columns a block keeps when it is folded from its
+// header (DataTable groups); the identity blocks keep two so a row still reads.
 const GROUPS = [
   { key: 'ev', label: 'Event' },
-  { key: 'ly', label: 'Previous edition' },
-  { key: 'lv', label: 'Live position' },
-  { key: 'pj', label: 'Projection' },
-  { key: 'bk', label: 'Bookings · by request date' },
-  { key: 'py', label: 'Payments · by payment date' },
-  { key: 'tk', label: 'Tickets · unmined' },
-  { key: 'pr', label: 'Proposals · by submission date' },
+  { key: 'ly', label: 'Previous edition', min: 2 },
+  { key: 'lv', label: 'Live position', min: 2 },
   { key: 'vd', label: 'Verdict' },
+  { key: 'pj', label: 'Projection' },
+  { key: 'bk', label: 'Bookings', hint: 'Live bookings by request date' },
+  { key: 'py', label: 'Payments', hint: 'Paid heads by payment date' },
+  { key: 'sp', label: 'Speakers', hint: 'Booking codes naming Speaker or SPP' },
+  { key: 'sx', label: 'SpEx', hint: 'Sponsor companies, paid and pending, counted once each' },
+  { key: 'sxp', label: 'SpEx paid', hint: 'Sponsor companies with a paid seat' },
+  { key: 'sxq', label: 'SpEx pending', hint: 'Sponsor companies with a pending seat' },
+  { key: 'tk', label: 'Tickets', hint: 'Unmined tickets, on the nearest upcoming edition of the family' },
+  { key: 'pr', label: 'Proposals', hint: 'Paper submissions by submission date' },
   { key: 'meta', label: 'Details' },
 ];
+// The SpEx blocks: one column per sponsorship tier the booking code names, in
+// three states. Keys match the server's spex_<state>_<tier> fields.
+const SPEX_TIERS = [['total', 'Total'], ['ptn', 'PTN'], ['plt', 'PLT'], ['gld', 'GLD'], ['slv', 'SLV'], ['table', 'Speaker table'], ['upgraded', 'Upgraded']];
+const SPEX_STATES = [['sx', 'all'], ['sxp', 'paid'], ['sxq', 'pending']];
 
 const dim = () => <span className="dim">—</span>;
 const zero = () => <span className="dim">0</span>;
 const num = (v) => (v ? <b className="pm-n">{nf(v)}</b> : zero());
+const tone = (c) => (v) => (v ? <b style={{ color: `var(${c})` }}>{nf(v)}</b> : zero());
+const dateCell = (v) => (v ? dateRange(v) : dim());
+const href = (w) => (/^https?:\/\//i.test(w) ? w : `https://${w}`);
 
 /** '13-14 Sep, 2027' from a start and end ISO date; the plain dates are calendar
  *  days, so they are read as written rather than shifted through a timezone. */
@@ -86,6 +101,14 @@ const tipFor = (r) => [
   r.event_code !== r.base_code ? r.event_code : null, r.name,
   ...Object.entries(r.owners || {}).map(([k, v]) => `${k}: ${v}`),
 ].filter(Boolean).join('\n');
+
+/** The market research owner's initials, first and last name: the senior, the
+ *  junior when there is no senior, the first of the team's leads when blank. */
+const mrInitials = (r) => {
+  const o = r.owners || {};
+  const w = (o['MR senior'] || o['MR junior'] || '').split(',')[0].trim().split(/\s+/).filter(Boolean);
+  return w.length ? (w[0][0] + (w.length > 1 ? w[w.length - 1][0] : '')).toUpperCase() : '';
+};
 
 /** Days to go, banded: a week out is red, a month amber, a quarter blue.
  *  A completed edition's row is sepia throughout and recolours this cell too. */
@@ -117,27 +140,33 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
   const cols = [
     {
       key: 'event_code', label: 'Event', group: 'ev', pin: true, w: 126,
-      cell: (v, r) => (
-        <span className="pm-ev" title={tipFor(r)}>
-          <span className="mono pm-code">{r.base_code || v}</span>
-          {r.year ? <span className="pm-yr">{r.year}</span> : null}
-        </span>
-      ),
+      cell: (v, r) => {
+        const tag = [mrInitials(r), r.year].filter(Boolean).join(' - ');
+        const code = r.base_code || v;
+        return (
+          <span className="pm-ev" title={tipFor(r)}>
+            {r.website
+              ? <a className="mono pm-code" href={href(r.website)} target="_blank" rel="noreferrer">{code}</a>
+              : <span className="mono pm-code">{code}</span>}
+            {tag ? <span className="pm-yr">{tag}</span> : null}
+          </span>
+        );
+      },
     },
     {
       key: 'start_date', label: 'Dates', type: 'date', group: 'ev', pin: true, w: 146,
       cell: (v, r) => dateRange(v, r.end_date),
     },
     {
-      key: 'location', label: 'Location', group: 'ev', pin: true, w: 118,
+      key: 'location', label: 'Location', group: 'ev', pin: true, w: 104,
       cell: (v) => (v ? <span className="pm-loc" title={v}>{v}</span> : dim()),
     },
     {
-      key: 'days_left', label: 'Countdown', group: 'ev', num: true, sum: false, pin: true, w: 92,
+      key: 'days_left', label: 'Countdown', group: 'ev', num: true, sum: false, pin: true, w: 84,
       cell: (v, r) => <Countdown days={v} label={r.countdown} />,
     },
     {
-      key: 'prev_status', label: 'Last edition', group: 'ly', cls: 'sec', pin: true, w: 112,
+      key: 'prev_status', label: 'Last edition', group: 'ly', cls: 'sec', pin: true, w: 100,
       opts: () => Object.keys(PREV_TONE),
       cell: (v, r) => (
         <span className={'bg bg-' + (PREV_TONE[v] || 'neutral')}
@@ -147,7 +176,7 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
       ),
     },
     {
-      key: 'live_prev_year', label: 'Live then', group: 'ly', num: true, pin: true, w: 90,
+      key: 'live_prev_year', label: 'Live then', group: 'ly', num: true, pin: true, w: 76,
       cell: (v, r) => (v == null ? dim() : (
         <span title="Live count the previous edition had with this many days to go">
           {nf(v)}
@@ -157,70 +186,83 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
         </span>
       )),
     },
-    { key: 'live_count', label: 'Live', group: 'lv', num: true, cls: 'sec', pin: true, w: 70, cell: num },
-    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, pin: true, w: 70, cell: num },
+    { key: 'live_count', label: 'Bookings', group: 'lv', num: true, cls: 'sec', pin: true, w: 70, cell: num },
+    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, pin: true, w: 58, cell: num },
+    { key: 'pending', label: 'Pending', group: 'lv', num: true, pin: true, w: 66, cell: tone('--red-tx') },
+    { key: 'expected', label: 'Expected', group: 'lv', num: true, pin: true, w: 72, cell: tone('--amber-tx') },
+    { key: 'not_invoiced', label: 'Not invoiced', group: 'lv', num: true, pin: true, w: 74, cell: tone('--slate-tx') },
+    { key: 'free', label: 'Free', group: 'lv', num: true, pin: true, w: 56, cell: num },
+    { key: 'cancelled', label: 'Cancelled', group: 'lv', num: true, pin: true, w: 74, cell: tone('--red-tx') },
+    { key: 'group_pass', label: 'Group pass', group: 'lv', num: true, pin: true, w: 68, cell: num },
     {
-      key: 'pending', label: 'Pending', group: 'lv', num: true, pin: true, w: 80,
-      cell: (v) => (v ? <b style={{ color: 'var(--red-tx)' }}>{nf(v)}</b> : zero()),
-    },
-    {
-      key: 'expected', label: 'Expected', group: 'lv', num: true, pin: true, w: 84,
-      cell: (v) => (v ? <b style={{ color: 'var(--amber-tx)' }}>{nf(v)}</b> : zero()),
-    },
-    {
-      key: 'shortfall', label: `Short of ${benchmark}`, group: 'lv', num: true, pin: true, w: 92,
-      cell: (v) => (v ? <span className="tg bg-red">{nf(v)}</span> : <span className="tg bg-green">Met</span>),
+      key: 'verdict', label: 'Verdict', group: 'vd', cls: 'sec', w: 140,
+      opts: () => pmApi.VERDICT_NAMES,
+      // DataTable's own in-place editor: click opens the list, arrows navigate,
+      // and onEdit fires only when the value actually changed.
+      editOpts: pmApi.VERDICT_NAMES,
+      onEdit: onVerdict,
+      optionCell: (o) => <span className="pm-opt"><i className={pmApi.verdictClass(o)} />{o}</span>,
+      cell: (v) => <VerdictPill value={v} />,
     },
     // Projection: where today's figures land the edition. The 33% curve scales
     // the live count by the share of the six-month sales span elapsed; the two
-    // health readings do the same on the team's weekly curves (services.py).
+    // health readings do the same on the team's weekly curves (services.py), and
+    // the shortfall is read off the payments projection.
     {
-      key: 'proj', label: '33% curve', group: 'pj', num: true, cls: 'sec', w: 96,
+      key: 'proj', label: '33% curve', group: 'pj', num: true, cls: 'sec', w: 70,
       cell: (v) => (v == null
         ? pending('Sales open six months before the event')
         : <b className="pm-n" title="Live count over the share of the sales curve elapsed: 33% at three months in, 66% at five, 100% on the day">{nf(v)}</b>),
     },
     {
-      key: 'att_proj', label: 'Health · attendees', group: 'pj', num: true, w: 150,
+      key: 'att_proj', label: 'Health · attendees', group: 'pj', num: true, w: 84,
       cell: (v) => <Health value={v} bands={ATT_BANDS}
         hint="Live count over the attendance the weekly curve expects banked by now; green from 65, amber from 40" />,
     },
     {
-      key: 'paid_proj', label: 'Health · payments', group: 'pj', num: true, w: 150,
+      key: 'paid_proj', label: 'Health · payments', group: 'pj', num: true, w: 84,
       cell: (v) => <Health value={v} bands={[PAY_FLOOR, benchmark]}
         hint={`Paid heads over the share the weekly curve expects banked by now; green from ${benchmark}, amber from ${PAY_FLOOR}`} />,
     },
+    {
+      key: 'shortfall', label: `Short of ${benchmark}`, group: 'pj', num: true, w: 72,
+      cell: (v) => (v == null ? dim() : v ? <span className="tg bg-red">{nf(v)}</span> : <span className="tg bg-green">Met</span>),
+    },
   ];
   WINDOWS.forEach(([k, label], i) => cols.push({
-    key: 'bk_' + k, label, group: 'bk', num: true, w: 72, cls: i === 0 ? 'sec' : '', cell: num,
+    key: 'bk_' + k, label, group: 'bk', num: true, w: 60, cls: i === 0 ? 'sec' : '', cell: num,
   }));
+  cols.push({ key: 'bk_last', label: 'Last booking', type: 'date', group: 'bk', w: 92, cell: dateCell });
   WINDOWS.forEach(([k, label], i) => cols.push({
-    key: 'pay_' + k, label, group: 'py', num: true, w: 72, cls: i === 0 ? 'sec' : '', cell: num,
+    key: 'pay_' + k, label, group: 'py', num: true, w: 60, cls: i === 0 ? 'sec' : '', cell: num,
   }));
+  cols.push({ key: 'pay_last', label: 'Last payment', type: 'date', group: 'py', w: 92, cell: dateCell });
+  // Speakers and sponsors are read off the booking code (services.py); a company
+  // counts once per SpEx column however many seats it holds.
+  cols.push(
+    { key: 'sp_first', label: 'Agenda live', type: 'date', group: 'sp', cls: 'sec', w: 92, cell: dateCell },
+    { key: 'sp_total', label: 'Speakers', group: 'sp', num: true, w: 66, cell: num },
+    { key: 'sp_booked', label: 'Booked', group: 'sp', num: true, w: 60, cell: num },
+    { key: 'sp_paid', label: 'Paid', group: 'sp', num: true, w: 56, cell: num },
+    { key: 'sp_free', label: 'Free', group: 'sp', num: true, w: 56, cell: num },
+  );
+  SPEX_STATES.forEach(([group, state]) => SPEX_TIERS.forEach(([k, label], i) => cols.push({
+    key: `spex_${state}_${k}`, label, group, num: true, w: 62, cls: i === 0 ? 'sec' : '', cell: num,
+  })));
   // Tickets are a family's pile, shown once on its nearest upcoming edition; the
   // other editions of the family read a dash rather than a misleading zero.
   const tk = (v, r) => (r.tk_here ? num(v) : dim());
   cols.push(
-    { key: 'tk_unmined', label: 'Unmined', group: 'tk', num: true, cls: 'sec', w: 80, cell: tk },
-    { key: 'tk_data', label: 'Est. data', group: 'tk', num: true, w: 84, cell: tk },
+    { key: 'tk_unmined', label: 'Unmined', group: 'tk', num: true, cls: 'sec', w: 70, cell: tk },
+    { key: 'tk_data', label: 'Est. data', group: 'tk', num: true, w: 72, cell: tk },
   );
   ticketTypes.forEach((t) => cols.push({
-    key: 'tk_t_' + (t.key || 'none'), label: t.label, group: 'tk', num: true, w: 66, cell: tk,
+    key: 'tk_t_' + (t.key || 'none'), label: t.label, group: 'tk', num: true, w: 60, cell: tk,
   }));
-  cols.push({ key: 'pr_total', label: 'Total', group: 'pr', num: true, cls: 'sec', w: 72, cell: num });
+  cols.push({ key: 'pr_total', label: 'Total', group: 'pr', num: true, cls: 'sec', w: 60, cell: num });
   WINDOWS.forEach(([k, label]) => cols.push({
-    key: 'pr_' + k, label, group: 'pr', num: true, w: 72, cell: num,
+    key: 'pr_' + k, label, group: 'pr', num: true, w: 60, cell: num,
   }));
-  cols.push({
-    key: 'verdict', label: 'Verdict', group: 'vd', cls: 'sec', w: 150,
-    opts: () => pmApi.VERDICT_NAMES,
-    // DataTable's own in-place editor: click opens the list, arrows navigate,
-    // and onEdit fires only when the value actually changed.
-    editOpts: pmApi.VERDICT_NAMES,
-    onEdit: onVerdict,
-    optionCell: (o) => <span className="pm-opt"><i className={pmApi.verdictClass(o)} />{o}</span>,
-    cell: (v) => <VerdictPill value={v} />,
-  });
   cols.push({ key: 'name', label: 'Event name', group: 'meta', cell: (v) => v || dim() });
   return cols;
 }

@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 # the column as mapped:
 #   total_amount, pre_tax_amount, tax_amount, add_ons_total_amount
 #                          money columns; the importer writes none of them
-#   source, form_name, form_url, packages, payment_due_date, parent_code
+#   source, form_name, form_url, packages, parent_code
 #                          website-intake provenance, set by the webhook path
 #   team_leader, updated_by, import_batch_id
 #                          system/audit fields

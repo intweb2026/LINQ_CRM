@@ -21,8 +21,7 @@ from book_event.models import BookEvent
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 DATE_FIELDS = {
-    "event_date", "invoice_date", "payment_date",
-    "payment_due_date", "request_date",
+    "event_date", "invoice_date", "payment_date", "request_date",
 }
 NULLABLE_DECIMAL_FIELDS = {
     "pre_tax_amount", "tax_amount", "total_amount", "add_ons_total_amount",
@@ -59,7 +58,6 @@ COLUMN_MAP = {
     "form_url":               "form_url",
     "payment_status":         "payment_status",
     "payment_date":           "payment_date",
-    "payment_due_date":       "payment_due_date",
     "payment_type":           "payment_type",
     "paid_or_free":           "paid_or_free",
     "reference":              "reference",

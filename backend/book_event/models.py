@@ -129,7 +129,6 @@ class BookEvent(models.Model):
         default=PaymentStatus.PENDING, db_index=True,
     )
     payment_date     = models.DateField(null=True, blank=True)
-    payment_due_date = models.DateField(null=True, blank=True)
     payment_type = models.CharField(
         max_length=30, blank=True, default="",
         choices=PaymentType.choices,
@@ -218,7 +217,7 @@ class BookEvent(models.Model):
     # attname because that is what .values() returns and what the in-memory
     # attribute holds without a fetch.
     DELEGATE_EXPORT_FIELDS = (
-        "request_date", "invoice_date", "payment_due_date",
+        "request_date", "invoice_date",
         "event_name", "parent_code", "company_name", "accounts_contact_email",
         "sales_executive_id",
         "payment_status", "payment_type", "payment_date",

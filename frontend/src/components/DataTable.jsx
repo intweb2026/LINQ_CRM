@@ -305,13 +305,15 @@ export function readStored(tableId, sortVersion = 0) {
       sort: stale ? null : (p.sort || null),
       sortStale: stale,
       hidden: Array.isArray(p.hidden) ? p.hidden : null,
+      collapsed: Array.isArray(p.collapsed) ? p.collapsed : null,
+      frozenTo: typeof p.frozenTo === 'string' ? p.frozenTo : null,
     };
   } catch {
     return null;                       // private mode, quota, corrupt JSON
   }
 }
 
-export function writeStored(tableId, { conds, sort, hidden }, sortVersion = 0) {
+export function writeStored(tableId, { conds, sort, hidden, collapsed, frozenTo }, sortVersion = 0) {
   if (!tableId) return;
   try {
     window.localStorage.setItem(STORE_PREFIX + tableId, JSON.stringify({
@@ -320,6 +322,8 @@ export function writeStored(tableId, { conds, sort, hidden }, sortVersion = 0) {
       conds: (conds || []).map(({ _live, ...c }) => c),
       sort: sort || null,
       hidden: [...(hidden || [])],
+      collapsed: [...(collapsed || [])],
+      frozenTo: typeof frozenTo === 'string' ? frozenTo : null,
     }));
   } catch {
     /* storage unavailable — in-memory state still works */
@@ -709,6 +713,7 @@ function sortHint(col, dir) {
  */
 function groupRuns(activeCols, groups, pins) {
   const label = Object.fromEntries((groups || []).map((g) => [g.key, g.label]));
+  const hint = Object.fromEntries((groups || []).map((g) => [g.key, g.hint || '']));
   const runs = [];
   activeCols.forEach((c) => {
     const pin = pins.get(c.key) || null;
@@ -719,8 +724,9 @@ function groupRuns(activeCols, groups, pins) {
       return;
     }
     runs.push({
-      key: c.key, group: c.group, label: label[c.group] || '', span: 1,
+      key: c.key, group: c.group, label: label[c.group] || '', hint: hint[c.group] || '', span: 1,
       pin, pinLast: !!(pin && pin.last), sec: (c.cls || '').split(/\s+/).includes('sec'),
+      first: !runs.some((r) => r.group === c.group),    // the fold toggle sits on a group's first run only
     });
   });
   return runs;
@@ -1025,6 +1031,11 @@ export default function DataTable({
   const [selBusy, setSelBusy] = useState(false);
   const [selError, setSelError] = useState('');
   const [hidden, setHidden] = useState(() => new Set(stored && stored.hidden ? stored.hidden : hiddenDefault));
+  // Group keys folded to their leading columns from the group header; see activeCols.
+  const [collapsed, setCollapsed] = useState(() => new Set(stored && stored.collapsed ? stored.collapsed : []));
+  // The user's own freeze boundary: a group key freezes every column through that
+  // group, '' freezes nothing, null defers to the columns' own `pin` flags.
+  const [frozenTo, setFrozenTo] = useState(() => (stored && typeof stored.frozenTo === 'string' ? stored.frozenTo : null));
   const [view, setView] = useState('table');
   const [exporting, setExporting] = useState(false);
 
@@ -1032,13 +1043,52 @@ export default function DataTable({
   // write, so the retirement above happens once and the user's next choice —
   // including re-picking the column the default just replaced — sticks for good.
   useEffect(() => {
-    writeStored(storeId, { conds, sort, hidden }, defaultSortVersion);
-  }, [storeId, conds, sort, hidden, defaultSortVersion]);
+    writeStored(storeId, { conds, sort, hidden, collapsed, frozenTo }, defaultSortVersion);
+  }, [storeId, conds, sort, hidden, collapsed, frozenTo, defaultSortVersion]);
 
   // Memoised because it is a prop on every rendered row: a fresh array here would
   // give each row a changed prop on every render and defeat the memo on Row. This
   // only holds as far as the caller's `cols` is itself stable — see Row.
-  const activeCols = useMemo(() => cols.filter((c) => !hidden.has(c.key)), [cols, hidden]);
+  //
+  // FOLDED GROUPS. A group header carries a toggle when the group has more
+  // visible columns than `groups[].min` (default 1); folding keeps that many
+  // leading columns and drops the rest from activeCols, so pins, widths, sums
+  // and the header runs all follow without knowing about it. Hidden columns
+  // stay hidden either way, and the fold is stored beside them.
+  const groupMin = useCallback((g) => ((groups || []).find((x) => x.key === g) || {}).min || 1, [groups]);
+  const groupSize = useMemo(() => {
+    const n = {};
+    cols.forEach((c) => { if (!hidden.has(c.key)) n[c.group] = (n[c.group] || 0) + 1; });
+    return n;
+  }, [cols, hidden]);
+  const toggleGroup = useCallback((g) => setCollapsed((s) => {
+    const n = new Set(s);
+    if (n.has(g)) n.delete(g); else n.add(g);
+    return n;
+  }), []);
+  const activeCols = useMemo(() => {
+    const seen = {};
+    return cols.filter((c) => {
+      if (hidden.has(c.key)) return false;
+      if (!collapsed.has(c.group)) return true;
+      seen[c.group] = (seen[c.group] || 0) + 1;
+      return seen[c.group] <= groupMin(c.group);
+    });
+  }, [cols, hidden, collapsed, groupMin]);
+  // A folded block keeps one or two narrow columns and its name must still read
+  // above them, so the first kept column is widened by whatever the label needs
+  // beyond what the kept columns already have. 12.5px uppercase 700 with .05em
+  // tracking runs about 9.5px a glyph; the 76px is the count pill, the chevron,
+  // their gaps and the cell and button padding, measured in Chromium.
+  const widthOf = useCallback((c) => {
+    const w = colWidth(c);
+    if (!collapsed.has(c.group)) return w;
+    const kept = activeCols.filter((x) => x.group === c.group);
+    if (kept[0] !== c) return w;
+    const label = ((groups || []).find((g) => g.key === c.group) || {}).label || '';
+    const have = kept.reduce((a, x) => a + colWidth(x), 0);
+    return Math.max(w, w + label.length * 9.5 + 76 - have);
+  }, [collapsed, activeCols, groups]);
 
   /**
    * FROZEN COLUMNS — left offsets for the LEADING RUN of columns declaring `pin`.
@@ -1066,21 +1116,32 @@ export default function DataTable({
    * Map here would change that prop on every render and defeat the memo across
    * the whole table.
    */
+  // The user can move the boundary from a group header (the pin): `frozenTo`
+  // names the last frozen group, '' means none, null keeps the columns' `pin`.
+  const groupIndex = useCallback((g) => (groups || []).findIndex((x) => x.key === g), [groups]);
+  const isPinned = useCallback((c) => (frozenTo == null ? !!c.pin : frozenTo !== '' && groupIndex(c.group) <= groupIndex(frozenTo)),
+    [frozenTo, groupIndex]);
   const pins = useMemo(() => {
     const out = new Map();
     let left = select ? 40 : 0;
     let lastKey = null;
     for (const c of activeCols) {
-      if (!c.pin) break;
+      if (!isPinned(c)) break;
       out.set(c.key, { left, last: false });
       lastKey = c.key;
-      left += colWidth(c);
+      left += widthOf(c);
     }
     // The last one carries the edge shadow that separates the frozen block from
     // the scrolling remainder — the only cue that the table has more to the right.
     if (lastKey) out.set(lastKey, { left: out.get(lastKey).left, last: true });
     return out;
-  }, [activeCols, select]);
+  }, [activeCols, select, isPinned, widthOf]);
+  // The group the frozen block ends in, for the pin that reads "frozen up to here".
+  const frozenGroup = useMemo(() => {
+    let g = '';
+    activeCols.forEach((c) => { if (pins.has(c.key)) g = c.group; });
+    return g;
+  }, [activeCols, pins]);
 
   const serverMode = !!(server && server.resource);
 
@@ -1480,10 +1541,15 @@ export default function DataTable({
     });
     return out;
   }, [sumRow, activeCols, data]);
-  const sumRef = useRef(null);
-  useEffect(() => {
-    const tr = sumRef.current;
-    if (!tr) return undefined;
+  // A callback ref rather than an effect on the prop: the table, and this row
+  // with it, mounts only once rows exist, after the loading and empty states. An
+  // effect keyed on `sumRow` ran once against a row that was not there yet and
+  // never again, which left --sum-top unset, the row stuck at 0 and painted over
+  // the two header rows. The ref fires on every mount and unmount of the row.
+  const sumRO = useRef(null);
+  const sumRef = useCallback((tr) => {
+    if (sumRO.current) { sumRO.current.disconnect(); sumRO.current = null; }
+    if (!tr) return;
     const fit = () => {
       const th = tr.previousElementSibling && tr.previousElementSibling.firstElementChild;
       if (!th) return;
@@ -1491,11 +1557,11 @@ export default function DataTable({
       tr.style.setProperty('--sum-top', `${Math.floor(top)}px`);
     };
     fit();
-    if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(fit);
-    ro.observe(tr.parentElement);
-    return () => ro.disconnect();
-  }, [sumRow]);
+    if (typeof ResizeObserver !== 'undefined') {
+      sumRO.current = new ResizeObserver(fit);
+      sumRO.current.observe(tr.parentElement);
+    }
+  }, []);
 
   // Total the footer reports. In server mode that is the server's `count` —
   // except when a client-only condition is also narrowing the page, where the
@@ -1931,7 +1997,7 @@ export default function DataTable({
             <table className="dt dt-grid">
               <colgroup>
                 {select ? <col style={{ width: 40 }} /> : null}
-                {activeCols.map((c) => <col key={c.key} style={{ width: colWidth(c) }} />)}
+                {activeCols.map((c) => <col key={c.key} style={{ width: widthOf(c) }} />)}
               </colgroup>
               <thead>
                 {groupHeader && groups ? (
@@ -1942,8 +2008,30 @@ export default function DataTable({
                     {groupRuns(activeCols, groups, pins).map((run) => (
                       <th key={run.key} colSpan={run.span}
                         className={(run.pin ? 'pin-col ' : '') + (run.pinLast ? 'pin-last ' : '') + (run.sec ? 'sec' : '')}
-                        style={run.pin ? { left: run.pin.left } : undefined}>
-                        {run.label}
+                        style={run.pin ? { left: run.pin.left } : undefined}
+                        title={run.hint || undefined}>
+                        {run.first && (groupSize[run.group] || 0) > groupMin(run.group) ? (
+                          <button type="button" className={'grp-fold' + (collapsed.has(run.group) ? ' on' : '')}
+                            aria-expanded={!collapsed.has(run.group)}
+                            title={collapsed.has(run.group) ? `Expand ${run.label}` : `Fold ${run.label} to its first columns`}
+                            onClick={() => toggleGroup(run.group)}>
+                            <span className="grp-l">{run.label}</span>
+                            {collapsed.has(run.group) ? <em className="grp-more">+{groupSize[run.group] - groupMin(run.group)}</em> : null}
+                            <svg viewBox="0 0 10 10" aria-hidden="true">
+                              <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                        ) : <span className="grp-l">{run.label}</span>}
+                        {run.first && (!collapsed.has(run.group) || frozenGroup === run.group) ? (
+                          <button type="button" className={'grp-pin' + (frozenGroup === run.group ? ' on' : '')}
+                            aria-pressed={frozenGroup === run.group}
+                            title={frozenGroup === run.group ? 'Frozen up to here. Click to unfreeze the table' : `Freeze the table up to ${run.label}`}
+                            onClick={() => setFrozenTo(frozenGroup === run.group ? '' : run.group)}>
+                            <svg viewBox="0 0 10 10" aria-hidden="true">
+                              <path d="M3.5 1h3M4 1v2.5L2.5 6h5L6 3.5V1M5 6v3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
+                        ) : null}
                       </th>
                     ))}
                   </tr>

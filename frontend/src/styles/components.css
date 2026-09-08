@@ -579,8 +579,27 @@ table.dt thead th:hover .th-flt-btn,.th-flt-btn.on,.th-flt-btn:focus-visible{opa
    fetched page. Visually distinct so it cannot be read as a server-side filter. */
 .fc-local{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-tx)}
 .fc-local .k{opacity:.85}
-table.dt thead tr.grp th{background:var(--n-50);font-size:9px;letter-spacing:.09em;padding:6px 12px;border-bottom:1px solid var(--border);color:var(--text-3);text-align:center;top:0}
+table.dt thead tr.grp th{background:var(--n-50);font-size:9px;letter-spacing:.09em;padding:6px 12px;border-bottom:1px solid var(--border);color:var(--text-3);text-align:center;top:0;overflow:hidden}
 table.dt thead tr.grp+tr th{top:26px}
+/* Block header controls (DataTable groups). The LABEL is the fold button, a
+   full-size target; a folded block turns teal, turns its chevron and shows how
+   many columns it holds back, so undoing it is one click on the same label. A
+   folded block is one narrow column, so its label drops to the part before the
+   dot and clips with an ellipsis rather than running into the next header. The
+   pin beside it freezes the table through that block; it is always shown on an
+   open block, teal where the frozen columns end, and hidden on a folded one
+   unless that is the boundary. */
+.grp-fold{all:unset;display:inline-flex;align-items:center;gap:5px;max-width:100%;height:18px;padding:0 5px;border-radius:var(--r-sm);cursor:pointer;font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;box-sizing:border-box}
+.grp-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.grp-fold:hover{background:var(--n-100);color:var(--text-2)}
+.grp-fold svg{width:10px;height:10px;flex-shrink:0;color:var(--text-4);transition:transform .12s}
+.grp-fold.on{color:var(--t-600)}
+.grp-fold.on svg{transform:rotate(-90deg);color:var(--t-600)}
+.grp-more{flex-shrink:0;font-style:normal;font-size:9px;font-weight:700;line-height:1;padding:2px 5px;border-radius:var(--r-full);background:var(--t-50);color:var(--t-700);letter-spacing:0}
+.grp-pin{all:unset;display:inline-grid;place-items:center;width:18px;height:18px;margin-left:4px;border-radius:var(--r-sm);cursor:pointer;color:var(--text-4);vertical-align:-4px}
+.grp-pin svg{width:10px;height:10px}
+.grp-pin:hover{background:var(--n-100);color:var(--text-2)}
+.grp-pin.on{color:var(--t-600);background:var(--t-50)}
 /* The sum row (DataTable `sumRow`): body-cell type on the header surface, stuck
    where the header row ends; --sum-top is measured by DataTable, not guessed. */
 table.dt thead tr.sum th{top:var(--sum-top,0px);color:var(--text);font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums;text-transform:none;letter-spacing:0;padding:7px 12px;border-top:1px solid var(--border);border-bottom:2px solid var(--border-s)}
@@ -896,9 +915,10 @@ html[data-theme=dark] .vd-cancelled{--vd-bg:rgba(227,231,236,.12);--vd-fill:rgba
 table.dt tbody tr.vd td,table.dt tbody tr.vd td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--surface)}
 table.dt tbody tr.vd:hover td,table.dt tbody tr.vd:hover td.pin-col,table.dt tbody tr.vd.sel td{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--t-50)}
 table.dt tbody tr.vd td:first-child{box-shadow:inset 3px 0 0 var(--vd)}
-/* Postponed and Cancelled editions are struck out, text only: the pills keep
-   naming the verdict, the countdown and the year legibly. */
-table.dt tbody tr.vd-postponed td,table.dt tbody tr.vd-cancelled td{font-style:italic;text-decoration:line-through;text-decoration-color:var(--text-4)}
+/* Postponed and Cancelled editions are struck out, the whole row. A decoration
+   set on the cell does not reach flex, grid or inline-block content (the pills,
+   the health dot pair, the event cell), so every descendant strikes its own text. */
+table.dt tbody tr.vd-postponed td,table.dt tbody tr.vd-cancelled td,table.dt tbody tr.vd-postponed td *,table.dt tbody tr.vd-cancelled td *{font-style:italic;text-decoration:line-through}
 /* The verdict cell. A stronger cut of the row's own wash, so the cell that SETS
    the colour reads as its source; --vd-fill sits beside --vd-bg on each class. */
 .pm-vd{display:flex;align-items:center;justify-content:center;height:var(--row-h);margin:0 calc(-1 * var(--cell-px));font-size:11px;font-weight:650;color:var(--vd,var(--text-3));background:var(--vd-fill,var(--n-75));white-space:nowrap}
@@ -923,10 +943,11 @@ table.dt tbody tr.pm-done .pm-n,table.dt tbody tr.pm-done .pm-code,table.dt tbod
 /* The code is the row's only identity, so it carries the hover: the dotted rule
    is the one cue that there is more underneath it. */
 .pm-code{cursor:help;color:var(--t-600);text-decoration:underline dotted var(--n-300);text-underline-offset:3px}
-/* The edition year rides after the base code as a whisper: small, italic, the
-   quietest text tone. It identifies the row without competing with the code. */
+a.pm-code{cursor:pointer}a.pm-code:hover{text-decoration-style:solid}
+/* The Event cell: the base code, then a whisper after it, small, italic, the
+   quietest tone: the market research owner's initials and the edition year. */
 .pm-ev{display:inline-flex;align-items:baseline;gap:4px;max-width:100%}
-.pm-yr{font-size:9.5px;font-style:italic;font-weight:450;color:var(--text-4);font-variant-numeric:tabular-nums}
+.pm-yr{font-size:9.5px;font-style:italic;font-weight:450;color:var(--text-4);font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Health: a status dot beside a plain number, no fill. Dark red below the
    floor; a completed row washes the dot sepia like everything else on it. */
 .pm-hl{display:inline-flex;align-items:center;gap:6px}
@@ -957,10 +978,13 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    column header 12px, data 11px. The header rows are as short as their type
    allows, height set explicitly so the second sticky row's offset is exact. */
 .pm-dense table.dt thead tr.grp th{height:22px;padding:0 8px;line-height:1;font-size:12.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
-.pm-dense table.dt thead tr.grp+tr th{top:22px}
+.pm-dense table.dt thead tr.grp+tr th{top:22px;height:40px}
 .pm-dense table.dt thead th{font-size:12px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--text-3)}
 .pm-dense table.dt thead tr.sum th{font-size:11px;font-weight:600;padding:0 8px;height:30px}
-.pm-dense .th-sort{padding:5px 3px}
+.pm-dense .th-sort{padding:3px 3px}
+/* Two-line column headers, so a column is as narrow as its numbers and the
+   label wraps above them instead of dictating the width. */
+.pm-dense .th-sort>span,.pm-dense .th-nosort{white-space:normal;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .pm-dense .th-nosort{padding:5px 3px}
 .pm-dense table.dt tbody td{--cell-px:8px;--row-h:30px;font-size:11px;font-weight:450}
 .pm-dense table.dt tbody td>.bg,.pm-dense table.dt tbody td>.tg,.pm-dense table.dt tbody td .ec .bg,.pm-dense table.dt tbody td .ec .tg{font-size:11px;font-weight:600}

@@ -196,7 +196,6 @@ class InvoiceLevelEditStampsWatermarkTests(DelegateWatermarkTestCase):
         new_values = {
             "request_date": datetime.date(2026, 4, 1),
             "invoice_date": datetime.date(2026, 4, 2),
-            "payment_due_date": datetime.date(2026, 4, 3),
             "event_name": "Renamed Delta Event",
             "parent_code": "PARENT-X",
             "company_name": "Globex",
@@ -236,7 +235,6 @@ class InvoiceLevelEditStampsWatermarkTests(DelegateWatermarkTestCase):
                     ticket_tier="Standard",
                     request_date=datetime.date(2026, 3, 4),
                     invoice_date=datetime.date(2026, 3, 9),
-                    payment_due_date=datetime.date(2026, 3, 20),
                     parent_code="PARENT-A",
                     accounts_contact_email="ap@acme.example.com",
                 )

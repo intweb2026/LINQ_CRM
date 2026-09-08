@@ -160,7 +160,7 @@ class BookingImportSchemaTests(TestCase):
         """
         offered = {key for key, _, _ in BOOKING_IMPORT_FIELDS}
         for field in ("total_amount", "pre_tax_amount", "tax_amount",
-                      "add_ons_total_amount", "payment_due_date", "parent_code"):
+                      "add_ons_total_amount", "parent_code"):
             self.assertNotIn(field, offered)
 
     def test_no_duplicate_keys_and_every_field_has_a_label(self):

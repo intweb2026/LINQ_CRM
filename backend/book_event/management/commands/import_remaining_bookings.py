@@ -9,10 +9,9 @@ already stored and writes only the columns that actually differ.
 WHY A SECOND IMPORTER EXISTS
 `remaining data.xlsx` is the same dataset that is already in the database — 6112
 of its 6113 invoices and 8110 of its 8111 delegates match a stored row — but it
-carries four columns the earlier import never mapped, so those columns are empty
-for every historical row:
+carries three columns the earlier import never mapped, so those columns are
+empty for every historical row:
 
-    Payment Due  -> BookEvent.payment_due_date   (8004 rows blank in the DB)
     Parent Code  -> BookEvent.parent_code        (6446 rows blank)
     Job Title    -> BookDelegate.position        (6033 rows blank)
     Discount     -> BookEvent/BookDelegate.discount  (629 rows still 0.00)
@@ -37,7 +36,6 @@ COLUMN -> FIELD MAP
     Booking Code      -> booking_code        (canonicalised by save())
     Request Date      -> request_date
     Invoice Date      -> invoice_date
-    Payment Due       -> payment_due_date
     Date Paid         -> payment_date
     Payment Type      -> payment_type
     Paid/Free         -> paid_or_free
@@ -111,12 +109,13 @@ from events.codes import (
 
 User = get_user_model()
 
-# The 26 headers this workbook carries. A missing one is an error rather than a
+# The 25 headers this workbook carries that the import reads; its Payment Due
+# column is ignored, the field is gone. A missing one is an error rather than a
 # silently skipped column, which is how the four unmapped columns went unnoticed
 # through the first import.
 REQUIRED_HEADERS = (
     "Payment Status", "Event Code", "Booking Code", "Request Date",
-    "Invoice Date", "Payment Due", "Invoice Number", "Name", "Job Title",
+    "Invoice Date", "Invoice Number", "Name", "Job Title",
     "Delegate Company", "Delegate Email", "Direct Line", "Account Company",
     "Accounts Contact", "Delegate Number", "Paid/Free", "Parent Code",
     "Date Paid", "Payment Type", "Ticket Tier", "Discount", "Add-Ons", "Ref",
@@ -490,8 +489,6 @@ class Command(BaseCommand):
                   "invoice.request_date", pending)
             apply(be, "invoice_date", _date(first.get("Invoice Date")),
                   "invoice.invoice_date", pending)
-            apply(be, "payment_due_date", _date(first.get("Payment Due")),
-                  "invoice.payment_due_date", pending)
             apply(be, "payment_date", _date(first.get("Date Paid")),
                   "invoice.payment_date", pending)
             apply(be, "payment_type", _s(first.get("Payment Type")),

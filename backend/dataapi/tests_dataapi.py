@@ -133,7 +133,7 @@ class DataApiEndpointTests(TestCase):
     # the consumer writes this response straight into sheet columns.
     REPORT_COLUMNS = [
         "effective_payment_status", "event_code", "booking_code",
-        "request_date", "invoice_date", "payment_due_date", "invoice_number",
+        "request_date", "invoice_date", "invoice_number",
         "full_name", "position", "company_display", "email", "phone_number",
         "account_company", "accounts_contact_email", "delegate_number",
         "effective_paid_or_free", "parent_code", "effective_payment_date",
@@ -165,7 +165,7 @@ class DataApiEndpointTests(TestCase):
     def test_delegate_row_carries_the_invoice_side_report_columns(self):
         """
         The booking report is one row per delegate, and half of its columns are
-        the invoice's. Payment Due, Parent Code, Account Company, Event Name and
+        the invoice's. Parent Code, Account Company, Event Name and
         Sales Executive are not on book_delegates at all, so a consumer that had
         to find them would be joining two endpoints inside a spreadsheet.
         """
@@ -176,7 +176,6 @@ class DataApiEndpointTests(TestCase):
             invoice_number="INV-FULL", event_code="TESTEV-26",
             company_name="Acme Holdings", payment_status="Paid",
             parent_code="PARENT-1",
-            payment_due_date=datetime.date(2026, 4, 1),
             accounts_contact_email="accounts@acme.test",
             sales_executive=user,
         )
@@ -192,7 +191,6 @@ class DataApiEndpointTests(TestCase):
         self.assertEqual(row["id"], BookDelegate.objects.get(email="alan@example.com").pk)
         self.assertEqual(row["full_name"], "Alan Turing")
         self.assertEqual(row["position"], "CTO")
-        self.assertEqual(row["payment_due_date"], "2026-04-01")
         self.assertEqual(row["parent_code"], "PARENT-1")
         self.assertEqual(row["account_company"], "Acme Holdings")
         self.assertEqual(row["event_name"], invoice.event_name)

@@ -27,10 +27,11 @@ from .services import (
 TODAY = date(2026, 1, 12)
 
 
-def book(n, code, request_date, status="Paid", pof="Paid", paid=None, invoiced=None):
+def book(n, code, request_date, status="Paid", pof="Paid", paid=None, invoiced=None, bc="", company=""):
     inv = BookEvent.objects.create(
         invoice_number=f"INV-{n}", event_code=code, request_date=request_date,
         invoice_date=invoiced, payment_date=paid, payment_status=status, paid_or_free=pof,
+        booking_code=bc, company_name=company,
     )
     BookDelegate.objects.create(invoice=inv, first_name=f"D{n}", email=f"d{n}@x.com")
     return inv
@@ -59,6 +60,20 @@ class MatrixTests(TestCase):
         book("C5", "AFS", TODAY - timedelta(days=2), status="Cancelled", paid=TODAY)  # dead
         book("C6", "AFS", TODAY - timedelta(days=2), status="Paid", pof="Free")       # free seat
         book("C7", "ZZZ", TODAY)                                                      # no such family
+        book("C8", "AFS", TODAY - timedelta(days=1), status="Pending")                # pending, never invoiced
+        # A third family, SPK 2026, carries the booking-code driven cases, speakers,
+        # sponsors, group passes, a free seat and a paid-then-cancelled seat, so the
+        # AFS arithmetic above stays exactly as it is.
+        Event.objects.create(event_code="SPK", event_date=date(2026, 3, 15), website="spk.example.com")
+        book("S1", "SPK", TODAY - timedelta(days=40), bc="Speaker", paid=TODAY - timedelta(days=30))
+        book("S2", "SPK", TODAY - timedelta(days=9), bc="SPP", status="Pending")
+        book("S3", "SPK", TODAY - timedelta(days=8), bc="Speaker / Group Pass", pof="Free", company="Globex")
+        book("X1", "SPK", TODAY - timedelta(days=12), bc="SLV SpEx", company="Acme", paid=TODAY - timedelta(days=12))
+        book("X2", "SPK", TODAY - timedelta(days=6), bc="Upgraded to GLD SpEx", company="Acme", status="Pending",
+             invoiced=TODAY - timedelta(days=6))
+        book("X3", "SPK", TODAY - timedelta(days=5), bc="Speaker Table", company="Initech", paid=TODAY - timedelta(days=5))
+        book("G1", "SPK", TODAY - timedelta(days=3), bc="Group Pass", company="Umbrella", status="Pending")
+        book("K1", "SPK", TODAY - timedelta(days=2), status="Cancelled", paid=TODAY - timedelta(days=2))
         # Research pipeline: two unmined tickets and one mined, one paper this week.
         Ticket.objects.create(purpose="AFS", type_of_ticket="Blue - BX", estimate=120)
         Ticket.objects.create(purpose="AFS", type_of_ticket="Blue - BX", estimate=80)
@@ -69,7 +84,7 @@ class MatrixTests(TestCase):
     def test_matrix(self):
         p = build_payload("all", today=TODAY, user=self.admin)
         rows = {r["event_code"]: r for r in p["rows"]}
-        self.assertEqual(set(rows), {"AFS", "AFS - JS"})
+        self.assertEqual(set(rows), {"AFS", "AFS - JS", "SPK"})
         cur, prev = rows["AFS - JS"], rows["AFS"]
 
         self.assertEqual(cur["base_code"], "AFS")          # derived by save()
@@ -84,32 +99,37 @@ class MatrixTests(TestCase):
         self.assertFalse(cur["done"])
         self.assertEqual(cur["verdict"], "Needs a push")
 
-        # C1, C2 paid + C3, C4 pending + C6 paid-free = live. C5 cancelled is out.
-        self.assertEqual(cur["live_count"], 5)
+        # C1, C2 paid + C3, C4, C8 pending + C6 paid-free = live. C5 cancelled is out.
+        self.assertEqual(cur["live_count"], 6)
         # Payment date AND payable AND not dead: C1, C2. C5 is cancelled, C6 is free.
         self.assertEqual(cur["paid_heads"], 2)
+        # Pending payable, split on the invoice date: C3 invoiced 20 days ago, C4
+        # three days ago, C8 never.
         self.assertEqual(cur["pending"], 1)
         self.assertEqual(cur["expected"], 1)
-        self.assertEqual(cur["shortfall"], BENCHMARK - 2)
+        self.assertEqual(cur["not_invoiced"], 1)
+        self.assertEqual(cur["shortfall"], BENCHMARK - 2)   # off the payments projection, 2 / 0.9 rounds to 2
+        self.assertEqual((cur["bk_last"], cur["pay_last"]), (TODAY.isoformat(), TODAY.isoformat()))
+        self.assertEqual((cur["free"], cur["cancelled"], cur["group_pass"], cur["website"]), (1, 1, 0, ""))
         self.assertEqual(cur["bk_today"], 1)
-        self.assertEqual(cur["bk_d7"], 3)     # C1, C2, C6
+        self.assertEqual(cur["bk_d7"], 4)     # C1, C2, C6, C8
         self.assertEqual(cur["bk_d14"], 1)    # C3
         self.assertEqual(cur["bk_d21"], 1)    # C4
-        self.assertEqual(cur["bk_d30"], 5)
+        self.assertEqual(cur["bk_d30"], 6)
         self.assertEqual(cur["pay_today"], 1)
         self.assertEqual(cur["pay_d7"], 2)
         # 30 days before the 2025 edition, two of its three heads were booked.
         self.assertEqual(cur["live_prev_year"], 2)
-        self.assertEqual(cur["live_delta"], 3)
+        self.assertEqual(cur["live_delta"], 4)
         self.assertEqual(prev["live_count"], 3)
         self.assertIsNone(prev["live_prev_year"])
 
-        # 30 days out is 4 whole weeks: five live heads against the 85.5% the
-        # attendance curve expects by then project to 6, two paid against 90% to
+        # 30 days out is 4 whole weeks: six live heads against the 85.5% the
+        # attendance curve expects by then project to 7, two paid against 90% to
         # 2. The 33% curve opened sales on 11 Aug 2025 and is one day into its
-        # last month: 5 / (0.66 + 0.34 / 31) rounds to 7.
-        self.assertEqual(cur["proj"], 7)
-        self.assertEqual(cur["att_proj"], 6)
+        # last month: 6 / (0.66 + 0.34 / 31) rounds to 9.
+        self.assertEqual(cur["proj"], 9)
+        self.assertEqual(cur["att_proj"], 7)
         self.assertEqual(cur["paid_proj"], 2)
         # A finished edition's projection is its count.
         self.assertEqual((prev["proj"], prev["att_proj"], prev["paid_proj"]), (3, 3, 3))
@@ -127,10 +147,31 @@ class MatrixTests(TestCase):
         self.assertEqual(cur["pr_today"], 0)
         self.assertEqual(p["years"], [2025, 2026])
 
+        # SPK: codes are read as substrings, so "Speaker / Group Pass" is a speaker
+        # AND a group pass, "Speaker Table" a sponsor and not a speaker, and a
+        # company is counted once per SpEx column however many seats it holds.
+        spk = rows["SPK"]
+        self.assertEqual(spk["website"], "spk.example.com")
+        self.assertEqual((spk["live_count"], spk["paid_heads"]), (7, 3))
+        self.assertEqual((spk["pending"], spk["expected"], spk["not_invoiced"]), (0, 1, 2))
+        self.assertEqual((spk["free"], spk["cancelled"], spk["group_pass"]), (1, 1, 2))
+        self.assertEqual(spk["bk_last"], (TODAY - timedelta(days=2)).isoformat())    # K1: cancelled, still a booking
+        self.assertEqual(spk["pay_last"], (TODAY - timedelta(days=5)).isoformat())   # X3; K1 is Cancelled, its date is out
+        self.assertEqual(spk["sp_first"], (TODAY - timedelta(days=40)).isoformat())
+        self.assertEqual((spk["sp_total"], spk["sp_booked"], spk["sp_paid"], spk["sp_free"]), (3, 1, 1, 1))
+        self.assertEqual((spk["spex_all_total"], spk["spex_all_slv"], spk["spex_all_gld"], spk["spex_all_table"],
+                          spk["spex_all_upgraded"], spk["spex_all_ptn"]), (2, 1, 1, 1, 1, 0))
+        self.assertEqual((spk["spex_paid_total"], spk["spex_paid_slv"], spk["spex_paid_table"], spk["spex_paid_gld"]),
+                         (2, 1, 1, 0))
+        self.assertEqual((spk["spex_pending_total"], spk["spex_pending_gld"], spk["spex_pending_upgraded"],
+                          spk["spex_pending_slv"]), (1, 1, 1, 0))
+        # 62 days out is 8 weeks: three paid over the 76.9% expected project to 4, so 36 short of 40.
+        self.assertEqual((spk["paid_proj"], spk["shortfall"]), (4, BENCHMARK - 4))
+
     def test_upcoming_hides_past_and_counts_unlinked(self):
         p = build_payload("upcoming", today=TODAY, user=self.admin)
-        self.assertEqual([r["event_code"] for r in p["rows"]], ["AFS - JS"])
-        self.assertEqual(p["totals"]["below_benchmark"], 1)
+        self.assertEqual([r["event_code"] for r in p["rows"]], ["AFS - JS", "SPK"])
+        self.assertEqual(p["totals"]["below_benchmark"], 2)
         self.assertEqual(p["totals"]["tk_unmined"], 2)
 
     def test_previous_edition_label_reads_the_verdict(self):
