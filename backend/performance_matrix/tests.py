@@ -99,16 +99,23 @@ class MatrixTests(TestCase):
         self.assertFalse(cur["done"])
         self.assertEqual(cur["verdict"], "Needs a push")
 
-        # C1, C2 paid + C3, C4, C8 pending + C6 paid-free = live. C5 cancelled is out.
-        self.assertEqual(cur["live_count"], 6)
-        # Payment date AND payable AND not dead: C1, C2. C5 is cancelled, C6 is free.
-        self.assertEqual(cur["paid_heads"], 2)
+        # C1, C2 paid + C3, C4, C8 pending + C6 paid-free = 6 live of its own. C5
+        # cancelled is out. The 2025 edition was Postponed, so its three paid heads
+        # are carried onto this one and the row is the total, 9, with the old
+        # share stated beside it.
+        self.assertEqual(cur["live_count"], 9)
+        # Payment date AND payable AND not refunded: C1, C2, C5 even though it was
+        # cancelled after paying, plus the three carried.
+        self.assertEqual(cur["paid_heads"], 6)
+        self.assertEqual(cur["carried"], {"live": 3, "paid": 3, "pending": 0, "expected": 0,
+                                          "not_invoiced": 0, "free": 0, "cancelled": 0, "group_pass": 0})
+        self.assertIsNone(prev["carried"])
         # Pending payable, split on the invoice date: C3 invoiced 20 days ago, C4
         # three days ago, C8 never.
         self.assertEqual(cur["pending"], 1)
         self.assertEqual(cur["expected"], 1)
         self.assertEqual(cur["not_invoiced"], 1)
-        self.assertEqual(cur["shortfall"], BENCHMARK - 2)   # off the payments projection, 2 / 0.9 rounds to 2
+        self.assertEqual(cur["shortfall"], BENCHMARK - 3)   # off the payments projection, 3 / 0.9 rounds to 3
         self.assertEqual((cur["bk_last"], cur["pay_last"]), (TODAY.isoformat(), TODAY.isoformat()))
         self.assertEqual((cur["free"], cur["cancelled"], cur["group_pass"], cur["website"]), (1, 1, 0, ""))
         self.assertEqual(cur["bk_today"], 1)
@@ -125,12 +132,13 @@ class MatrixTests(TestCase):
         self.assertIsNone(prev["live_prev_year"])
 
         # 30 days out is 4 whole weeks: six live heads against the 85.5% the
-        # attendance curve expects by then project to 7, two paid against 90% to
-        # 2. The 33% curve opened sales on 11 Aug 2025 and is one day into its
-        # last month: 6 / (0.66 + 0.34 / 31) rounds to 9.
+        # attendance curve expects by then project to 7, three paid against 90% to
+        # 3. The 33% curve opened sales on 11 Aug 2025 and is one day into its
+        # last month: 6 / (0.66 + 0.34 / 31) rounds to 9. The three carried heads
+        # are NOT in any of these; projections read this edition's own pace.
         self.assertEqual(cur["proj"], 9)
         self.assertEqual(cur["att_proj"], 7)
-        self.assertEqual(cur["paid_proj"], 2)
+        self.assertEqual(cur["paid_proj"], 3)
         # A finished edition's projection is its count.
         self.assertEqual((prev["proj"], prev["att_proj"], prev["paid_proj"]), (3, 3, 3))
 
@@ -149,12 +157,13 @@ class MatrixTests(TestCase):
 
         # SPK: codes are read as substrings, so "Speaker / Group Pass" is a speaker
         # AND a group pass, "Speaker Table" a sponsor and not a speaker, and a
-        # company is counted once per SpEx column however many seats it holds.
+        # company is counted once per SpEx column however many seats it holds. A
+        # group pass counts only once paid, so Umbrella's pending G1 is out.
         spk = rows["SPK"]
         self.assertEqual(spk["website"], "spk.example.com")
-        self.assertEqual((spk["live_count"], spk["paid_heads"]), (7, 3))
+        self.assertEqual((spk["live_count"], spk["paid_heads"]), (7, 4))    # K1 paid, then cancelled: still a paid head
         self.assertEqual((spk["pending"], spk["expected"], spk["not_invoiced"]), (0, 1, 2))
-        self.assertEqual((spk["free"], spk["cancelled"], spk["group_pass"]), (1, 1, 2))
+        self.assertEqual((spk["free"], spk["cancelled"], spk["group_pass"]), (1, 1, 1))
         self.assertEqual(spk["bk_last"], (TODAY - timedelta(days=2)).isoformat())    # K1: cancelled, still a booking
         self.assertEqual(spk["pay_last"], (TODAY - timedelta(days=5)).isoformat())   # X3; K1 is Cancelled, its date is out
         self.assertEqual(spk["sp_first"], (TODAY - timedelta(days=40)).isoformat())
@@ -165,14 +174,38 @@ class MatrixTests(TestCase):
                          (2, 1, 1, 0))
         self.assertEqual((spk["spex_pending_total"], spk["spex_pending_gld"], spk["spex_pending_upgraded"],
                           spk["spex_pending_slv"]), (1, 1, 1, 0))
-        # 62 days out is 8 weeks: three paid over the 76.9% expected project to 4, so 36 short of 40.
-        self.assertEqual((spk["paid_proj"], spk["shortfall"]), (4, BENCHMARK - 4))
+        # 62 days out is 8 weeks: four paid over the 76.9% expected project to 5, so 35 short of 40.
+        self.assertEqual((spk["paid_proj"], spk["shortfall"]), (5, BENCHMARK - 5))
 
     def test_upcoming_hides_past_and_counts_unlinked(self):
         p = build_payload("upcoming", today=TODAY, user=self.admin)
         self.assertEqual([r["event_code"] for r in p["rows"]], ["AFS - JS", "SPK"])
         self.assertEqual(p["totals"]["below_benchmark"], 2)
         self.assertEqual(p["totals"]["tk_unmined"], 2)
+
+    def test_twice_postponed_edition_carries_the_whole_chain(self):
+        # Q 2024 postponed with one head, Q 25 postponed with one head, Q - X 2026
+        # is the date that finally runs; it carries both, and the group pass
+        # company booked at both postponed dates is counted once.
+        Event.objects.create(event_code="Q 24", base_code="Q", year=2024, event_date=date(2024, 5, 1), verdict="Postponed")
+        Event.objects.create(event_code="Q 25", base_code="Q", year=2025, event_date=date(2025, 5, 1), verdict="Postponed")
+        # A bare twin of Q 25 on the same day, as the 8 Sep 2026 loads left behind;
+        # it is folded into Q 25 and gets no row, and its bookings read off Q 25.
+        Event.objects.create(event_code="Q", base_code="Q", year=2025, event_date=date(2025, 5, 1))
+        Event.objects.create(event_code="Q - X", base_code="Q", year=2026, event_date=date(2026, 5, 1))
+        book("Q1", "Q", date(2024, 3, 1), paid=date(2024, 3, 1), bc="Group Pass", company="Wayne")
+        book("Q2", "Q", date(2025, 3, 1), paid=date(2025, 3, 1), bc="Group Pass", company="Wayne")
+        book("Q3", "Q", date(2026, 1, 5), status="Pending")
+        rows = {r["event_code"]: r for r in build_payload("all", today=TODAY, user=self.admin)["rows"]}
+        self.assertNotIn("Q", rows)
+        cur = rows["Q - X"]
+        self.assertEqual((cur["live_count"], cur["paid_heads"], cur["group_pass"]), (3, 2, 1))
+        self.assertEqual((cur["carried"]["live"], cur["carried"]["paid"], cur["carried"]["group_pass"]), (2, 2, 1))
+        self.assertEqual(rows["Q 25"]["carried"]["live"], 1)     # itself rescheduled from Q 24
+        self.assertEqual(rows["Q 25"]["live_count"], 2)
+        # Projections stay on its own single head: 15 weeks out the attendance
+        # curve expects 41.3%, and 1 / 0.413 rounds to 2, not the 7 the total would give.
+        self.assertEqual(cur["att_proj"], 2)
 
     def test_previous_edition_label_reads_the_verdict(self):
         prior = Event(event_code="X", verdict="Postponed")

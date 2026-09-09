@@ -928,6 +928,11 @@ table.dt tbody tr.vd-postponed td,table.dt tbody tr.vd-cancelled td,table.dt tbo
 .pm-d{font-size:10px;font-weight:700;margin-left:5px;font-variant-numeric:tabular-nums}
 .pm-d.up{color:var(--green-tx)}
 .pm-d.down{color:var(--red-tx)}
+/* The old or new share bracketed under a figure on a rescheduled edition, at
+   footnote weight so the total stays the number the eye lands on. Its own line,
+   because the Live position columns are pinned and narrow and a clipped number
+   is worse than a second line; the two lines still fit the 30px row. */
+.pm-old{display:block;font-size:9.5px;font-weight:450;line-height:1.1;margin-top:1px;color:var(--text-4);font-variant-numeric:tabular-nums;white-space:nowrap}
 
 /* Completed editions. SEPIA, and it OUTRANKS the verdict: a past edition is one
    colour from edge to edge, no verdict rule on the left, no verdict fill on the
@@ -939,7 +944,7 @@ table.dt tbody tr.pm-done td,table.dt tbody tr.pm-done td.pin-col{background:lin
 table.dt tbody tr.pm-done:hover td,table.dt tbody tr.pm-done:hover td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--t-50)}
 table.dt tbody tr.pm-done td:first-child{box-shadow:none}
 table.dt tbody tr.pm-done td .bg,table.dt tbody tr.pm-done td .tg,table.dt tbody tr.pm-done td .pm-vd{background:var(--vd-fill);color:var(--pm-done-tx)}
-table.dt tbody tr.pm-done .pm-n,table.dt tbody tr.pm-done .pm-code,table.dt tbody tr.pm-done .pm-d,table.dt tbody tr.pm-done .dim{color:var(--pm-done-tx)}
+table.dt tbody tr.pm-done .pm-n,table.dt tbody tr.pm-done .pm-code,table.dt tbody tr.pm-done .pm-d,table.dt tbody tr.pm-done .pm-old,table.dt tbody tr.pm-done .dim{color:var(--pm-done-tx)}
 /* The code is the row's only identity, so it carries the hover: the dotted rule
    is the one cue that there is more underneath it. */
 .pm-code{cursor:help;color:var(--t-600);text-decoration:underline dotted var(--n-300);text-underline-offset:3px}

@@ -5,6 +5,10 @@ Every number the Performance Matrix shows, computed live.
 
 ONE ROW PER EDITION. An edition is one Event row, identified by
 (base_code, year); the internal event_code is its label. See events/codes.py.
+Two rows of one family on one start date are one edition loaded twice, the
+8 Sep 2026 loads left 170 of them, a bare "PAU" beside a "PAU 25"; the matrix
+folds the pair into the row carrying the verdict, else the suffixed one, and reads
+the other's bookings and history off it. The Events page still lists both.
 
 THE JOIN, AND WHY IT IS NOT event_code = event_code WITH edition = year.
 Bookings store an event as a text code plus an optional edition year. In the
@@ -32,6 +36,14 @@ THE PREVIOUS-EDITION LABEL READS THE MATRIX ITSELF. Fresh, Repeat, Rescheduled
 and Relaunch are decided by the VERDICT the admin gave the prior edition in this
 module and by nothing else; a prior edition with no verdict counts as one that
 ran. That is what makes it scale: setting this year's verdicts labels next year.
+
+A RESCHEDULED EDITION IS A TOTAL. When the prior edition's verdict is Postponed
+or TBP, its Live position figures are added to this edition's; those heads never
+attended anything else, so they are the venue's count for the new date. The row
+also carries the old share, so the UI can bracket it beside the total, and the
+chain runs through a twice postponed event. The Projection block stays on this
+edition's own bookings; money that arrived for the postponed date says nothing
+about the pace of the new one.
 
 ONE QUERY PER SOURCE, WHATEVER THE ROW COUNT. Delegates, paper reviews and the
 ticket aggregate are each read once and every figure is dictionary work in
@@ -64,7 +76,10 @@ PAID = "Paid"
 PENDING = "Pending"
 # The stored value the UI labels "Payable" (frontend lib/constants.js).
 PAYABLE = "Paid"
-DEAD_STATUSES = frozenset({"Cancelled", "Refunded"})
+# A paid head is a Payable row with a payment date, whatever its status, unless
+# the money went back. A cancelled seat that was paid stays a paid head and is
+# also a Cancelled one; a credit row with a payment date stays a paid head.
+REFUNDED = "Refunded"
 
 BENCHMARK = 40                    # paid heads every edition is measured against
 PENDING_GRACE_DAYS = 14           # a pending invoice older than this is Pending, 14 days or newer is Expected, none yet is Not invoiced
@@ -73,6 +88,8 @@ FIRST_EDITION_LOOKBACK_DAYS = 365
 # Prior edition's verdict -> this edition's label.
 RESCHEDULED_FROM = frozenset({"Postponed", "TBP"})
 RELAUNCH_FROM = frozenset({"Cancelled"})
+# The Live position figures a rescheduled edition inherits from the postponed one.
+CARRIED = ("live", "paid", "pending", "expected", "not_invoiced", "free", "cancelled")
 
 # (key, min age in days, max age in days) — how old a date is from today.
 WINDOWS = (("today", 0, 0), ("d7", 0, 7), ("d14", 8, 14), ("d21", 15, 21), ("d30", 0, 30))
@@ -214,17 +231,31 @@ def curve_projection(today, event_date, actual, curve):
 
 
 def _families(events):
-    """{BASE: [editions sorted by start]} plus {any code: BASE}."""
+    """
+    {BASE: [editions sorted by start]}, {any code: BASE}, and {folded pk: kept pk}
+    for every row that shares a start date with another row of its family. The
+    kept row is the one with a verdict, else the one whose code is not the bare
+    base code, else the older row; the folded row gets no row of its own.
+    """
     fam = defaultdict(list)
     for e in events:
         fam[(e.base_code or derive_base_code(e.event_code)).upper()].append(e)
-    code_to_base = {}
+    code_to_base, folded = {}, {}
     for base, eds in fam.items():
         eds.sort(key=lambda e: (e.event_date, e.pk))
         code_to_base[base] = base
+        kept = []
         for e in eds:
             code_to_base[e.event_code.upper()] = base
-    return fam, code_to_base
+            if kept and kept[-1].event_date == e.event_date:
+                keep, drop = sorted((kept[-1], e), reverse=True,
+                                    key=lambda x: (bool(x.verdict), x.event_code.upper() != base, -x.pk))
+                kept[-1] = keep
+                folded[drop.pk] = keep.pk
+            else:
+                kept.append(e)
+        fam[base] = kept
+    return fam, code_to_base, folded
 
 
 def _windows(fam):
@@ -281,6 +312,21 @@ def previous_edition_label(prior):
     return "Repeat"
 
 
+def _carried(prior, stats, companies, carried_by):
+    """
+    What a rescheduled edition inherits, the postponed edition's own Live
+    position plus whatever that edition had itself inherited, so a twice
+    postponed event still arrives whole. None unless the prior was Postponed or TBP.
+    """
+    if prior is None or prior.verdict not in RESCHEDULED_FROM:
+        return None
+    own = stats.get(prior.pk) or _blank()
+    up = carried_by.get(prior.pk)
+    out = {k: own[k] + (up[k] if up else 0) for k in CARRIED}
+    out["gp"] = set((companies.get(prior.pk) or {}).get("gp", ())) | (up["gp"] if up else set())
+    return out
+
+
 def _owners(e, defaults):
     out = {}
     for field, label in OWNER_FIELDS:
@@ -305,7 +351,7 @@ def _ticket_targets(fam, today):
 def build_payload(view=VIEW_UPCOMING, today=None, user=None):
     today = today or date.today()
     events = list(Event.objects.order_by("event_date", "pk"))
-    fam, code_to_base = _families(events)
+    fam, code_to_base, folded = _families(events)
     win = _windows(fam)
     owner_defaults = team_owner_defaults()
 
@@ -334,7 +380,7 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             if booked_on:
                 live_dates[ed.pk].append(booked_on)
                 _age_buckets(s, "bk_", today, booked_on)
-        if pay_date and payable and status not in DEAD_STATUSES:
+        if pay_date and payable and status != REFUNDED:
             s["paid"] += 1
         if paid_status and pof == FREE:
             s["free"] += 1
@@ -355,7 +401,7 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         # Speakers, sponsors and group passes, read off the booking code. A
         # sponsor is a COMPANY, counted once per column however many seats it
         # holds; the code's tier words each add it to that tier's set.
-        if co and "group pass" in lc:
+        if co and "group pass" in lc and paid_status:
             companies[ed.pk]["gp"].add(co)
         if _is_speaker(lc):
             s["sp_total"] += 1
@@ -401,14 +447,20 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
     ticket_target = _ticket_targets(fam, today)
 
     rows = []
+    carried_by = {}     # event pk -> what it inherits, computed for every edition so the chain holds
     for e in events:
-        end = e.end_date or e.event_date
-        if view == VIEW_UPCOMING and end < today:
+        if e.pk in folded:
             continue
+        end = e.end_date or e.event_date
         base = code_to_base[e.event_code.upper()]
         prior = next((p for p in reversed(fam[base]) if p.event_date < e.event_date), None)
+        carried = _carried(prior, stats, companies, carried_by)
+        carried_by[e.pk] = carried
+        if view == VIEW_UPCOMING and end < today:
+            continue
         days_left = (e.event_date - today).days
         s = stats.get(e.pk) or _blank()
+        total = (lambda k: s[k] + carried[k]) if carried else (lambda k: s[k])  # noqa: E731
 
         live_prev = None
         if prior is not None:
@@ -418,6 +470,9 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         bucket = buckets.get(base) if ticket_target.get(e.pk) == base else None
         type_links = {k: v["links"] for k, v in bucket["splits"][SPLIT_TYPE].items()} if bucket else {}
         cos = companies.get(e.pk) or {}
+        gp_new = cos.get("gp", set())
+        gp_all = gp_new | carried["gp"] if carried else gp_new
+        # Projections read this edition's own figures, s, never the total.
         paid_proj = curve_projection(today, e.event_date, s["paid"], PAY_CURVE)
         iso = lambda d: d.isoformat() if d else None  # noqa: E731
 
@@ -436,14 +491,18 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             "countdown": countdown(today, e.event_date),
             "prev_status": previous_edition_label(prior),
             "prior_event_code": prior.event_code if prior else None,
-            "live_count": s["live"],
-            "paid_heads": s["paid"],
-            "pending": s["pending"],
-            "expected": s["expected"],
-            "not_invoiced": s["not_invoiced"],
-            "free": s["free"],
-            "cancelled": s["cancelled"],
-            "group_pass": len(cos.get("gp", ())),
+            "live_count": total("live"),
+            "paid_heads": total("paid"),
+            "pending": total("pending"),
+            "expected": total("expected"),
+            "not_invoiced": total("not_invoiced"),
+            "free": total("free"),
+            "cancelled": total("cancelled"),
+            "group_pass": len(gp_all),
+            # The old share of each figure above on a rescheduled edition, None
+            # otherwise; the UI brackets it beside the total.
+            "carried": ({**{k: carried[k] for k in CARRIED}, "group_pass": len(gp_all) - len(gp_new)}
+                        if carried else None),
             # Short of the benchmark on the PAYMENTS PROJECTION, not today's paid
             # heads; None while the curve expects nothing yet.
             "shortfall": max(0, BENCHMARK - paid_proj) if paid_proj is not None else None,

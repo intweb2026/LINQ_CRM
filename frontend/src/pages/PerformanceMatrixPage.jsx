@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import DataTable from '../components/DataTable';
 import { Tabs } from '../components/UI';
 import { MON, nf } from '../lib/helpers';
@@ -57,9 +57,9 @@ const PREV_HINT = {
 const GROUPS = [
   { key: 'ev', label: 'Event' },
   { key: 'ly', label: 'Previous edition', min: 2 },
-  { key: 'lv', label: 'Live position', min: 2 },
+  { key: 'lv', label: 'Live position', min: 2, hint: 'A rescheduled edition includes the postponed edition it replaces; the bracket is the old share' },
   { key: 'vd', label: 'Verdict' },
-  { key: 'pj', label: 'Projection' },
+  { key: 'pj', label: 'Projection', hint: 'Read off this edition’s own bookings and payments; the bracket is the new count on a rescheduled edition' },
   { key: 'bk', label: 'Bookings', hint: 'Live bookings by request date' },
   { key: 'py', label: 'Payments', hint: 'Paid heads by payment date' },
   { key: 'sp', label: 'Speakers', hint: 'Booking codes naming Speaker or SPP' },
@@ -80,6 +80,19 @@ const zero = () => <span className="dim">0</span>;
 const num = (v) => (v ? <b className="pm-n">{nf(v)}</b> : zero());
 const tone = (c) => (v) => (v ? <b style={{ color: `var(${c})` }}>{nf(v)}</b> : zero());
 const dateCell = (v) => (v ? dateRange(v) : dim());
+
+// A rescheduled edition's Live position is a total, and the bracket beside it
+// says how much is old, inherited from the postponed edition (services.py). The
+// Projection block reads this edition's own figures, so there the bracket says
+// how much is new. Both stay silent on every other row.
+const OLD_KEY = {
+  live_count: 'live', paid_heads: 'paid', pending: 'pending', expected: 'expected',
+  not_invoiced: 'not_invoiced', free: 'free', cancelled: 'cancelled', group_pass: 'group_pass',
+};
+const oldShare = (r, key) => (r.carried ? r.carried[OLD_KEY[key]] : 0) || 0;
+const old = (r, key) => (oldShare(r, key) ? <span className="pm-old">({nf(oldShare(r, key))} old)</span> : null);
+const fresh = (r, key) => (oldShare(r, key) ? <span className="pm-old">({nf(r[key] - oldShare(r, key))} new)</span> : null);
+const lv = (key, c) => (v, r) => <>{(c ? tone(c) : num)(v)}{old(r, key)}</>;
 const href = (w) => (/^https?:\/\//i.test(w) ? w : `https://${w}`);
 
 /** '13-14 Sep, 2027' from a start and end ISO date; the plain dates are calendar
@@ -130,10 +143,10 @@ function VerdictPill({ value }) {
 const ATT_BANDS = [40, 65];
 const PAY_FLOOR = 25;
 const pending = (hint) => <span className="dim" title={hint}>Pending</span>;
-function Health({ value, bands: [floor, target], hint }) {
+function Health({ value, bands: [floor, target], hint, tail }) {
   if (value == null) return pending('The weekly curve starts 21 weeks out');
   const tone = value >= target ? 'green' : value >= floor ? 'amber' : 'red';
-  return <span className={'pm-hl ' + tone} title={hint}><i /><b className="pm-n">{nf(value)}</b></span>;
+  return <><span className={'pm-hl ' + tone} title={hint}><i /><b className="pm-n">{nf(value)}</b></span>{tail}</>;
 }
 
 function buildCols(onVerdict, benchmark, ticketTypes) {
@@ -186,14 +199,14 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
         </span>
       )),
     },
-    { key: 'live_count', label: 'Bookings', group: 'lv', num: true, cls: 'sec', pin: true, w: 70, cell: num },
-    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, pin: true, w: 58, cell: num },
-    { key: 'pending', label: 'Pending', group: 'lv', num: true, pin: true, w: 66, cell: tone('--red-tx') },
-    { key: 'expected', label: 'Expected', group: 'lv', num: true, pin: true, w: 72, cell: tone('--amber-tx') },
-    { key: 'not_invoiced', label: 'Not invoiced', group: 'lv', num: true, pin: true, w: 74, cell: tone('--slate-tx') },
-    { key: 'free', label: 'Free', group: 'lv', num: true, pin: true, w: 56, cell: num },
-    { key: 'cancelled', label: 'Cancelled', group: 'lv', num: true, pin: true, w: 74, cell: tone('--red-tx') },
-    { key: 'group_pass', label: 'Group pass', group: 'lv', num: true, pin: true, w: 68, cell: num },
+    { key: 'live_count', label: 'Bookings', group: 'lv', num: true, cls: 'sec', pin: true, w: 70, cell: lv('live_count') },
+    { key: 'paid_heads', label: 'Paid', group: 'lv', num: true, pin: true, w: 64, cell: lv('paid_heads') },
+    { key: 'pending', label: 'Pending', group: 'lv', num: true, pin: true, w: 66, cell: lv('pending', '--red-tx') },
+    { key: 'expected', label: 'Expected', group: 'lv', num: true, pin: true, w: 72, cell: lv('expected', '--amber-tx') },
+    { key: 'not_invoiced', label: 'Not invoiced', group: 'lv', num: true, pin: true, w: 74, cell: lv('not_invoiced', '--slate-tx') },
+    { key: 'free', label: 'Free', group: 'lv', num: true, pin: true, w: 64, cell: lv('free') },
+    { key: 'cancelled', label: 'Cancelled', group: 'lv', num: true, pin: true, w: 74, cell: lv('cancelled', '--red-tx') },
+    { key: 'group_pass', label: 'Group pass', group: 'lv', num: true, pin: true, w: 68, cell: lv('group_pass') },
     {
       key: 'verdict', label: 'Verdict', group: 'vd', cls: 'sec', w: 140,
       opts: () => pmApi.VERDICT_NAMES,
@@ -210,18 +223,18 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
     // the shortfall is read off the payments projection.
     {
       key: 'proj', label: '33% curve', group: 'pj', num: true, cls: 'sec', w: 70,
-      cell: (v) => (v == null
+      cell: (v, r) => (v == null
         ? pending('Sales open six months before the event')
-        : <b className="pm-n" title="Live count over the share of the sales curve elapsed: 33% at three months in, 66% at five, 100% on the day">{nf(v)}</b>),
+        : <><b className="pm-n" title="Live count over the share of the sales curve elapsed: 33% at three months in, 66% at five, 100% on the day">{nf(v)}</b>{fresh(r, 'live_count')}</>),
     },
     {
       key: 'att_proj', label: 'Health · attendees', group: 'pj', num: true, w: 84,
-      cell: (v) => <Health value={v} bands={ATT_BANDS}
+      cell: (v, r) => <Health value={v} bands={ATT_BANDS} tail={fresh(r, 'live_count')}
         hint="Live count over the attendance the weekly curve expects banked by now; green from 65, amber from 40" />,
     },
     {
       key: 'paid_proj', label: 'Health · payments', group: 'pj', num: true, w: 84,
-      cell: (v) => <Health value={v} bands={[PAY_FLOOR, benchmark]}
+      cell: (v, r) => <Health value={v} bands={[PAY_FLOOR, benchmark]} tail={fresh(r, 'paid_heads')}
         hint={`Paid heads over the share the weekly curve expects banked by now; green from ${benchmark}, amber from ${PAY_FLOOR}`} />,
     },
     {
@@ -238,13 +251,14 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
   }));
   cols.push({ key: 'pay_last', label: 'Last payment', type: 'date', group: 'py', w: 92, cell: dateCell });
   // Speakers and sponsors are read off the booking code (services.py); a company
-  // counts once per SpEx column however many seats it holds.
+  // counts once per SpEx column however many seats it holds. The count leads so
+  // a folded block still shows it; the agenda date closes the block.
   cols.push(
-    { key: 'sp_first', label: 'Agenda live', type: 'date', group: 'sp', cls: 'sec', w: 92, cell: dateCell },
-    { key: 'sp_total', label: 'Speakers', group: 'sp', num: true, w: 66, cell: num },
+    { key: 'sp_total', label: 'Speakers', group: 'sp', num: true, cls: 'sec', w: 66, cell: num },
     { key: 'sp_booked', label: 'Booked', group: 'sp', num: true, w: 60, cell: num },
     { key: 'sp_paid', label: 'Paid', group: 'sp', num: true, w: 56, cell: num },
     { key: 'sp_free', label: 'Free', group: 'sp', num: true, w: 56, cell: num },
+    { key: 'sp_first', label: 'Agenda live', type: 'date', group: 'sp', w: 92, cell: dateCell },
   );
   SPEX_STATES.forEach(([group, state]) => SPEX_TIERS.forEach(([k, label], i) => cols.push({
     key: `spex_${state}_${k}`, label, group, num: true, w: 62, cls: i === 0 ? 'sec' : '', cell: num,
@@ -325,6 +339,31 @@ export default function PerformanceMatrixPage() {
   // still shows in the edge and the cell.
   const rowClass = useCallback((r) => (r.done ? 'pm-done ' : '') + pmApi.verdictClass(r.verdict), []);
 
+  // Full-screen mode. A body class hides the rail and the top bar (base.css,
+  // body.pm-full) and the browser is asked for its own full screen on top, so
+  // the matrix is the only thing on the display. Esc leaves through either
+  // route; the browser's exit is mirrored back into state, and the key is read
+  // directly only when the browser declined, so a filter panel's Esc is not
+  // also the page's. Leaving the page leaves the mode.
+  const [full, setFull] = useState(false);
+  useEffect(() => {
+    document.body.classList.toggle('pm-full', full);
+    if (full && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+    if (!full && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    const mirror = () => { if (!document.fullscreenElement) setFull(false); };
+    const onKey = (e) => { if (e.key === 'Escape' && !document.fullscreenElement) setFull(false); };
+    document.addEventListener('fullscreenchange', mirror);
+    if (full) document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('fullscreenchange', mirror);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [full]);
+  useEffect(() => () => {
+    document.body.classList.remove('pm-full');
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  }, []);
+
   if (!isAdmin) {
     return (
       <NoAccessPage
@@ -348,6 +387,10 @@ export default function PerformanceMatrixPage() {
               </button>
             ))}
             <span className="tabs-upd">{loading ? 'Refreshing…' : payload.today ? `Live · ${dateRange(payload.today)}` : ''}</span>
+            <button type="button" className={'chip' + (full ? ' on' : '')} onClick={() => setFull((v) => !v)}
+              title={full ? 'Back to the normal view; Esc does the same' : 'Hide the navigation and the top bar so only the matrix stays'}>
+              {full ? 'Exit full screen' : 'Full screen'}
+            </button>
           </div>
         )} />
 

@@ -217,6 +217,12 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
    Driven entirely by body.rail-min, so nothing here fires unless that class
    is on <body>; the rules below only override what has to change at 62px. */
 body.rail-min{--rail-w:62px}
+/* Full-screen mode, asked for by a page that wants only its table in sight; the
+   Performance Matrix toggles it. The rail and the top bar go, and #main, which
+   reads both tokens for its edges, takes the whole viewport. */
+body.pm-full{--rail-w:0px;--top-h:0px}
+body.pm-full .rail,body.pm-full .top{display:none}
+body.pm-full #main{padding:10px 12px}
 body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,
 body.rail-min .rail-utx,body.rail-min .rail-out{display:none}
 body.rail-min .rail-head{justify-content:center;padding:13px 0}
