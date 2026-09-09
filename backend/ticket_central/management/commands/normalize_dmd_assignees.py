@@ -49,6 +49,19 @@ until you are satisfied.
 
 Run this BEFORE seed_dmd_assignees. Normalising first is what makes that command
 create one clean account per person instead of one per spelling.
+
+AND IT REPAIRS THE CASE WHERE THAT ORDER WAS NOT FOLLOWED, which is why the
+accounts pass exists. Seed first and one person holds several accounts,
+"SC - Mahek Soni" beside the real "Mahek Soni", both offered by the mass-update
+dropdown. This command now derives that work from canonical() rather than the
+three hand-listed ACCOUNT_RENAMES: a prefixed account is renamed, and a
+duplicate is set inactive, which is what removes it from the dropdown. It is
+never deleted, because Ticket.created_by is SET_NULL and deleting would erase
+authorship on every row that account raised. When more than one account in a
+group can sign in, the group is reported and left alone; that is either two
+colleagues sharing a name or one person with two working logins, and neither is
+this command's call. Both kinds of account change are recorded in the undo file
+alongside the ticket rows.
 """
 import json
 import logging
@@ -103,6 +116,107 @@ ACCOUNT_RENAMES = {
     "Neha S":          "Neha Shinde",
     "K R":             "KR",
 }
+
+
+# ── The accounts side ────────────────────────────────────────────────────────
+#
+# WHY THIS EXISTS ALONGSIDE ACCOUNT_RENAMES
+# ACCOUNT_RENAMES above is a hand-written table of three, for accounts whose name
+# matches nothing in the tickets and which no rule could derive. It does NOT
+# cover the case seed_dmd_assignees creates: that command builds accounts from
+# the stored spellings VERBATIM, prefix included, so seeding a table that has not
+# been normalised yet mints "SC - Mahek Soni" beside the real "Mahek Soni" and
+# one person ends up holding several accounts. Renaming the tickets afterwards
+# does not clean that up, and the mass-update dropdown then offers the same
+# person two or three times.
+#
+# So the pass below derives the account work from canonical() instead of listing
+# it, which is the same rule the ticket columns get.
+#
+# WHAT IT WILL NOT DO
+# It never deletes an account; Ticket.created_by is SET_NULL, so deleting would
+# quietly erase authorship on every row that account raised. A duplicate is set
+# INACTIVE, which is what removes it from the dropdown (User.save syncs
+# is_active from status, and bulk_update_fields filters on is_active), and is
+# reversible from the admin.
+#
+# It also refuses to choose when BOTH accounts look real, meaning the loser can
+# sign in or has signed in. That is either two colleagues who genuinely share a
+# name or a person with two working logins, and neither is this command's to
+# decide; the group is reported and left alone.
+# Imported rather than retyped; seed_dmd_assignees owns the placeholder domain,
+# and a second copy of it here would go stale the day that one changes.
+def _seed_email_suffix():
+    from .seed_dmd_assignees import EMAIL_DOMAIN
+
+    return "@" + EMAIL_DOMAIN
+
+
+def stored_and_canonical(user):
+    """(the name as stored, the canonical form of it)."""
+    name = (user.get_full_name() or user.username).strip()
+    return name, canonical(name)
+
+
+def _keeper_rank(user):
+    """
+    Higher is more real. Signing in beats everything, then an address that is
+    not the seeder's placeholder, then having actually signed in, then being
+    active, then being the older record.
+    """
+    return (
+        1 if user.login_access else 0,
+        0 if (user.email or "").lower().endswith(_seed_email_suffix()) else 1,
+        1 if user.last_login else 0,
+        1 if user.status == "active" else 0,
+        -user.id,
+    )
+
+
+def account_plan(users, dmd_role="data_mining"):
+    """
+    (renames, merges, skipped) for the accounts.
+
+    renames  [(user, stored, canonical)]            one account, wrong spelling
+    merges   [(keeper, [loser, ...], canonical)]    one person, several accounts
+    skipped  [(canonical, [user, ...], reason)]     not ours to decide
+
+    Grouping spans every role, so a seeded Data Mining duplicate of a real
+    account in another team is still caught, but only a data_mining account is
+    ever renamed or deactivated.
+    """
+    groups = {}
+    for user in users:
+        stored, canon = stored_and_canonical(user)
+        # A cell naming two people is not a person, and no account should be one.
+        if not canon or "/" in stored:
+            continue
+        groups.setdefault(canon.upper(), []).append(user)
+
+    renames, merges, skipped = [], [], []
+    for canon_key in sorted(groups):
+        members = groups[canon_key]
+        ranked = sorted(members, key=_keeper_rank, reverse=True)
+        keeper = ranked[0]
+        losers = ranked[1:]
+        _, canon = stored_and_canonical(keeper)
+
+        real_losers = [u for u in losers if u.login_access or u.last_login]
+        if real_losers:
+            skipped.append((canon, members, "more than one account looks real"))
+            continue
+
+        wrong_role = [u for u in losers if u.role != dmd_role]
+        if wrong_role:
+            skipped.append((canon, wrong_role, "duplicate is not a Data Mining account"))
+        losers = [u for u in losers if u.role == dmd_role]
+        if losers:
+            merges.append((keeper, losers, canon))
+
+        stored_keeper, _ = stored_and_canonical(keeper)
+        if stored_keeper != canon and keeper.role == dmd_role:
+            renames.append((keeper, stored_keeper, canon))
+    return renames, merges, skipped
 
 
 def canonical(name):
@@ -215,6 +329,34 @@ class Command(BaseCommand):
                 f"  account rename: {old_name!r} -> {new_name!r}"
             ))
 
+        # The derived accounts pass. Everything above is the hand-written table;
+        # this is the part that catches what seed_dmd_assignees minted from
+        # un-normalised ticket names.
+        listed = {name for name in ACCOUNT_RENAMES}
+        derived_renames, merges, skipped = account_plan(
+            [u for u in User.objects.all()
+             if (u.get_full_name() or u.username).strip() not in listed],
+            dmd_role=User.Role.DATA_MINING,
+        )
+        self.stdout.write(
+            f"\naccounts: {len(derived_renames)} to rename, {len(merges)} person(s) "
+            f"holding more than one account, {len(skipped)} group(s) left alone."
+        )
+        for _user, stored, canon in derived_renames:
+            self.stdout.write(f"  rename   {stored!r} -> {canon!r}")
+        for keeper, losers, canon in merges:
+            self.stdout.write(
+                f"  keep     id={keeper.id} {(keeper.get_full_name() or keeper.username)!r}"
+                f" as {canon!r}")
+            for loser in losers:
+                name = (loser.get_full_name() or loser.username).strip()
+                self.stdout.write(self.style.WARNING(
+                    f"    deactivate id={loser.id} {name!r} email={loser.email!r}"))
+        for canon, members, reason in skipped:
+            ids = ", ".join(f"id={u.id}" for u in members)
+            self.stdout.write(self.style.WARNING(
+                f"  skipped  {canon!r}, {reason}, {ids}"))
+
         unmatched = [
             (user.get_full_name() or user.username).strip()
             for user in User.objects.filter(role=User.Role.DATA_MINING)
@@ -228,8 +370,9 @@ class Command(BaseCommand):
 
         if dry_run:
             self.stdout.write(self.style.SUCCESS(
-                f"DRY RUN. Would change {len(undo)} ticket(s) and rename "
-                f"{len(renames)} account(s). Nothing written."
+                f"DRY RUN. Would change {len(undo)} ticket(s), rename "
+                f"{len(renames) + len(derived_renames)} account(s) and deactivate "
+                f"{sum(len(l) for _, l, _ in merges)}. Nothing written."
             ))
         else:
             # The undo file is written and flushed BEFORE the transaction, so a
@@ -240,6 +383,16 @@ class Command(BaseCommand):
                     "account_renames": [
                         {"id": u.id, "from": o, "to": n}
                         for u, o, n, _, _ in renames
+                    ] + [
+                        {"id": u.id, "from": o, "to": n}
+                        for u, o, n in derived_renames
+                    ],
+                    "account_deactivations": [
+                        {"id": u.id,
+                         "name": (u.get_full_name() or u.username).strip(),
+                         "status": u.status, "login_access": u.login_access,
+                         "duplicate_of": keeper.id}
+                        for keeper, losers, _ in merges for u in losers
                     ],
                     "tickets": undo,
                 }, fh, indent=1)
@@ -249,9 +402,26 @@ class Command(BaseCommand):
                     user.first_name, user.last_name = first, last
                     user.role_is_explicit = True
                     user.save(update_fields=["first_name", "last_name"])
+                for user, _stored, canon in derived_renames:
+                    first, _, last = canon.partition(" ")
+                    user.first_name, user.last_name = first, last
+                    user.role_is_explicit = True
+                    user.save(update_fields=["first_name", "last_name"])
+                deactivated = 0
+                for _keeper, losers, _canon in merges:
+                    for loser in losers:
+                        # status only. User.save syncs is_active from it, which
+                        # is what takes the duplicate out of the dropdown, and
+                        # login_access is left as it was so the undo file is
+                        # enough to put it back.
+                        loser.status = "inactive"
+                        loser.role_is_explicit = True
+                        loser.save(update_fields=["status", "is_active"])
+                        deactivated += 1
             self.stdout.write(self.style.SUCCESS(
-                f"Changed {len(undo)} ticket(s), renamed {len(renames)} "
-                f"account(s). Undo file: {undo_path}"
+                f"Changed {len(undo)} ticket(s), renamed "
+                f"{len(renames) + len(derived_renames)} account(s), deactivated "
+                f"{deactivated} duplicate(s). Undo file: {undo_path}"
             ))
 
         if unmatched:

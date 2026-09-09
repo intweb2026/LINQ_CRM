@@ -4,14 +4,21 @@ import_dmd_sheet
 Load a LinkedIn ticket workbook into Ticket Central, updating the rows already
 in the table and creating the ones that are not.
 
-    python manage.py import_dmd_sheet "path\to\ticket_central LX.xlsx"
-    python manage.py import_dmd_sheet "path\to\file.csv" --out report.csv
-    python manage.py import_dmd_sheet "path\to\file.xlsx" --commit
+    python manage.py import_dmd_sheet data_imports/ticket_central_LX.xlsx
+    python manage.py import_dmd_sheet data_imports/ticket_central_LX.xlsx --out report.csv
+    python manage.py import_dmd_sheet data_imports/ticket_central_LX.xlsx --commit
+
+THE WORKBOOK IS IN THE REPO, at backend/data_imports/ticket_central_LX.xlsx, so
+a deploy carries it to production and the path above works unchanged there. It
+is force-added past the repo-wide *.xlsx ignore rule, which is how the three
+workbooks already in that directory got there.
 
 .xlsx, .xlsm, .csv and .json are all accepted, through the shared reader in
-accounts/import_common.py, so a CSV export of the workbook imports identically.
-That is the route when the workbook itself cannot be placed on the machine that
-runs this, production included.
+accounts/import_common.py. Prefer the workbook over a CSV export of it. openpyxl
+hands over typed dates, while a CSV carries text, and utils._parse_date has no
+format with a space before the time, so an Assign Date exported as
+"2026-08-18 00:00:00" silently lands empty; a CSV also makes "08/09/2026"
+ambiguous, and it is read day-first. ISO yyyy-mm-dd date columns are safe.
 
 WRITES NOTHING WITHOUT --commit, which inverts the repo's usual --dry-run flag
 on purpose; this loads thousands of rows in one pass, so the default has to be
