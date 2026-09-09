@@ -17,6 +17,32 @@ from mcp_server import PUBLIC_URL, DrfTokenVerifier
 User = get_user_model()
 
 
+class AsgiRoutingTests(TestCase):
+    """
+    The ASGI router has to forward every path the MCP app owns, not just /mcp.
+
+    This failed silently in production first time round. The OAuth discovery
+    document fell through to Django, where the React catch-all answered it with
+    the frontend and a 200, so nothing looked broken until a client tried to
+    authenticate.
+    """
+
+    def test_every_mcp_route_is_forwarded(self):
+        from config.asgi import MCP_PATHS, mcp_application
+
+        owned = {r.path for r in mcp_application.routes if hasattr(r, "path")}
+        self.assertTrue(owned, "the MCP app exposed no routes at all")
+        self.assertEqual(owned - MCP_PATHS, set(),
+                         "these MCP routes would fall through to Django")
+
+    def test_discovery_document_is_among_them(self):
+        # Named explicitly as well as derived above. If a future SDK stops
+        # serving this, discovery breaks and the derived check would not notice.
+        from config.asgi import MCP_PATHS
+
+        self.assertIn("/.well-known/oauth-protected-resource/mcp", MCP_PATHS)
+
+
 class DrfTokenVerifierTests(TestCase):
     @classmethod
     def setUpTestData(cls):

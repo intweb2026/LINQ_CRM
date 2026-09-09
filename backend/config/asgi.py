@@ -37,18 +37,31 @@ from mcp_server import mcp  # noqa: E402
 # Starlette app answers 404 to everything we hand it.
 mcp_application = mcp.streamable_http_app(streamable_http_path="/mcp")
 
+# Taken from the app rather than written out, because it is more than /mcp and
+# getting the list wrong is silent. The SDK also serves
+# /.well-known/oauth-protected-resource/mcp, which is the RFC 9728 document a
+# client reads from the WWW-Authenticate header to discover where to
+# authenticate. Forwarding only /mcp left that one falling through to Django,
+# where the React catch-all answered it with the frontend and discovery broke.
+# Reading the routes means a route added by a future SDK version is carried
+# across without anyone remembering to edit this.
+MCP_PATHS = frozenset(
+    route.path for route in mcp_application.routes if hasattr(route, "path")
+)
+
 
 async def application(scope, receive, send):
     """
-    Send /mcp to the MCP server and everything else to Django.
+    Send the MCP app's own paths to it and everything else to Django.
 
-    Lifespan is routed to the MCP app as well as Django. The streamable HTTP
-    transport starts its session manager in that event; without it every MCP
-    request fails on a task group that was never entered.
+    Lifespan goes to the MCP app rather than Django. The streamable HTTP
+    transport starts its session manager in that event, and without it every
+    MCP request fails on a task group that was never entered; Django's handler
+    does not accept the lifespan scope at all.
     """
-    path = scope.get("path", "")
     if scope["type"] == "lifespan":
         return await mcp_application(scope, receive, send)
-    if path == "/mcp" or path.startswith("/mcp/"):
+    path = scope.get("path", "")
+    if path in MCP_PATHS or path.startswith("/mcp/"):
         return await mcp_application(scope, receive, send)
     return await django_application(scope, receive, send)
