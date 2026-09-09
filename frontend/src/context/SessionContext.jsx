@@ -241,11 +241,22 @@ export function SessionProvider({ children }) {
     return { id: perms.managed_team_id, name: perms.managed_team_name || 'your team' };
   }, [isAdmin, perms]);
 
+  /**
+   * May this session write the Market Research half of a ticket?
+   *
+   * A field-level right, not a module, so it is not in `perms.modules` — the
+   * server answers it on /api/users/my-permissions/ and the same helper
+   * (ticket_central/permissions.may_edit_mr_fields) decides the serializer a
+   * PATCH gets. Read only by the ticket form, which must know before it renders
+   * whether to open Section A.
+   */
+  const mayEditMrFields = !!perms?.may_edit_mr_fields;
+
   const value = useMemo(() => ({
     user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin,
-    managedTeam,
+    managedTeam, mayEditMrFields,
     roleLabel: user ? ROLE_FULL[user.role] || user.role : '',
-  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin, managedTeam]);
+  }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin, managedTeam, mayEditMrFields]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

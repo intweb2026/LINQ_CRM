@@ -385,8 +385,13 @@ class BulkUpdateTests(_Base):
 
     def test_one_actionlog_per_batch_with_the_full_id_list(self):
         before = ActionLog.objects.count()
+        # A real slot, not the invented "Day 2, Keynote" the filter_options
+        # tests below use: mass update now offers this column as a dropdown of
+        # AGENDA_SLOT_OPTIONS and rejects anything else with a 400. Those tests
+        # write straight to the model, so an off-list stored value there is still
+        # the point — the filter dropdown must surface what the data holds.
         preview, commit = self._run("session_location_on_agenda",
-                                    "Day 2, Keynote")
+                                    "Day 2, Closing Session")
         self.assertEqual(commit.status_code, 200, commit.content)
         self.assertEqual(ActionLog.objects.count(), before + 1)
         log = ActionLog.objects.latest("id")

@@ -514,6 +514,10 @@ class UserViewSet(viewsets.ModelViewSet):
         User.effective_permissions(). The response shape is unchanged, so the
         frontend's SessionContext keeps reading it as it did.
         """
+        # Local import: ticket_central imports this package, so pulling its
+        # permissions module in at the top would close the loop.
+        from ticket_central.permissions import may_edit_mr_fields
+
         user = request.user
         team = user.managed_team if user.managed_team_id else None
         return Response({
@@ -526,6 +530,13 @@ class UserViewSet(viewsets.ModelViewSet):
             # a super admin is not restricted to one team.
             "managed_team_id": None if is_super_admin(user) else user.managed_team_id,
             "managed_team_name": None if is_super_admin(user) or not team else team.name,
+            # Not a module — a field-level right inside Ticket Central, so it
+            # cannot live in the grid above. Sent here because this is the one
+            # call every session already makes, and because the ticket form has
+            # to draw the MR section open or locked BEFORE anyone types into it.
+            # The server decides; TicketViewSet.get_serializer_class asks the
+            # same helper.
+            "may_edit_mr_fields": may_edit_mr_fields(user),
         })
 
     @action(detail=True, methods=["get", "put"], url_path="permissions")

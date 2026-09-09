@@ -98,6 +98,16 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
             "city", "country", "venue",
             "tele_marketing_team", "market_research_team", "sales_team",
         ),
+        # Both are plain CharFields with no choices= on the model, yet the event
+        # form has always offered them as dropdowns (frontend VR1_STATUS and
+        # SALES_CHECK_OPTIONS). Mass update offered a free-text box for the same
+        # two columns, which is the one door through which a spelling the form
+        # cannot produce gets in — across every selected event at once. These
+        # lists ARE those two, and must stay in step with them.
+        choices={
+            "vr1_sent_status": ["Not Sent", "Sent", "Opened", "Clicked"],
+            "sales_check":     ["Unassigned", "Pending", "Scheduled", "Done"],
+        },
         labels={
             "official_event_name":    "Official Event Name",
             "web_bookings":           "Web Bookings",

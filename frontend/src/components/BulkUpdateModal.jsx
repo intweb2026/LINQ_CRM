@@ -36,6 +36,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Modal from './Modal';
+import Select from './Select';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
 import { NumField } from './UI';
@@ -49,8 +50,10 @@ function noun(n, label) {
   return n === 1 ? label : `${label}s`;
 }
 
-// Above this many fields the picker gets a search box. Bookings declares 46
+// Above this many entries a picker gets a search box. Bookings declares 46 fields
 // across both groups and Events 34: a bare radio list that long is a scroll hunt.
+// The same number governs the VALUE picker, where assign_name's list of Data
+// Mining users is the long one.
 const SEARCH_THRESHOLD = 8;
 
 /**
@@ -305,10 +308,29 @@ export default function BulkUpdateModal({
               <option value="false">No</option>
             </select>
           ) : config.type === 'choice' ? (
-            <select className="in" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing}>
-              <option value="">Choose a value…</option>
-              {(config.choices || []).map((c) => <option key={c} value={c}>{optText ? optText(c) : c}</option>)}
-            </select>
+            /* The app's themed picker rather than a native <select>, for the
+               search box it already carries: assign_name offers one option per
+               Data Mining user — 94 of them on live data — and a native option
+               list that long is the scroll hunt the FIELD picker above got a
+               search box to avoid. Same threshold, same reason.
+
+               `disabled` is not a Select prop; a read-only input stands in while
+               clearing, which is what TicketFormModal's Pick does for the same
+               reason. labelOf keeps the value written exactly as the server
+               declared it while the reader sees 'Payable' for 'Paid'. */
+            clearing ? (
+              <input className="in" value="" readOnly disabled />
+            ) : (
+              <Select
+                value={value}
+                options={config.choices || []}
+                labelOf={optText || undefined}
+                placeholder="Choose a value…"
+                search={(config.choices || []).length > SEARCH_THRESHOLD}
+                searchPlaceholder="Search values…"
+                onChange={setValue}
+              />
+            )
           ) : config.type === 'date' ? (
             <input className="in" type="date" value={value} onChange={(e) => setValue(e.target.value)} disabled={clearing} />
           ) : config.type === 'integer' || config.type === 'decimal' ? (

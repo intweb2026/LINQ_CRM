@@ -233,6 +233,34 @@ class TicketDMDUpdateSerializer(serializers.ModelSerializer):
         return data
 
 
+class TicketDMDLeadUpdateSerializer(TicketDMDUpdateSerializer):
+    """
+    DMD lead / manager — the DMD section PLUS the MR section.
+
+    Subclasses the DMD serializer rather than the admin one so the STATUS GUARD
+    is inherited: a lead corrects the brief on a ticket that has reached them,
+    not on a draft MR is still writing. `validate` is overridden only to drop the
+    parent's "this field belongs to Market Research" refusal, which is the single
+    thing the seniority buys.
+
+    Not merged into TicketDMDUpdateSerializer with a per-instance field list: the
+    class a request gets IS the audit trail of what it was allowed to write, and
+    one class whose Meta.fields changes per caller cannot be read that way.
+    """
+
+    class Meta(TicketDMDUpdateSerializer.Meta):
+        fields = [*DMD_FIELDS, *MR_FIELDS, "event_code", "event_name"]
+
+    def validate(self, data):
+        ticket = self.instance
+        if ticket.status not in (Ticket.Status.MR_SUBMITTED,
+                                 Ticket.Status.COMPLETED):
+            raise serializers.ValidationError(
+                "Ticket fields can only be edited after MR submission."
+            )
+        return data
+
+
 class TicketAdminUpdateSerializer(serializers.ModelSerializer):
     """
     Admin override: can write any MR or DMD field at any status.

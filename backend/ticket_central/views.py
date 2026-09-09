@@ -24,6 +24,7 @@ from .serializers import (
     TicketCreateSerializer,
     TicketMRUpdateSerializer,
     TicketDMDUpdateSerializer,
+    TicketDMDLeadUpdateSerializer,
     TicketAdminUpdateSerializer,
 )
 from .filters import TicketFilter
@@ -39,9 +40,39 @@ from .permissions import (
     IsMarketResearchOrAdmin,
     IsDataMiningOrAdmin,
     IsTicketTeamOrAdmin,
+    may_edit_mr_fields,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Picklists, as the values the COLUMN ACTUALLY HOLDS ───────────────────────
+# type_of_ticket, relationship and ticket_type are plain CharFields (the D4 notes
+# in models.py) so nothing at the database layer constrains them, and the enums
+# on the model are NOT the stored vocabulary:
+#
+#   Ticket.TypeOfTicket.values  -> "BX", "CX", "WH"    …the column holds
+#                                  "Blue - BX", "Comp.-CX", "White - WH"
+#   Ticket.Relationship.values  -> "direct", "indirect" …the column holds
+#                                  "Direct", "Indirect"
+#
+# Feeding those enums to the mass-update picker offered a dropdown whose every
+# option was a value no row has ever carried, so applying it rewrote the column
+# into a second, parallel vocabulary — and, for type_of_ticket, one that
+# extract_type_code and the Mining Matrix both read differently.
+#
+# These lists are the stored spellings, verified against all 37,008 rows, and
+# they are the same three lists the ticket form offers (frontend TK_TYPES,
+# TK_RELATIONSHIPS, TK_TICKET_TYPES). Keep the two in step: a value here that the
+# form does not offer is one only a mass update can produce.
+TK_TYPE_OF_TICKET = [
+    "LinkedIn - LX", "Comp.-CX", "White - WH", "Blue - BX", "Green - GR",
+    "Yellow - YL", "Platinum - PX", "Gold - GX", "ZID",
+]
+TK_RELATIONSHIPS = ["Direct", "Indirect"]
+# The Data Mining ticket type — a different column from type_of_ticket above,
+# with its own two-value vocabulary.
+TK_TICKET_TYPES = ["Simple", "Complex"]
 
 
 class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
@@ -139,14 +170,19 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             # the repeated-link check reads
             "link_key",
         ),
-        # priority, type_of_ticket and relationship carry NO choices= at the DB
-        # level (the D4 notes in models.py:71-85 — Zoho's values don't match a
-        # fixed set), so these lists are the ONLY value safety those three have.
-        # Nothing at the database or model layer will catch a bad value.
+        # priority, type_of_ticket, relationship and ticket_type carry NO
+        # choices= at the DB level (the D4 notes in models.py:71-85 — Zoho's
+        # values don't match a fixed set), so these lists are the ONLY value
+        # safety those four have. Nothing at the database or model layer will
+        # catch a bad value. See the module-level lists for why three of them
+        # are literals rather than the model's own enums.
         choices={
+            # priority is the one enum whose values ARE what the column stores
+            # ("AS", "DD", "SPEX", …), so it is read off the model.
             "priority":       list(Ticket.Priority.values),
-            "type_of_ticket": list(Ticket.TypeOfTicket.values),
-            "relationship":   list(Ticket.Relationship.values),
+            "type_of_ticket": TK_TYPE_OF_TICKET,
+            "relationship":   TK_RELATIONSHIPS,
+            "ticket_type":    TK_TICKET_TYPES,
         },
         labels={
             "assign_name":      "Assign Name",
@@ -168,14 +204,40 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     @property
     def bulk_update_fields(self):
         """
-        assigned_mr's options are resolved per request from active users rather
-        than hardcoded. The column stores an EMAIL (verified against live data:
-        every real assignee matches an active user's email), and it is a
-        CharField not an FK — the D4 migration-safety decision — so without a
-        server-supplied list a mass assign would be free text across up to 1000
-        rows, and one typo would silently fragment the assignee set.
+        The three assignee columns are resolved per request from live users
+        rather than hardcoded. All three are CharFields, not ForeignKeys — the
+        D4 migration-safety decision — so without a server-supplied list a mass
+        assign is free text across up to 1000 rows at a time, and one typo
+        silently fragments the assignee set.
+
+        THE TWO COLUMNS STORE DIFFERENT THINGS, which is why this is not one
+        list used three times:
+
+          assigned_mr                      an EMAIL. Verified against live data:
+                                           every real assignee matches an active
+                                           user's email.
+          assign_name / assign_name_lx2    a DISPLAY NAME ("Vanshika Parmar").
+                                           Not one of the 37,008 stored values is
+                                           an email.
+
+        So the DMD pair offers display_name(user) — the same string
+        map_added_users writes into added_user_text and the same one
+        TicketCreateSerializer stamps — and offering emails there instead would
+        have written a value no existing row, filter or report matches.
+
+        WHY data_mining ONLY, AND WHAT MAKES A NEW ACCOUNT "CONNECT"
+        The DMD pair is scoped to role=DATA_MINING because these are Data Mining
+        assignments; assigned_mr stays unscoped, as it was. There is no join and
+        nothing to backfill: the link between a user and their 1,382 existing
+        tickets IS the name string. Create an account whose full name equals the
+        name already stored and it appears in this dropdown on the very next
+        request, matching those rows exactly. A name that does not match stored
+        text is a NEW value — correct for a joiner, and the reason the seeding
+        command below creates accounts from the names the column already holds.
         """
         from accounts.models import User
+        from .utils import display_name
+
         fields = dict(self._BULK_STATIC_FIELDS)
         fields["assigned_mr"] = {
             "group": "row", "type": "choice", "label": "Assigned MR",
@@ -186,6 +248,22 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 .values_list("email", flat=True)
             ),
         }
+        # dict.fromkeys, not set(): two users can share a display name, and the
+        # dropdown must not show the same option twice — but the order has to
+        # stay the sorted one a reader scans down.
+        dmd_names = list(dict.fromkeys(
+            n for n in (
+                display_name(u) for u in User.objects.filter(
+                    is_active=True, role=User.Role.DATA_MINING,
+                ).order_by("first_name", "last_name", "username")
+            ) if n
+        ))
+        for key, label in (("assign_name", "Assign Name"),
+                           ("assign_name_lx2", "Assign Name (LX-2)")):
+            fields[key] = {
+                "group": "row", "type": "choice", "label": label,
+                "choices": dmd_names,
+            }
         return fields
 
     # EXCLUDED, and why — anything absent from bulk_update_fields is refused:
@@ -208,8 +286,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     #                  — DEFAULT_EXCLUDES in accounts/bulk_update.py: source-system
     #                    keys and audit columns.
     #
-    #   assigned_mr is NOT excluded — it is added per request in the property
-    #   above, because its options are live users rather than a static list.
+    #   assigned_mr, assign_name and assign_name_lx2 are NOT excluded — all
+    #   three are added per request in the property above, because their options
+    #   are live users rather than a static list. assign_name and its LX-2 twin
+    #   would otherwise be derived as plain text and offered as a free-text box.
 
     filterset_class = TicketFilter
     # Was fourteen fields, two of them TextField prose. One search was fourteen
@@ -233,7 +313,16 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "ticket_number", "event_code", "purpose", "organizer",
         "competitor_event_name", "assigned_mr", "assign_name",
     ]
-    ordering_fields = ["id", "created_at", "updated_at", "status", "priority"]
+    ordering_fields = ["id", "created_at", "updated_at", "status", "priority",
+                       "estimate"]
+    # estimate is nullable — 1,993 of 37,008 rows carry no value — and PostgreSQL
+    # sorts NULLs FIRST on a DESC sort, so "largest estimate first" would open on
+    # a block of empty cells with the actual largest rows below them. An
+    # unestimated ticket has no position on a size ranking, so it belongs at the
+    # END in either direction; accounts/ordering.StableOrderingFilter applies that
+    # for the fields named here. Opt-in per field, not blanket, because
+    # NULLS LAST on DESC does not match a plain DESC index — see the note there.
+    nulls_last_ordering_fields = ("estimate",)
     # Newest first — see Ticket.Meta.ordering for the history of this flip.
     ordering        = ["-created_at", "-id"]
 
@@ -262,7 +351,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             if user.role == "market_research":
                 return TicketMRUpdateSerializer
             if user.role == "data_mining":
-                return TicketDMDUpdateSerializer
+                # A DMD lead or manager also gets the MR half — see
+                # permissions.may_edit_mr_fields.
+                return (TicketDMDLeadUpdateSerializer if may_edit_mr_fields(user)
+                        else TicketDMDUpdateSerializer)
             return TicketDetailSerializer  # fallback read-only
         if self.action == "retrieve":
             return TicketDetailSerializer

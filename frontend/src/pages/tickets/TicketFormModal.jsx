@@ -161,7 +161,7 @@ function Pick({ value, options, onChange, disabled, placeholder = '—Select—'
 }
 
 export default function TicketFormModal({ ticket, onClose, onSaved }) {
-  const { can, user } = useSession();
+  const { can, user, mayEditMrFields } = useSession();
   const toast = useToast();
   const isNew = !ticket;
   const { data: users } = useFetch(usersApi.list, [], { initialData: [] });
@@ -191,12 +191,20 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
   const mayWrite = can(isNew ? 'create' : 'update', 'ticket_central');
   const isAdmin = user.role === 'admin';
   const status = ticket?.status;
-  const mrOpen = mayWrite && (isNew || isAdmin || (user.role === 'market_research' && (status === 'draft' || status === 'returned')));
-  const dmdOpen = mayWrite && !isNew && (isAdmin || (user.role === 'data_mining' && (status === 'mr_submitted' || status === 'completed')));
+  // A DMD lead/manager may correct the MR half of a ticket that has reached
+  // them. Same window as their own section, because it is the same edit pass —
+  // the server enforces it in TicketDMDLeadUpdateSerializer.
+  const dmdLead = user.role === 'data_mining' && mayEditMrFields;
+  const dmdWindow = status === 'mr_submitted' || status === 'completed';
+  const mrOpen = mayWrite && (isNew || isAdmin
+    || (user.role === 'market_research' && (status === 'draft' || status === 'returned'))
+    || (dmdLead && !isNew && dmdWindow));
+  const dmdOpen = mayWrite && !isNew && (isAdmin || (user.role === 'data_mining' && dmdWindow));
   const mrLock = mrOpen ? null
     : isNew ? 'You do not have permission to raise tickets.'
       : user.role === 'market_research' ? 'Read-only — MR fields are editable while a ticket is Draft or Returned.'
-        : 'Read-only for your role.';
+        : dmdLead ? 'Read-only — as a DMD lead you can correct MR fields once a ticket is MR Submitted.'
+          : 'Read-only for your role.';
   const dmdLock = dmdOpen ? null
     : isNew ? 'Data Mining fills this in after the ticket is submitted — the API refuses these fields at create.'
       : user.role === 'data_mining' ? 'Read-only — DMD fields are editable once a ticket is MR Submitted.'

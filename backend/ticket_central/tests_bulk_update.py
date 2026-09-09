@@ -14,6 +14,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from accounts.models import ActionLog
 from ticket_central.models import Ticket
+from ticket_central import views
 from ticket_central.views import TicketViewSet
 from teams.models import Team, TeamPermission
 
@@ -227,14 +228,27 @@ class TicketBulkUpdateTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("not a valid choice", r.data["detail"])
 
-    # ── choices sourced from the model enums ──────────────────────────────────
-    def test_choices_match_model_enums(self):
+    # ── choices sourced from what the COLUMNS HOLD ────────────────────────────
+    def test_choices_match_the_stored_vocabulary(self):
+        """
+        This test used to assert the opposite — that the picker offered
+        Ticket.TypeOfTicket.values and Ticket.Relationship.values — and it passed
+        while the dropdown was wrong. Those enums are not the stored vocabulary:
+        the column holds "Blue - BX" and "Direct", never "BX" or "direct", so
+        every option offered for two of these three fields was a value no row has
+        ever carried. Priority is the one enum that IS what the column stores.
+
+        Pinned against the module's literals rather than re-typed, so a change
+        that edits one list has to mean it. tests_bulk_update_picklists.py holds
+        the values themselves, checked against production.
+        """
         req = self.factory.get("/bulk_update_schema/")
         force_authenticate(req, user=self.user)
         f = SCHEMA(req).data["fields"]
         self.assertEqual(f["priority"]["choices"],       list(Ticket.Priority.values))
-        self.assertEqual(f["type_of_ticket"]["choices"], list(Ticket.TypeOfTicket.values))
-        self.assertEqual(f["relationship"]["choices"],   list(Ticket.Relationship.values))
+        self.assertEqual(f["type_of_ticket"]["choices"], views.TK_TYPE_OF_TICKET)
+        self.assertEqual(f["relationship"]["choices"],   views.TK_RELATIONSHIPS)
+        self.assertEqual(f["ticket_type"]["choices"],    views.TK_TICKET_TYPES)
         self.assertIn(self.user.email, f["assigned_mr"]["choices"])
 
     def _schema_fields(self):

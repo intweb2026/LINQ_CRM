@@ -49,6 +49,7 @@ from accounts.ordering import StableOrderingFilter
 from accounts.period_filter import PeriodFilterMixin
 from accounts.permissions import IsHPAccount
 from proposal_submission.models import ProposalSubmission
+from proposal_submission.views import AGENDA_SLOT_OPTIONS
 
 from .access import (
     has_full_visibility, may_see_mr_fields, may_use_event_code,
@@ -237,6 +238,14 @@ class PaperReviewViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             "speaker_email_ref", "research_email_ref",
             "proposal_score", "grade",
         ),
+        # session_location_on_agenda is a plain CharField with no choices= (see
+        # OPTION_FIELDS below for why), but the review form offers it as a
+        # dropdown, so mass update must too — a free-text box over a required
+        # picklist column is how a slot the form cannot render gets written to
+        # every selected row at once. Reused from proposal_submission rather
+        # than copied: the bridge maps this column straight into agenda_slot, so
+        # a second list here could disagree with the one it lands in.
+        choices={"session_location_on_agenda": AGENDA_SLOT_OPTIONS},
         # The importer's column names, reused verbatim: a field must not be
         # called one thing in the import wizard and the CSV header, and
         # something else in the mass-update picker. It already carries the
