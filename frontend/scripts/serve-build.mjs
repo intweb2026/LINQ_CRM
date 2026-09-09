@@ -10,7 +10,7 @@
  *   404, so every request in the app fails. `serve` dropped origin-proxying in
  *   v11 and CRA's package.json "proxy" field only applies to `react-scripts
  *   start` (the dev server), which is not what we run. Hence: static files with
- *   SPA fallback, plus a real proxy for /api and /media.
+ *   SPA fallback, plus a real proxy for /api, /media, /admin and /mcp.
  *
  * Keeping requests same-origin also keeps them preflight-free, so the
  * `Authorization: Token …` header the client attaches needs no CORS round trip.
@@ -30,7 +30,28 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_DIR = path.resolve(HERE, '..', 'build');
 const PORT = Number(process.env.PORT || 3000);
 const API_TARGET = new URL(process.env.API_TARGET || 'http://127.0.0.1:8000');
-const PROXY_PREFIXES = ['/api/', '/api', '/media/', '/media', '/admin/', '/static/admin/'];
+/**
+ * Paths that belong to Django rather than to the React build.
+ *
+ * Each prefix is listed twice, with and without the trailing slash, because
+ * shouldProxy() matches on equality or startsWith and '/api' alone would miss
+ * a request for exactly '/api'.
+ *
+ * THE LAST TWO ARE THE MCP ENDPOINT, and they are not optional decoration.
+ * Without them the SPA catch-all below answers /mcp with index.html and a 200,
+ * so a connector asking to speak MCP is handed the React page and fails in a
+ * way that looks like nothing at all is wrong. The .well-known entry is the
+ * RFC 9728 discovery document a client fetches from the WWW-Authenticate
+ * header before it can authenticate; it has to come from Django too, or the
+ * endpoint advertises an address that answers with HTML.
+ */
+const PROXY_PREFIXES = [
+  '/api/', '/api',
+  '/media/', '/media',
+  '/admin/', '/static/admin/',
+  '/mcp/', '/mcp',
+  '/.well-known/oauth-protected-resource/', '/.well-known/oauth-protected-resource',
+];
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
