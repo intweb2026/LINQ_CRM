@@ -156,6 +156,11 @@ INSTALLED_APPS = [
     # networking draw. Reads book_delegate and events, owns two tables of its
     # own, so it sits AFTER book_delegate.
     "pre_event_docs",
+    # OAuth authorization server for the MCP endpoint. Owns only its own four
+    # tables and reuses accounts for identity; it authenticates nobody itself,
+    # it asks Google and then matches the email to an existing CRM user exactly
+    # as GoogleTokenLoginView does. Sits after accounts for that FK.
+    "mcp_auth",
 ]
 
 MIDDLEWARE = [
@@ -524,6 +529,20 @@ WEBHOOK_SECRET_KEY  = os.environ.get("WEBHOOK_SECRET_KEY", "")
 # uses no client secret, so there is nothing else to configure. Without this,
 # POST /api/auth/google/ answers 500 rather than silently letting anyone in.
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+
+# ── MCP endpoint ─────────────────────────────────────────────────────────────
+# The address clients reach /mcp on, and the identity the OAuth metadata is
+# built from. It has to be the public hostname, not an internal one, because
+# claude.ai compares what the discovery document says against where it
+# connected; a mismatch fails the handshake rather than degrading.
+#
+# THE SAME ENV VAR mcp_server.py READS. That module is also the stdio entry
+# point and runs with no Django settings loaded, so it takes the variable
+# straight from the environment; this exposes it to code that does have
+# settings, notably mcp_auth.provider. One variable, two readers, no drift.
+MCP_PUBLIC_URL = config(
+    "LINQ_MCP_PUBLIC_URL", default="https://www.app.iq-hub.com",
+).rstrip("/")
 # Only these email domains may sign in. Emptying the list disables the check.
 GOOGLE_OAUTH_ALLOWED_DOMAINS = [
     d.strip().lower()
