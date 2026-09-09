@@ -1,157 +1,179 @@
 """
 LINQ CRM MCP server, stdio transport.
 
-Wraps the Data API that already exists at /api/data/, so Claude reads bookings,
-delegates, events and tickets through the same X-DATA-API-KEY credential the
-Sheets sync uses. Nothing here can write. The surface it calls is a
-ReadOnlyModelViewSet and the key never authenticates as a CRM user, see
-dataapi/authentication.py.
+COMPLETE APP ACCESS. This authenticates with a DRF token belonging to a real
+CRM account, so it reaches every /api/ endpoint that account is allowed to
+reach and it can write. A token for an admin is superuser equivalent; anything
+you can do in the CRM UI, Claude can do here, deletes included. Scope it by
+minting the token for an account with the role you actually want, not by
+trusting this file.
+
+Three generic tools rather than one per resource, because the API is a DRF
+router; the endpoint list is discoverable at runtime and would only rot if
+copied here. See api_endpoints.
 
 Setup, three steps.
-  1. python manage.py create_data_api_key "Claude MCP"
+  1. python manage.py drf_create_token HP
   2. pip install mcp
-  3. set LINQ_DATA_API_KEY to the printed dapi_ key, then point Claude at
-     this file; .mcp.json in the repo root already does that for Claude Code.
+  3. put the printed token in LINQ_CRM_TOKEN, see .mcp.json in the repo root.
 
-Check it works, LINQ_DATA_API_KEY=dapi_... python backend/mcp_server.py --selftest
+Revoke, python manage.py shell -c "from rest_framework.authtoken.models import
+Token; Token.objects.filter(user__username='HP').delete()"
+
+Check it works, LINQ_CRM_TOKEN=... python backend/mcp_server.py --selftest
 """
 import os
 import sys
-from urllib.parse import parse_qs, urlparse
 
 import requests
 from mcp.server.mcpserver import MCPServer
 # ToolError is the only exception whose text reaches the model. Anything else
 # is masked as a bare Error executing tool, which tells Claude nothing about a
-# scope refusal or a bad watermark, so every failure below raises this one.
+# 403 or a validation error, so every failure below raises this one.
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 BASE_URL = os.environ.get("LINQ_API_URL", "http://localhost:8000").rstrip("/")
-API_KEY = os.environ.get("LINQ_DATA_API_KEY", "")
-# Mirrors dataapi.models.DATA_API_SCOPES. A key may be scoped narrower than
-# this, in which case the server answers 403 and _get passes that body through.
-RESOURCES = ("bookings", "delegates", "events", "tickets")
-TIMEOUT = 30
+TOKEN = os.environ.get("LINQ_CRM_TOKEN", "")
+WRITE_METHODS = ("POST", "PATCH", "PUT", "DELETE")
+TIMEOUT = 60
 
 mcp = MCPServer("linq-crm")
-# Every tool here is a GET against a ReadOnlyModelViewSet, so say so and let
-# clients skip the write confirmation.
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
+# Writes go to the live CRM under a real account. destructiveHint is what makes
+# a client prompt before each one, which is the only gate between Claude and a
+# DELETE, so it is load bearing rather than decoration.
+WRITES = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
 
 
-def _params(event_code="", status="", updated_since="", page_size=None, cursor=""):
-    """Drop the unset filters, the Data API ignores an empty value anyway."""
-    pairs = {
-        "event_code": event_code,
-        "status": status,
-        "updated_since": updated_since,
-        "page_size": page_size,
-        "cursor": cursor,
-    }
-    return {k: v for k, v in pairs.items() if v not in (None, "")}
+def _url(path):
+    """
+    Normalise a caller supplied path to an absolute CRM URL.
+
+    The trailing slash is enforced rather than left to APPEND_SLASH. Django
+    answers a slashless POST with a 301 to the slashed path, requests follows
+    it, and the redirect turns the POST into a GET, so a write would silently
+    do nothing. Accepts tickets/, /api/tickets/ and api/tickets/ alike.
+    """
+    clean = str(path).strip().lstrip("/")
+    if clean.startswith("api/"):
+        clean = clean[len("api/"):]
+    if "?" in clean:
+        raise ToolError("Put query parameters in params, not in path.")
+    if clean and not clean.endswith("/"):
+        clean += "/"
+    return f"{BASE_URL}/api/{clean}"
 
 
-def _cursor_of(next_url):
-    """Pull the opaque cursor out of the next URL, so no URL crosses the tool boundary."""
-    if not next_url:
-        return ""
-    return parse_qs(urlparse(next_url).query).get("cursor", [""])[0]
-
-
-def _check(resource):
-    if resource not in RESOURCES:
-        raise ToolError(f"Unknown resource {resource!r}, one of {', '.join(RESOURCES)}.")
-
-
-def _get(path, params=None):
-    if not API_KEY:
-        raise ToolError("LINQ_DATA_API_KEY is not set, create one with "
-                        "manage.py create_data_api_key.")
+def _call(method, path, params=None, body=None):
+    if not TOKEN:
+        raise ToolError("LINQ_CRM_TOKEN is not set, mint one with "
+                        "manage.py drf_create_token <username>.")
     try:
-        resp = requests.get(
-            f"{BASE_URL}/api/data/{path}",
+        resp = requests.request(
+            method,
+            _url(path),
             params=params or {},
-            headers={"X-DATA-API-KEY": API_KEY},
+            json=body,
+            headers={"Authorization": f"Token {TOKEN}"},
             timeout=TIMEOUT,
         )
     except requests.RequestException as exc:
         # A stopped dev server is the everyday failure here. Named, because
         # otherwise it reaches Claude as an unexplained crash and it retries.
         raise ToolError(f"Cannot reach the CRM at {BASE_URL}, {exc}") from exc
+
     if resp.status_code >= 400:
-        # Scope refusals and bad watermarks are explained in the body, so pass
-        # it through rather than a bare status Claude cannot act on.
-        raise ToolError(f"{resp.status_code} from {resp.url}, {resp.text[:500]}")
-    return resp.json()
+        # DRF explains 403s and field validation in the body, so pass it
+        # through rather than a bare status Claude cannot act on.
+        raise ToolError(f"{resp.status_code} {method} {resp.url}, {resp.text[:1000]}")
+    if resp.status_code == 204 or not resp.content:
+        # 204 on DELETE, and any empty 200. json() would raise on both.
+        return {"status": resp.status_code, "detail": "No content."}
+    try:
+        return resp.json()
+    except ValueError:
+        return {"status": resp.status_code, "text": resp.text[:2000]}
 
 
 @mcp.tool(annotations=READ_ONLY)
-def list_records(resource: str, event_code: str = "", status: str = "",
-                 updated_since: str = "", page_size: int = 50,
-                 cursor: str = "") -> dict:
+def api_endpoints() -> dict:
     """
-    Read a page of CRM rows, newest ids last, ordered by primary key.
+    List the CRM API endpoints available to this account.
 
-    resource is one of bookings, delegates, events, tickets.
-    event_code filters bookings, delegates and tickets, for example MEC2026.
-    status filters tickets only. updated_since takes an ISO 8601 timestamp.
-    Feed next_cursor back in as cursor to read the following page; an empty
-    next_cursor means that was the last one. The events catalogue takes no
-    filters and returns every row.
+    Read this first when you do not already know the path for something. It is
+    the live DRF router index, so it never disagrees with the running server.
+    Endpoints outside the router are not listed; those include reports/,
+    performance-matrix/, mining-matrix/, historical-events/, pre-event-docs/,
+    google-sync/, search/ and stats/dashboard/.
     """
-    _check(resource)
-    data = _get(f"{resource}/",
-                _params(event_code, status, updated_since, page_size, cursor))
-    return {
-        "results": data.get("results", []),
-        "next_cursor": _cursor_of(data.get("next")),
-    }
+    return _call("GET", "")
 
 
 @mcp.tool(annotations=READ_ONLY)
-def get_record(resource: str, record_id: int) -> dict:
-    """Read one row by its numeric id. resource is as in list_records."""
-    _check(resource)
-    return _get(f"{resource}/{record_id}/")
-
-
-@mcp.tool(annotations=READ_ONLY)
-def count_records(resource: str, event_code: str = "", status: str = "",
-                  updated_since: str = "") -> int:
+def api_get(path: str, params: dict | None = None) -> dict:
     """
-    Count the rows matching a filter without paging through them.
+    Read any CRM endpoint.
 
-    Same resource and filters as list_records. Use this for how many questions,
-    the list pages carry no total.
+    path is relative, for example tickets/, tickets/296410/ or
+    stats/dashboard/. A leading /api/ is optional.
+
+    params carries the query string. Lists are page numbered, so page and
+    page_size up to 1000 walk them, and the reply carries count and
+    total_pages. Most lists also take search= for free text and ordering= for
+    sort. Ask for the smallest page that answers the question; a 1000 row page
+    of some resources is hundreds of kilobytes.
     """
-    _check(resource)
-    # ponytail: /ids/ ships every id and we keep only the count, roughly 350 KB
-    # on the largest resource. Fine for a question asked now and then, add a
-    # count-only endpoint if this gets called in a loop.
-    return _get(f"{resource}/ids/", _params(event_code, status, updated_since))["count"]
+    return _call("GET", path, params=params)
+
+
+@mcp.tool(annotations=WRITES)
+def api_write(method: str, path: str, body: dict | None = None) -> dict:
+    """
+    Create, update or delete through the CRM API. This changes live data.
+
+    method is POST to create, PATCH to change some fields, PUT to replace, or
+    DELETE to remove. path is as in api_get; a write to one row needs its id,
+    for example PATCH tickets/296410/. body is the JSON payload, omitted for
+    DELETE.
+
+    Read the row with api_get before changing it, and prefer PATCH to PUT so
+    fields you did not mention keep their values.
+    """
+    verb = str(method).strip().upper()
+    if verb not in WRITE_METHODS:
+        raise ToolError(f"method must be one of {', '.join(WRITE_METHODS)}, "
+                        f"got {method!r}. Use api_get to read.")
+    return _call(verb, path, body=body)
 
 
 def _selftest():
-    assert _params() == {}
-    assert _params(event_code="MEC2026", status="") == {"event_code": "MEC2026"}
-    assert _params(page_size=50, cursor="cD0x") == {"page_size": 50, "cursor": "cD0x"}
-    assert _cursor_of("") == ""
-    assert _cursor_of("http://h/api/data/tickets/?cursor=cD0x&page_size=50") == "cD0x"
+    assert _url("tickets") == f"{BASE_URL}/api/tickets/"
+    assert _url("/api/tickets/") == f"{BASE_URL}/api/tickets/"
+    assert _url("api/tickets/296410") == f"{BASE_URL}/api/tickets/296410/"
+    assert _url("") == f"{BASE_URL}/api/"
     try:
-        _check("users")
+        _url("tickets/?page=2")
+    except ToolError:
+        pass
+    else:
+        raise AssertionError("_url accepted a query string in the path")
+    try:
+        api_write("GET", "tickets/")
     except ToolError as exc:
         # ToolError specifically, a ValueError here would reach Claude as an
-        # unexplained crash instead of naming the four resources.
-        assert "bookings" in str(exc), exc
+        # unexplained crash instead of telling it to use api_get.
+        assert "api_get" in str(exc), exc
     else:
-        raise AssertionError("_check accepted a resource that is not a scope")
-    if API_KEY:
-        page = _get("events/", {"page_size": 1})
-        assert page["resource"] == "events", page
-        print(f"live ok, {len(page['results'])} event row from {BASE_URL}")
+        raise AssertionError("api_write accepted GET")
+
+    if TOKEN:
+        roots = _call("GET", "")
+        print(f"live ok, {len(roots)} router endpoints, {', '.join(sorted(roots))}")
+        page = _call("GET", "events/", params={"page_size": 1})
+        print(f"events count {page['count']}")
     else:
-        print("no LINQ_DATA_API_KEY, skipped the live call")
+        print("no LINQ_CRM_TOKEN, skipped the live calls")
     print("selftest ok")
 
 

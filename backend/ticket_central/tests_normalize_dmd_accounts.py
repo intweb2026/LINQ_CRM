@@ -15,6 +15,8 @@ Kept apart from tests_normalize_dmd_assignees.py, which covers the ticket
 columns, only because that file is being edited in parallel.
 """
 import io
+import tempfile
+from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -40,6 +42,12 @@ def make_user(username, first, last, **kwargs):
 class NormalizeDmdAccountsTests(TestCase):
 
     def run_command(self, **kwargs):
+        # undo_file is passed explicitly, and it matters. The command defaults it
+        # to a timestamped name in the WORKING DIRECTORY, so a test run without
+        # this drops a dmd_normalize_undo_*.json into backend/ every time it
+        # calls the command, and they accumulate as untracked litter.
+        kwargs.setdefault(
+            "undo_file", str(Path(tempfile.mkdtemp()) / "undo.json"))
         out = io.StringIO()
         call_command("normalize_dmd_assignees", stdout=out, **kwargs)
         return out.getvalue()

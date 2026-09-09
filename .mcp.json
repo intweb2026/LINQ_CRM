@@ -5,7 +5,7 @@
       "args": ["backend/mcp_server.py"],
       "env": {
         "LINQ_API_URL": "${LINQ_API_URL:-http://localhost:8000}",
-        "LINQ_DATA_API_KEY": "${LINQ_DATA_API_KEY}"
+        "LINQ_CRM_TOKEN": "${LINQ_CRM_TOKEN}"
       }
     }
   }
