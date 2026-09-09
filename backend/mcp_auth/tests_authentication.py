@@ -8,8 +8,10 @@ so every tool call answered 401. These tests hit a real API endpoint with a
 real MCP token, so the whole chain is exercised rather than the lookup alone.
 """
 from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.db import OperationalError, ProgrammingError
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
@@ -88,6 +90,44 @@ class McpTokenAuthenticationTests(TestCase):
         # Adding an authenticator must not disturb the one the web app uses.
         drf = Token.objects.create(user=self.user)
         self.assertEqual(self.get(raw=drf.key, scheme="Token").status_code, 200)
+
+    def _lookup_raises(self, exception):
+        """Stand in for the model so the token lookup fails the way we choose."""
+        model = MagicMock()
+        model.ACCESS = IssuedToken.ACCESS
+        model.objects.select_related.return_value.filter.return_value.first.side_effect = exception
+        return patch("mcp_auth.authentication.IssuedToken", model)
+
+    def test_a_missing_table_answers_401_rather_than_500(self):
+        """
+        Code deployed ahead of its migration must not break the API.
+
+        This is not hypothetical. It reached production once; every request
+        carrying a Bearer header answered 500 because the mcp_auth tables did
+        not exist yet. No table means no tokens were ever issued, so refusing
+        the token is the honest answer.
+        """
+        with self._lookup_raises(ProgrammingError('relation "x" does not exist')):
+            with self.assertLogs("mcp_auth.authentication", level="ERROR") as logged:
+                response = self.get()
+        self.assertEqual(response.status_code, 401)
+        # Loud, because somebody still has to run migrate.
+        self.assertIn("migrate", logged.output[0])
+
+    def test_a_missing_table_does_not_break_drf_token_auth(self):
+        # The web app must keep working through the same window.
+        drf = Token.objects.create(user=self.user)
+        with self._lookup_raises(ProgrammingError('relation "x" does not exist')):
+            response = self.get(raw=drf.key, scheme="Token")
+        self.assertEqual(response.status_code, 200)
+
+    def test_a_dead_database_is_not_swallowed(self):
+        # OperationalError is an outage, not a deploy-order mistake. Turning it
+        # into a tidy 401 would hide a broken database behind a wall of
+        # plausible-looking auth failures.
+        with self._lookup_raises(OperationalError("connection refused")):
+            with self.assertRaises(OperationalError):
+                self.get()
 
     def test_unauthenticated_401s_still_advertise_the_token_scheme(self):
         # DRF takes WWW-Authenticate from the FIRST authenticator. Appending

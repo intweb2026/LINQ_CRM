@@ -37,7 +37,11 @@ const API_TARGET = new URL(process.env.API_TARGET || 'http://127.0.0.1:8000');
  * shouldProxy() matches on equality or startsWith and '/api' alone would miss
  * a request for exactly '/api'.
  *
- * THE LAST TWO ARE THE MCP ENDPOINT, and they are not optional decoration.
+ * EVERYTHING FROM /mcp DOWN IS THE MCP CONNECTOR, and none of it is optional
+ * decoration. /authorize, /token, /register and /revoke are the OAuth flow the
+ * MCP SDK serves; a client walks discovery, registers itself, sends the person
+ * to /authorize and exchanges the result at /token, so a single missing prefix
+ * breaks the connection at whichever step it belongs to.
  * Without them the SPA catch-all below answers /mcp with index.html and a 200,
  * so a connector asking to speak MCP is handed the React page and fails in a
  * way that looks like nothing at all is wrong. The .well-known entry is the
@@ -51,6 +55,11 @@ const PROXY_PREFIXES = [
   '/admin/', '/static/admin/',
   '/mcp/', '/mcp',
   '/.well-known/oauth-protected-resource/', '/.well-known/oauth-protected-resource',
+  '/.well-known/oauth-authorization-server/', '/.well-known/oauth-authorization-server',
+  '/authorize/', '/authorize',
+  '/token/', '/token',
+  '/register/', '/register',
+  '/revoke/', '/revoke',
 ];
 
 const MIME = {

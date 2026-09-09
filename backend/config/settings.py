@@ -550,6 +550,16 @@ GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
 MCP_PUBLIC_URL = config(
     "LINQ_MCP_PUBLIC_URL", default="https://www.app.iq-hub.com",
 ).rstrip("/")
+# Where the MCP tools reach the CRM's own API from inside the process. Left
+# empty they call back to this container on PORT, which is what the platform
+# already sets, 3000 on Coolify and 8000 for runserver. Set it only to point
+# the tools somewhere other than the app they are running in.
+#
+# LOOPBACK RATHER THAN MCP_PUBLIC_URL ON PURPOSE. Defaulting to the public
+# address would mean a developer running this locally drives production without
+# noticing.
+MCP_INTERNAL_API_URL = config("LINQ_API_URL", default="")
+MCP_INTERNAL_PORT = config("PORT", default="8000")
 # Only these email domains may sign in. Emptying the list disables the check.
 GOOGLE_OAUTH_ALLOWED_DOMAINS = [
     d.strip().lower()

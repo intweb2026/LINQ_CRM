@@ -27,10 +27,15 @@ of the OAuth flow. It is registered LAST, so it cannot change the
 WWW-Authenticate header on existing 401s; DRF takes that from the first
 authenticator in the list.
 """
+import logging
+
+from django.db import ProgrammingError
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed
 
 from .models import IssuedToken, hash_secret
+
+logger = logging.getLogger(__name__)
 
 
 class McpTokenAuthentication(BaseAuthentication):
@@ -52,10 +57,32 @@ class McpTokenAuthentication(BaseAuthentication):
         except UnicodeError:
             raise AuthenticationFailed("Invalid bearer token.")
 
-        row = (IssuedToken.objects
-               .select_related("user")
-               .filter(token_hash=hash_secret(token), kind=IssuedToken.ACCESS)
-               .first())
+        try:
+            row = (IssuedToken.objects
+                   .select_related("user")
+                   .filter(token_hash=hash_secret(token), kind=IssuedToken.ACCESS)
+                   .first())
+        except ProgrammingError:
+            # THE TABLE IS MISSING, which means code was deployed ahead of its
+            # migration. This authenticator runs on every API request, so the
+            # unguarded version turned that ordinary deploy-order mistake into
+            # a 500 on any request carrying a Bearer header, from any scanner
+            # on the internet. It happened once, on production.
+            #
+            # No table means no tokens have been issued, so the honest answer
+            # is that this one is unknown; a 401 says exactly that. Logged at
+            # error level because the fix, running migrate, is real work that
+            # somebody has to do, and a silent degradation would hide it.
+            #
+            # ProgrammingError ONLY. OperationalError is a lost connection or a
+            # dead database, and swallowing that would turn an outage into a
+            # wall of confusing 401s instead of a loud failure.
+            logger.error(
+                "mcp_auth tables are missing, so bearer tokens cannot be "
+                "checked and are all being refused. Run manage.py migrate."
+            )
+            return None
+
         if row is None:
             raise AuthenticationFailed("Invalid or expired token.")
         if row.is_expired():

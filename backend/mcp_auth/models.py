@@ -56,6 +56,15 @@ class OAuthClient(models.Model):
     # exchange to the browser that started it.
     client_secret_hash = models.CharField(max_length=64, blank=True, default="")
     client_name = models.CharField(max_length=255, blank=True, default="")
+    # How the client proves itself at /token. STORED, not defaulted at read
+    # time: leaving it off meant get_client() handed the SDK a None, which its
+    # client-auth middleware does not recognise, and every token exchange died
+    # with "Unsupported auth method: None". The flow tests missed it because
+    # they call the provider directly and never cross that middleware.
+    #
+    # "none" is a public client proving itself with PKCE instead of a secret,
+    # which is what MCP clients use and what claude.ai registers as.
+    token_endpoint_auth_method = models.CharField(max_length=32, default="none")
     redirect_uris = models.JSONField(default=list)
     grant_types = models.JSONField(default=list)
     response_types = models.JSONField(default=list)
