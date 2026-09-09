@@ -314,6 +314,13 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
+        # MCP access tokens, presented as "Authorization: Bearer <token>". It
+        # resolves to a real User, so RBAC, scoping and audit all behave as
+        # though that person made the request; that is why it belongs here and
+        # dataapi's key emphatically does not. LAST ON PURPOSE, DRF takes the
+        # WWW-Authenticate header from the first entry, so appending leaves the
+        # existing 401s answering "Token" exactly as before.
+        "mcp_auth.authentication.McpTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",

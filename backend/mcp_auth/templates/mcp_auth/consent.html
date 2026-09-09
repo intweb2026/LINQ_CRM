@@ -1,0 +1,128 @@
+{% comment %}
+The MCP consent page.
+
+Deliberately a plain Django template and not part of the React build. It is
+reached mid-OAuth-redirect, before anyone is signed in, so loading a megabyte
+of application bundle to render one button would be waste; and keeping it out
+of the SPA means a frontend deploy cannot break the sign-in flow.
+
+Google Identity Services is loaded from Google directly, the same script and
+the same client id the React app uses.
+{% endcomment %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect to IQ-Hub CRM</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f6f7f9; color: #101418;
+    }
+    .card {
+      width: min(420px, calc(100vw - 32px)); background: #fff; padding: 32px;
+      border: 1px solid #e3e6ea; border-radius: 12px;
+      box-shadow: 0 1px 3px rgb(16 20 24 / 8%);
+    }
+    h1 { margin: 0 0 4px; font-size: 19px; }
+    p { margin: 0 0 20px; color: #5a6470; }
+    .who { font-weight: 600; color: #101418; }
+    ul { margin: 0 0 20px; padding-left: 18px; color: #5a6470; }
+    li { margin-bottom: 4px; }
+    .msg { margin-top: 16px; padding: 10px 12px; border-radius: 8px;
+           background: #fdeaea; color: #8c1c1c; display: none; }
+    .msg.show { display: block; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #14181d; color: #e8ebee; }
+      .card { background: #1b2027; border-color: #2b323b; }
+      p, ul { color: #9aa5b1; }
+      .who { color: #e8ebee; }
+      .msg { background: #3a1c1c; color: #ffb4b4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+  {% if pending %}
+    <h1>Connect to IQ-Hub CRM</h1>
+    <p>
+      <span class="who">{{ client_name|default:"An application" }}</span>
+      is asking to read and change CRM data as you.
+    </p>
+    <ul>
+      <li>It sees only what your CRM role already allows.</li>
+      <li>Everything it does is recorded against your account.</li>
+      <li>You can revoke access at any time.</li>
+    </ul>
+
+    {% if google_client_id %}
+      <div id="gbtn"></div>
+      <div class="msg" id="msg"></div>
+
+      {% csrf_token %}
+      <script src="https://accounts.google.com/gsi/client" async defer></script>
+      <script>
+        // The credential never touches this page's logic. It goes straight to
+        // the server, which verifies it with Google and applies the same four
+        // rules the web app's login does. See accounts/google_identity.py.
+        function onCredential(response) {
+          const body = new URLSearchParams({
+            tx: "{{ tx|escapejs }}",
+            credential: response.credential,
+          });
+          fetch("{% url 'mcp-auth-consent-complete' %}", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-CSRFToken": document.querySelector("[name=csrfmiddlewaretoken]").value,
+            },
+            body,
+          })
+            .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => {
+              if (ok && d.redirect) {
+                // Back to the client with the code. assign, not replace, so the
+                // browser's back button still works if the client errors.
+                window.location.assign(d.redirect);
+                return;
+              }
+              show(d.detail || "Sign-in failed. Please try again.");
+            })
+            .catch(() => show("Could not reach the server. Please try again."));
+        }
+
+        function show(text) {
+          const el = document.getElementById("msg");
+          el.textContent = text;
+          el.classList.add("show");
+        }
+
+        window.onload = function () {
+          google.accounts.id.initialize({
+            client_id: "{{ google_client_id|escapejs }}",
+            callback: onCredential,
+          });
+          google.accounts.id.renderButton(document.getElementById("gbtn"), {
+            theme: "outline", size: "large", width: 356, text: "continue_with",
+          });
+        };
+      </script>
+    {% else %}
+      <div class="msg show">
+        Google Sign-In is not configured on this server, so this connection
+        cannot be completed. Contact an administrator.
+      </div>
+    {% endif %}
+  {% else %}
+    <h1>This request has expired</h1>
+    <p>
+      Sign-in requests are valid for ten minutes. Start again from the
+      application you were connecting.
+    </p>
+  {% endif %}
+  </div>
+</body>
+</html>

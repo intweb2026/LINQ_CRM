@@ -52,6 +52,12 @@ urlpatterns = [
          name="paper-review-form-config"),
     path("api/paper-review-form/submit/", PaperReviewFormSubmitView.as_view(),
          name="paper-review-form-submit"),
+    # The MCP consent page. Under api/ because the production frontend forwards
+    # only a fixed list of prefixes to Django and answers everything else with
+    # the React shell; see frontend/scripts/serve-build.mjs. Unauthenticated by
+    # necessity, it is where signing in happens, and it is a separate credential
+    # domain from the session API for the same reason api/data/ is.
+    path("api/mcp-auth/",        include("mcp_auth.urls")),
     path("api/google-sync/",     include("google_sync.urls")),
     path("api/reports/",         include("reports.urls")),
     # Read-only export surface. Authenticated by X-DATA-API-KEY only — see

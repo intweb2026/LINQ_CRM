@@ -95,19 +95,31 @@ class DrfTokenVerifier:
         )
 
 
-def _token():
+def _auth_header():
     """
-    The credential to call the CRM with, caller first, process second.
+    The complete Authorization header to call the CRM with.
 
-    Over HTTP the bearer token is the caller's own, so the tools act as them and
-    the audit trail names the right person. Over stdio there is no caller, so it
-    falls back to the environment. get_access_token() returns None outside a
-    request, which is exactly how the two cases are told apart.
+    THE SCHEME IS PART OF THE ANSWER, not a detail the caller can assume. Two
+    different credentials reach this function and the CRM authenticates them
+    with two different classes.
+
+      Bearer  an MCP access token, minted by the OAuth flow and belonging to
+              the person on the other end. Verified by
+              mcp_auth.authentication.McpTokenAuthentication.
+      Token   a DRF token from the environment, used only by the stdio
+              transport where there is no caller to belong to. Verified by
+              DRF's own TokenAuthentication.
+
+    Sending one under the other's scheme is a 401, because neither lookup
+    table contains the other's values. get_access_token() returns None outside
+    a request, which is how the two cases are told apart.
     """
     access = get_access_token()
     if access is not None:
-        return access.token
-    return ENV_TOKEN
+        return f"Bearer {access.token}"
+    if ENV_TOKEN:
+        return f"Token {ENV_TOKEN}"
+    return ""
 
 
 mcp = MCPServer(
@@ -149,8 +161,8 @@ def _url(path):
 
 
 def _call(method, path, params=None, body=None):
-    token = _token()
-    if not token:
+    authorization = _auth_header()
+    if not authorization:
         raise ToolError("No CRM credential. Over stdio set LINQ_CRM_TOKEN, mint "
                         "one with manage.py drf_create_token <username>.")
     try:
@@ -159,7 +171,7 @@ def _call(method, path, params=None, body=None):
             _url(path),
             params=params or {},
             json=body,
-            headers={"Authorization": f"Token {token}"},
+            headers={"Authorization": authorization},
             timeout=TIMEOUT,
         )
     except requests.RequestException as exc:
