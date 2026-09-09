@@ -1,0 +1,24 @@
+# Nixpacks build configuration.
+#
+# WHY THIS FILE EXISTS
+# Nixpacks auto-detects a Django project and starts it with
+# "gunicorn config.wsgi". That is correct for the web app and wrong for the MCP
+# endpoint, which is a long lived streaming connection a synchronous WSGI worker
+# cannot hold open. Serving /mcp means running the project under ASGI, so the
+# start command is pinned here rather than left to detection.
+#
+# Only [start] is set. Everything else about the build, the Python version, the
+# pip install, the collectstatic step, stays auto-detected as before.
+#
+# NO BIND FLAG, DELIBERATELY. gunicorn reads the PORT environment variable, and
+# Coolify sets PORT=3000, which is the port Traefik forwards to. Passing an
+# explicit --bind here would hardcode what the platform is already supplying and
+# would have to be changed again if the platform ever moved the port.
+#
+# ROLLBACK
+# Delete this file and redeploy. Detection returns, config/wsgi.py is untouched
+# and still valid, and the app goes back to the synchronous stack; only /mcp
+# stops working.
+
+[start]
+cmd = "gunicorn config.asgi -k uvicorn.workers.UvicornWorker"
