@@ -127,6 +127,35 @@ class NormalizeDmdAccountsTests(TestCase):
         self.assertEqual(sales.status, "active")
         self.assertEqual(sales.role, User.Role.SALES)
 
+    def test_the_hand_written_rename_does_not_recreate_a_duplicate(self):
+        """
+        THE BUG THIS PINS, caught on live data after a real run.
+
+        ACCOUNT_RENAMES renamed 'Neha S' to 'Neha Shinde' while the derived pass
+        independently kept a different account already called 'Neha Shinde',
+        because the two passes grouped separately. The run finished with TWO
+        active accounts under one name and the dropdown still showed the person
+        twice, which is the whole complaint the accounts pass exists to answer.
+        It hit 'Bharti Chauhan', 'Neha Shinde' and 'KR'.
+        """
+        listed = make_user("neha.s", "Neha", "S")
+        real = make_user("neha.shinde", "Neha", "Shinde",
+                         email="neha.shinde@iq-hub.com", login_access=True)
+        seeded = make_user("sc.neha.shinde", "SC - Neha", "Shinde")
+
+        self.run_command()
+        active = [
+            (u.get_full_name() or u.username)
+            for u in User.objects.filter(is_active=True,
+                                         role=User.Role.DATA_MINING)
+        ]
+        self.assertEqual(active, ["Neha Shinde"])
+        for user in (listed, seeded):
+            user.refresh_from_db()
+            self.assertEqual(user.status, "inactive")
+        real.refresh_from_db()
+        self.assertEqual(real.status, "active")
+
     def test_dry_run_writes_nothing(self):
         seeded = make_user("sc.mahek.soni", "SC - Mahek", "Soni")
         make_user("mahek.soni", "Mahek", "Soni",

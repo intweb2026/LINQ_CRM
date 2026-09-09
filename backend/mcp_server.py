@@ -26,6 +26,9 @@ import os
 import sys
 
 import requests
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 # ToolError is the only exception whose text reaches the model. Anything else
 # is masked as a bare Error executing tool, which tells Claude nothing about a
@@ -34,11 +37,91 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 BASE_URL = os.environ.get("LINQ_API_URL", "http://localhost:8000").rstrip("/")
-TOKEN = os.environ.get("LINQ_CRM_TOKEN", "")
+# Used by the stdio transport only. Over HTTP the credential belongs to the
+# caller, not to the process, and _token() prefers that one. See _token.
+ENV_TOKEN = os.environ.get("LINQ_CRM_TOKEN", "")
+# The public identity of this endpoint. MCP clients fetch OAuth metadata built
+# from it, so it has to be the address they reached us on, not an internal one.
+PUBLIC_URL = os.environ.get("LINQ_MCP_PUBLIC_URL", "https://www.app.iq-hub.com").rstrip("/")
 WRITE_METHODS = ("POST", "PATCH", "PUT", "DELETE")
 TIMEOUT = 60
 
-mcp = MCPServer("linq-crm")
+class DrfTokenVerifier:
+    """
+    Verify a bearer token against the CRM's own authtoken table.
+
+    This is the seam OAuth plugs into later. Today a caller presents the DRF
+    token their account already has, and the tools then act as that account, so
+    RBAC is enforced by DRF exactly as it is for the web app; there is no second
+    authorisation model to keep in step. Replacing this class with an OAuth
+    verifier changes how the caller proves who they are and nothing else.
+    """
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        # Imported here, not at module scope. This file is also the stdio entry
+        # point, which runs with no Django settings configured, and importing a
+        # model at import time would fail there before anything else ran.
+        from asgiref.sync import sync_to_async
+        from rest_framework.authtoken.models import Token
+
+        @sync_to_async
+        def lookup():
+            try:
+                row = Token.objects.select_related("user").get(key=token)
+            except Token.DoesNotExist:
+                return None
+            # A leaver keeps their token row, so the account state is what has
+            # to be checked, not the row's existence.
+            #
+            # BOTH fields, deliberately. status is the source of truth in this
+            # CRM and User.save() derives is_active from it, see
+            # accounts/models.py; but a queryset .update() writes the column
+            # without calling save(), and the two would then disagree. Reading
+            # both means whichever one says no wins.
+            user = row.user
+            if not user.is_active or user.status != user.Status.ACTIVE:
+                return None
+            return user.username
+
+        username = await lookup()
+        if username is None:
+            return None
+        return AccessToken(
+            token=token,
+            client_id=username,
+            scopes=["crm"],
+            subject=username,
+            resource=f"{PUBLIC_URL}/mcp",
+        )
+
+
+def _token():
+    """
+    The credential to call the CRM with, caller first, process second.
+
+    Over HTTP the bearer token is the caller's own, so the tools act as them and
+    the audit trail names the right person. Over stdio there is no caller, so it
+    falls back to the environment. get_access_token() returns None outside a
+    request, which is exactly how the two cases are told apart.
+    """
+    access = get_access_token()
+    if access is not None:
+        return access.token
+    return ENV_TOKEN
+
+
+mcp = MCPServer(
+    "linq-crm",
+    token_verifier=DrfTokenVerifier(),
+    auth=AuthSettings(
+        issuer_url=PUBLIC_URL,
+        resource_server_url=f"{PUBLIC_URL}/mcp",
+        # DrfTokenVerifier stamps resource with this same value, so the bearer
+        # middleware can enforce it. Left unset the check is skipped, and a
+        # token minted for some other audience would be accepted here.
+        validate_token_resource=True,
+    ),
+)
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
 # Writes go to the live CRM under a real account. destructiveHint is what makes
 # a client prompt before each one, which is the only gate between Claude and a
@@ -66,16 +149,17 @@ def _url(path):
 
 
 def _call(method, path, params=None, body=None):
-    if not TOKEN:
-        raise ToolError("LINQ_CRM_TOKEN is not set, mint one with "
-                        "manage.py drf_create_token <username>.")
+    token = _token()
+    if not token:
+        raise ToolError("No CRM credential. Over stdio set LINQ_CRM_TOKEN, mint "
+                        "one with manage.py drf_create_token <username>.")
     try:
         resp = requests.request(
             method,
             _url(path),
             params=params or {},
             json=body,
-            headers={"Authorization": f"Token {TOKEN}"},
+            headers={"Authorization": f"Token {token}"},
             timeout=TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -167,7 +251,7 @@ def _selftest():
     else:
         raise AssertionError("api_write accepted GET")
 
-    if TOKEN:
+    if ENV_TOKEN:
         roots = _call("GET", "")
         print(f"live ok, {len(roots)} router endpoints, {', '.join(sorted(roots))}")
         page = _call("GET", "events/", params={"page_size": 1})

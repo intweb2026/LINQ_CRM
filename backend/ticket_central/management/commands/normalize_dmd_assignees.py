@@ -153,9 +153,24 @@ def _seed_email_suffix():
 
 
 def stored_and_canonical(user):
-    """(the name as stored, the canonical form of it)."""
+    """
+    (the name as stored, the canonical form of it).
+
+    ACCOUNT_RENAMES is consulted here, NOT only in the loop that applies it.
+    THE BUG THIS FIXES, seen on live data: the hand-written pass renamed
+    'Neha S' to 'Neha Shinde' while this pass independently kept a different
+    account already called 'Neha Shinde', so the run ENDED with two active
+    accounts under one name and the dropdown still showed the person twice. It
+    hit 'Bharti Chauhan', 'Neha Shinde' and 'KR'. One grouping has to see both
+    kinds of rename, or they collide by construction.
+
+    canonical() first, since it handles 'Bharati Chauhan' through TYPO_MERGES;
+    the table is then checked against both spellings, because its keys are the
+    raw stored names.
+    """
     name = (user.get_full_name() or user.username).strip()
-    return name, canonical(name)
+    canon = canonical(name)
+    return name, ACCOUNT_RENAMES.get(name, ACCOUNT_RENAMES.get(canon, canon))
 
 
 def _keeper_rank(user):
@@ -173,7 +188,7 @@ def _keeper_rank(user):
     )
 
 
-def account_plan(users, dmd_role="data_mining"):
+def account_plan(users, dmd_role="data_mining", already_renamed_ids=()):
     """
     (renames, merges, skipped) for the accounts.
 
@@ -214,7 +229,8 @@ def account_plan(users, dmd_role="data_mining"):
             merges.append((keeper, losers, canon))
 
         stored_keeper, _ = stored_and_canonical(keeper)
-        if stored_keeper != canon and keeper.role == dmd_role:
+        if (stored_keeper != canon and keeper.role == dmd_role
+                and keeper.id not in already_renamed_ids):
             renames.append((keeper, stored_keeper, canon))
     return renames, merges, skipped
 
@@ -332,11 +348,15 @@ class Command(BaseCommand):
         # The derived accounts pass. Everything above is the hand-written table;
         # this is the part that catches what seed_dmd_assignees minted from
         # un-normalised ticket names.
-        listed = {name for name in ACCOUNT_RENAMES}
+        # EVERY user, including the ones ACCOUNT_RENAMES above already covers.
+        # Excluding those was the collision bug; stored_and_canonical applies
+        # the table, so a hand-renamed account groups with the name it is
+        # becoming and is either kept or deactivated, never left as a second
+        # active copy. Their rename is already queued, hence already_renamed_ids.
         derived_renames, merges, skipped = account_plan(
-            [u for u in User.objects.all()
-             if (u.get_full_name() or u.username).strip() not in listed],
+            User.objects.all(),
             dmd_role=User.Role.DATA_MINING,
+            already_renamed_ids={u.id for u, _, _, _, _ in renames},
         )
         self.stdout.write(
             f"\naccounts: {len(derived_renames)} to rename, {len(merges)} person(s) "

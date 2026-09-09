@@ -19,7 +19,12 @@ google-auth==2.29.0
 googleapis-common-protos==1.74.0
 gunicorn==21.2.0
 httplib2==0.31.2
-idna==3.13
+idna==3.19
+# mcp serves the /mcp endpoint mounted in config/asgi.py. It is a server
+# dependency now, not a developer tool, so it belongs here. It is what forced
+# idna above and typing_extensions below off their previous pins, 3.13 and
+# 4.15.0; both moves are transitive, neither was wanted for its own sake.
+mcp==2.2.0
 numpy==2.4.4
 oauthlib==3.3.1
 openpyxl==3.1.5
@@ -45,7 +50,11 @@ requests==2.33.1
 rsa==4.9.1
 six==1.17.0
 sqlparse==0.5.5
-typing_extensions==4.15.0
+typing_extensions==4.16.0
 tzdata==2026.2
 uritemplate==4.2.0
+# ASGI server. gunicorn above stays for the WSGI path; the MCP endpoint is a
+# streaming connection a sync worker cannot hold open, so serving it means
+#   gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker
+uvicorn==0.52.4
 urllib3==2.6.3
