@@ -18,6 +18,7 @@ import logging
 from datetime import timedelta
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.utils import timezone
 
 from mcp.server.auth.provider import (
@@ -38,6 +39,27 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resource(requested):
+    """
+    The audience to stamp on a grant, defaulting to this server.
+
+    THIS SERVER SERVES EXACTLY ONE RESOURCE, and AuthSettings sets
+    validate_token_resource, so the bearer middleware refuses any token whose
+    resource is not resource_server_url. Its comparison parses the value as a
+    URL, and an absent one parses as the empty string, which raises and counts
+    as a mismatch. See mcp/server/auth/middleware/bearer_auth.py.
+
+    RFC 8707's resource indicator is OPTIONAL and claude.ai does not send it.
+    So without this default every token the server issued was refused the
+    first time it was used, which surfaced as "Authorization with iQ hub App
+    failed" and nothing in the flow before that looking wrong at all.
+
+    Defaulting rather than disabling the check keeps it meaningful: a token
+    minted elsewhere, for some other audience, is still rejected.
+    """
+    return requested or f"{settings.MCP_PUBLIC_URL}/mcp"
 
 
 def _client_to_sdk(row: OAuthClient) -> OAuthClientInformationFull:
@@ -138,7 +160,7 @@ class DjangoOAuthProvider:
                 code_challenge=params.code_challenge,
                 state=params.state or "",
                 scopes=list(params.scopes or []),
-                resource=params.resource or "",
+                resource=_resource(params.resource),
                 expires_at=timezone.now() + timedelta(
                     seconds=PendingAuthorization.LIFETIME_SECONDS),
             )
@@ -166,7 +188,7 @@ class DjangoOAuthProvider:
                 code_challenge=row.code_challenge,
                 redirect_uri=row.redirect_uri,
                 redirect_uri_provided_explicitly=row.redirect_uri_provided_explicitly,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=row.user.username,
             )
 
@@ -239,7 +261,7 @@ class DjangoOAuthProvider:
                 client_id=row.client.client_id,
                 scopes=row.scopes,
                 expires_at=int(row.expires_at.timestamp()) if row.expires_at else None,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=user.username,
             )
 
@@ -262,7 +284,7 @@ class DjangoOAuthProvider:
                 client_id=client.client_id,
                 scopes=row.scopes,
                 expires_at=int(row.expires_at.timestamp()) if row.expires_at else None,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=row.user.username,
             )
 

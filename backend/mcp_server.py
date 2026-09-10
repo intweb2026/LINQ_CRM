@@ -39,6 +39,7 @@ from mcp.server.mcpserver import MCPServer
 # is masked as a bare Error executing tool, which tells Claude nothing about a
 # 403 or a validation error, so every failure below raises this one.
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 from mcp_auth.provider import DjangoOAuthProvider
@@ -61,6 +62,44 @@ BASE_URL = (
 API_HOST = urlparse(PUBLIC_URL).netloc
 WRITE_METHODS = ("POST", "PATCH", "PUT", "DELETE")
 TIMEOUT = 60
+
+
+def _transport_security():
+    """
+    Which Host headers the MCP transport will accept.
+
+    THE DEFAULT IS 127.0.0.1 AND NOTHING ELSE. The SDK turns on DNS rebinding
+    protection out of the box and, unconfigured, allows only the loopback name
+    it was built with. Every real request therefore answers 421 Invalid Host
+    header, and it does so AFTER the bearer check, which is why an anonymous
+    probe still saw a tidy 401 and the fault only appeared once a token
+    started working.
+
+    Derived from the app's own configuration rather than restated, so it
+    cannot drift: the public host the connector is reached on, plus whatever
+    Django already trusts in ALLOWED_HOSTS. Each name is allowed with any port
+    as well, because a proxy may forward one.
+
+    ALLOWED_HOSTS of "*" means the deployment has deliberately stopped
+    checking, so matching that here keeps one decision in one place instead of
+    two that can disagree.
+    """
+    if "*" in settings.ALLOWED_HOSTS:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False,
+                                         allowed_hosts=[], allowed_origins=[])
+
+    names = {API_HOST, "127.0.0.1", "localhost"}
+    names.update(h.lstrip(".") for h in settings.ALLOWED_HOSTS if h)
+    names.discard("")
+    hosts = sorted(names | {f"{n}:*" for n in names})
+    origins = sorted(
+        {f"{scheme}://{n}" for n in names for scheme in ("https", "http")}
+        | {f"{scheme}://{n}:*" for n in names for scheme in ("https", "http")}
+    )
+    return TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=origins)
+
+
+TRANSPORT_SECURITY = _transport_security()
 
 mcp = MCPServer(
     "linq-crm",
