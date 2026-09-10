@@ -1,0 +1,8 @@
+# Shell scripts stay LF, always.
+#
+# core.autocrlf is on for this repo, so a .sh checked out on Windows gets CRLF.
+# That is harmless until the same file runs on the Linux container, where the
+# trailing \r becomes part of the interpreter path and the script dies with
+# "bad interpreter: /bin/sh^M: no such file or directory". One line here is
+# cheaper than diagnosing that during a deploy.
+*.sh text eol=lf

@@ -75,12 +75,13 @@ def today_for_period():
     """
     The date "today" resolves to for every window in the CRM.
 
-    settings.TIME_ZONE is "UTC", so this is the UTC date — the same thing
-    book_event/views.py gets from timezone.now().date(). Deliberately identical:
-    two date filters in one CRM that disagree about when today ends is worse than
-    either convention alone. The consequence for anyone operating well east of
-    UTC is that the window ends on what they call yesterday for the first hours
-    of their day; fixing that is a TIME_ZONE decision, not a per-view one.
+    settings.TIME_ZONE is "America/Los_Angeles", so this is the PACIFIC date,
+    and localdate() is what reads it off the UTC instant. Every other "today" in
+    the project now comes from the same call — book_event/views.py,
+    events/filters.py, performance_matrix, the proposal stamp — because two date
+    filters in one CRM that disagree about when today ends is worse than either
+    convention alone. That was the TIME_ZONE decision this docstring used to
+    defer, and it has been made.
     """
     return timezone.localdate()
 

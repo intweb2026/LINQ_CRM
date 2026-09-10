@@ -66,7 +66,8 @@
    turn the hover pale and strand the white label on it. Dark hover brightens
    instead — the correct direction against a dark ground — using the ramp's
    next step up from the button's resting --t-500. */
-html[data-theme=dark] .btn-p:hover{background:var(--t-400)}
+html[data-theme=dark] .btn-p:hover,
+html[data-theme=bastion] .btn-p:hover{background:var(--t-400)}
 .btn-p:active{transform:none}
 .btn-s{background:var(--surface);color:var(--text-2);border-color:var(--border-s);box-shadow:var(--sh-xs)}
 .btn-s:hover{background:var(--n-50);border-color:var(--n-300);color:var(--text)}
@@ -97,8 +98,7 @@ html[data-theme=dark] .btn-p:hover{background:var(--t-400)}
 .in:hover{border-color:var(--n-300)}
 .in:focus{outline:none;border-color:var(--t-400);box-shadow:0 0 0 3px var(--t-100)}
 .in::placeholder{color:var(--text-4)}
-select.in{appearance:none;padding-right:28px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' fill='none' stroke='%23667085' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 4 3.5 3.5L9 4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
-html[data-theme=dark] select.in{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' fill='none' stroke='%238B95A3' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 4 3.5 3.5L9 4'/%3E%3C/svg%3E")}
+select.in{appearance:none;padding-right:28px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' fill='none' stroke='%23667085' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 4 3.5 3.5L9 4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}html[data-theme=dark] select.in,html[data-theme=bastion] select.in{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' fill='none' stroke='%238B95A3' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m2 4 3.5 3.5L9 4'/%3E%3C/svg%3E")}
 textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-height:1.5}
 .in-s{padding-left:32px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%2398A2B3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6.5' cy='6.5' r='4.5'/%3E%3Cpath d='m12.5 12.5-2.7-2.7'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:10px center}
 .in-xs{height:30px;font-size:12px}
@@ -153,8 +153,8 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .kpi-i{width:29px;height:29px;border-radius:var(--r-md);display:grid;place-items:center;flex-shrink:0;background:var(--n-50);color:var(--text-3)}
 .kpi-i svg{width:15px;height:15px;stroke-width:2}
 .kpi-l{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.075em;color:var(--text-4);flex:1;min-width:0;line-height:1.3}
-.kpi-p{font-size:10px;font-weight:700;padding:2.5px 7px;border-radius:var(--r-full);flex-shrink:0;line-height:1.2;white-space:nowrap}
-.kpi-v{font-size:25px;font-weight:800;color:var(--text);letter-spacing:-.04em;line-height:1.05}
+.kpi-p{font-size:10px;font-weight:700;padding:2.5px 7px;border-radius:var(--r-tag);flex-shrink:0;line-height:1.2;white-space:nowrap}
+.kpi-v{font-family:var(--display);font-size:25px;font-weight:800;color:var(--text);letter-spacing:-.04em;line-height:1.05}
 .kpi-v small{font-size:12.5px;font-weight:700;color:var(--text-4);letter-spacing:0;margin-left:3px}
 .kpi-s{font-size:10.5px;color:var(--text-4);margin-top:4px;line-height:1.4}
 .kpi-b{height:4px;background:var(--n-75);border-radius:3px;margin-top:11px;overflow:hidden}
@@ -180,7 +180,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .tab{padding:8px 13px;font-size:12.5px;font-weight:650;color:var(--text-3);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .13s;display:flex;align-items:center;gap:6px;letter-spacing:-.01em;background:none;border-left:none;border-right:none;border-top:none}
 .tab:hover{color:var(--text-2)}
 .tab.on{color:var(--t-600);border-bottom-color:var(--t-500)}
-.tab .c{font-size:10px;font-weight:700;padding:1.5px 6px;background:var(--n-75);border-radius:var(--r-full);color:var(--text-3);line-height:1.3}
+.tab .c{font-size:10px;font-weight:700;padding:1.5px 6px;background:var(--n-75);border-radius:var(--r-tag);color:var(--text-3);line-height:1.3}
 .tab.on .c{background:var(--t-50);color:var(--t-600)}
 .tabs-act{display:flex;align-items:center;gap:10px;padding-bottom:8px;flex-shrink:0}
 .tabs-upd{font-size:11.5px;color:var(--text-4);white-space:nowrap}
@@ -188,7 +188,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 /* ═══ BADGES ═══  [badges_pills]
    .bg the status badge in nine colours, .tg the smaller square tag, plus the
    three text utilities .mono, .lnk and .dim. */
-.bg{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:650;padding:2.5px 8px;border-radius:var(--r-full);white-space:nowrap;line-height:1.35}
+.bg{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:650;padding:2.5px 8px;border-radius:var(--r-tag);white-space:nowrap;line-height:1.35}
 .bg i{width:5.5px;height:5.5px;border-radius:50%;flex-shrink:0;background:currentColor}
 .bg-green{background:var(--green-bg);color:var(--green-tx)}
 .bg-amber{background:var(--amber-bg);color:var(--amber-tx)}
@@ -239,7 +239,7 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .seg button.on{background:var(--surface);color:var(--text);box-shadow:var(--sh-xs)}
 .seg button svg{width:13px;height:13px}
 .chips{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
-.chip{display:inline-flex;align-items:center;gap:5px;padding:0 10px;height:28px;font-size:11.5px;font-weight:600;background:var(--surface);border:1px solid var(--border-s);border-radius:var(--r-full);cursor:pointer;color:var(--text-3);transition:all .13s;box-shadow:var(--sh-xs)}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:0 10px;height:28px;font-size:11.5px;font-weight:600;background:var(--surface);border:1px solid var(--border-s);border-radius:var(--r-tag);cursor:pointer;color:var(--text-3);transition:all .13s;box-shadow:var(--sh-xs)}
 .chip:hover{border-color:var(--t-300);color:var(--t-700)}
 .chip.on{background:var(--t-500);border-color:var(--t-500);color:#fff;box-shadow:0 1px 3px rgba(0,129,157,.25)}
 .fch{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:11px}
@@ -595,7 +595,7 @@ table.dt thead tr.grp+tr th{top:26px}
 .grp-fold svg{width:10px;height:10px;flex-shrink:0;color:var(--text-4);transition:transform .12s}
 .grp-fold.on{color:var(--t-600)}
 .grp-fold.on svg{transform:rotate(-90deg);color:var(--t-600)}
-.grp-more{flex-shrink:0;font-style:normal;font-size:9px;font-weight:700;line-height:1;padding:2px 5px;border-radius:var(--r-full);background:var(--t-50);color:var(--t-700);letter-spacing:0}
+.grp-more{flex-shrink:0;font-style:normal;font-size:9px;font-weight:700;line-height:1;padding:2px 5px;border-radius:var(--r-tag);background:var(--t-50);color:var(--t-700);letter-spacing:0}
 .grp-pin{all:unset;display:inline-grid;place-items:center;width:18px;height:18px;margin-left:4px;border-radius:var(--r-sm);cursor:pointer;color:var(--text-4);vertical-align:-4px}
 .grp-pin svg{width:10px;height:10px}
 .grp-pin:hover{background:var(--n-100);color:var(--text-2)}
@@ -769,13 +769,11 @@ table.dt th.sec,table.dt td.sec{border-left:2px solid var(--border-s)}
 @keyframes sp{to{transform:rotate(360deg)}}
 /* ── bulk selection bar ──  [table_bulk_selection_bar]
    The floating dark bar that appears once rows are ticked. */
-.bulk{position:fixed;bottom:18px;left:calc(50% + var(--rail-w)/2);transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:8px 9px 8px 15px;background:var(--n-800);color:var(--n-0);border-radius:var(--r-lg);box-shadow:var(--sh-xl);font-size:12px;font-weight:650;z-index:60;white-space:nowrap;animation:up .25s var(--ease)}
-html[data-theme=dark] .bulk{background:var(--n-100);color:var(--text);border:1px solid var(--border)}
-.bulk .n{background:var(--t-500);color:#fff;padding:2.5px 8px;border-radius:var(--r-full);font-size:11px;font-weight:700}
+.bulk{position:fixed;bottom:18px;left:calc(50% + var(--rail-w)/2);transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:8px 9px 8px 15px;background:var(--n-800);color:var(--n-0);border-radius:var(--r-lg);box-shadow:var(--sh-xl);font-size:12px;font-weight:650;z-index:60;white-space:nowrap;animation:up .25s var(--ease)}html[data-theme=dark] .bulk,html[data-theme=bastion] .bulk{background:var(--n-100);color:var(--text);border:1px solid var(--border)}
+.bulk .n{background:var(--t-500);color:#fff;padding:2.5px 8px;border-radius:var(--r-tag);font-size:11px;font-weight:700}
 .bulk .btn{height:28px;font-size:11.5px;border-radius:var(--r-sm)}
 .bulk .btn-s{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);color:var(--n-0)}
-.bulk .btn-s:hover{background:rgba(255,255,255,.18);color:var(--n-0)}
-html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--border);color:var(--text)}
+.bulk .btn-s:hover{background:rgba(255,255,255,.18);color:var(--n-0)}html[data-theme=dark] .bulk .btn-s,html[data-theme=bastion] .bulk .btn-s{background:var(--surface);border-color:var(--border);color:var(--text)}
 .bulk .sep{width:1px;height:18px;background:rgba(255,255,255,.2)}
 .bulk .x{width:25px;height:25px;display:grid;place-items:center;border:none;background:none;color:rgba(255,255,255,.6);cursor:pointer;border-radius:var(--r-sm)}
 .bulk .x:hover{background:rgba(255,255,255,.13);color:var(--n-0)}
@@ -794,7 +792,7 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
 .rc-m .v{font-size:11.5px;font-weight:600;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px 18px;box-shadow:var(--sh-xs)}
 .card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:13px}
-.card-t{font-size:13.5px;font-weight:750;color:var(--text);letter-spacing:-.022em}
+.card-t{font-family:var(--display);font-size:13.5px;font-weight:750;color:var(--text);letter-spacing:-.022em}
 .card-s{font-size:11.5px;color:var(--text-4);margin-top:2px}
 .sl{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.085em;color:var(--text-4);margin-bottom:10px;display:flex;align-items:center;gap:9px}
 .sl::after{content:'';flex:1;height:1px;background:var(--border)}
@@ -861,16 +859,16 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
    Values before labels, and the label is the SMALLER of the pair. A row of
    figures is scanned for its digits — putting the caption first makes every item
    cost a word before it yields a number. */
-.kbar{display:flex;align-items:stretch;flex-wrap:wrap;gap:0 22px;margin-bottom:14px;padding:11px 15px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
+.kbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;margin-bottom:10px;padding:7px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
 .kbar-lead{display:flex;align-items:baseline;gap:22px;flex-shrink:0}
 .kbar-fig{display:flex;flex-direction:column;gap:1px}
-.kbar-fig b{font-size:21px;font-weight:700;line-height:1.05;color:var(--text);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kbar-fig b{font-family:var(--display);font-size:21px;font-weight:700;line-height:1.05;color:var(--text);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .kbar-fig em{font-style:normal;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);white-space:nowrap}
 /* The hairline is the ONLY divider in the bar, and it marks the boundary the
    table repeats below with .sec — so the grouping is stated once in each place
    and the two agree. border-left rather than a spacer element: it stretches to
    the bar's height for free and adds no node per section. */
-.kbar-sec{display:flex;align-items:center;gap:11px;padding-left:22px;border-left:1px solid var(--border);min-width:0;flex:1 1 auto}
+.kbar-sec{display:flex;align-items:center;gap:10px;padding-left:16px;border-left:1px solid var(--border);min-width:0;flex:1 1 260px}
 .kbar-sec-l{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);white-space:nowrap;flex-shrink:0}
 .kbar-chips{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 13px;min-width:0}
 .kbar-chip{display:flex;align-items:baseline;gap:4px}
@@ -907,9 +905,7 @@ html[data-theme=dark] .bulk .btn-s{background:var(--surface);border-color:var(--
 .vd-full{--vd:#D9A400;--vd-bg:rgba(217,164,0,.17);--vd-fill:rgba(217,164,0,.30)}
 .vd-postponed{--vd:var(--n-400);--vd-bg:rgba(142,154,168,.20);--vd-fill:rgba(142,154,168,.34)}
 .vd-tbp{--vd:var(--red-tx);--vd-bg:rgba(142,28,26,.13);--vd-fill:rgba(142,28,26,.24)}
-.vd-cancelled{--vd:var(--n-800);--vd-bg:rgba(19,26,35,.18);--vd-fill:rgba(19,26,35,.30)}
-html[data-theme=dark] .vd-tbp{--vd:var(--red)}
-html[data-theme=dark] .vd-cancelled{--vd-bg:rgba(227,231,236,.12);--vd-fill:rgba(227,231,236,.26)}
+.vd-cancelled{--vd:var(--n-800);--vd-bg:rgba(19,26,35,.18);--vd-fill:rgba(19,26,35,.30)}html[data-theme=dark] .vd-tbp,html[data-theme=bastion] .vd-tbp{--vd:var(--red)}html[data-theme=dark] .vd-cancelled,html[data-theme=bastion] .vd-cancelled{--vd-bg:rgba(227,231,236,.12);--vd-fill:rgba(227,231,236,.26)}
 /* The gradient trick keeps the pinned cells opaque — see [table_frozen_columns]:
    a translucent sticky cell lets the scrolling columns show through it. */
 table.dt tbody tr.vd td,table.dt tbody tr.vd td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--surface)}
@@ -938,8 +934,7 @@ table.dt tbody tr.vd-postponed td,table.dt tbody tr.vd-cancelled td,table.dt tbo
    colour from edge to edge, no verdict rule on the left, no verdict fill on the
    right, every status cell inside it folded into the same wash. Declared AFTER
    the .vd-* tints so its properties win on a row carrying both. */
-.pm-done{--vd-bg:rgba(112,66,20,.13);--vd-fill:rgba(112,66,20,.10);--vd:#6B4A2B;--pm-done-tx:#6B4A2B}
-html[data-theme=dark] .pm-done{--vd-bg:rgba(214,166,110,.15);--vd-fill:rgba(214,166,110,.12);--vd:#D9B48F;--pm-done-tx:#D9B48F}
+.pm-done{--vd-bg:rgba(112,66,20,.13);--vd-fill:rgba(112,66,20,.10);--vd:#6B4A2B;--pm-done-tx:#6B4A2B}html[data-theme=dark] .pm-done,html[data-theme=bastion] .pm-done{--vd-bg:rgba(214,166,110,.15);--vd-fill:rgba(214,166,110,.12);--vd:#D9B48F;--pm-done-tx:#D9B48F}
 table.dt tbody tr.pm-done td,table.dt tbody tr.pm-done td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--surface);color:var(--pm-done-tx)}
 table.dt tbody tr.pm-done:hover td,table.dt tbody tr.pm-done:hover td.pin-col{background:linear-gradient(var(--vd-bg),var(--vd-bg)),var(--t-50)}
 table.dt tbody tr.pm-done td:first-child{box-shadow:none}
@@ -957,8 +952,7 @@ a.pm-code{cursor:pointer}a.pm-code:hover{text-decoration-style:solid}
    floor; a completed row washes the dot sepia like everything else on it. */
 .pm-hl{display:inline-flex;align-items:center;gap:6px}
 .pm-hl i{width:6px;height:6px;border-radius:50%;background:var(--dot);flex-shrink:0}
-.pm-hl.green{--dot:var(--green)}.pm-hl.amber{--dot:var(--amber)}.pm-hl.red{--dot:var(--red-tx)}
-html[data-theme=dark] .pm-hl.red{--dot:var(--red)}
+.pm-hl.green{--dot:var(--green)}.pm-hl.amber{--dot:var(--amber)}.pm-hl.red{--dot:var(--red-tx)}html[data-theme=dark] .pm-hl.red,html[data-theme=bastion] .pm-hl.red{--dot:var(--red)}
 table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
 .pm-loc{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 /* Year chips in the tab strip's action slot. */
@@ -1288,3 +1282,354 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    on a page whose every other block is a plain table. */
 .ped-cancel{margin-top:22px;padding-top:4px;border-top:2px solid var(--border)}
 .ped-cancel .ped-sec-h h3{color:var(--red)}
+
+/* ═══════ CREDIT CONTROL ═══════  [credit_control]
+   The calling queue. One row per invoice, four columns of it editable, and a
+   row that opens to show the delegates on that invoice.
+
+   Colours are theme tokens throughout, for the reason [band_palette] gives: a
+   hex chosen in JavaScript is the one colour on the page that cannot follow the
+   theme. */
+
+/* ── the disposition dropdown ────────────────────────────────────────────────
+   A FILLED control, unlike every read-only state cell in this app, which uses a
+   dot or a recoloured value. The line is interactive versus read-only, not
+   colour versus none: a read-only row is scanned as a wall of values and a fill
+   fights it, while a control is a thing you operate and the fill says what
+   state it is in before you open it.
+
+   THE FILL IS ON THE WRAPPER, NOT THE SELECT. A <select> cannot be given a
+   background per state without also restyling its arrow per state, because
+   select.in paints the caret as a background-image with a hard-coded stroke
+   colour. Wrapping it means the caret is a CSS triangle in currentColor and the
+   label, the border and the arrow all take one token pair, in both themes. */
+.cc-disp{position:relative;display:block;border-radius:var(--r-sm);border:1px solid;padding-right:20px;min-width:196px}
+.cc-disp::after{content:'';position:absolute;right:8px;top:50%;margin-top:-2px;width:0;height:0;border:3.5px solid transparent;border-top-color:currentColor;opacity:.75;pointer-events:none}
+.cc-disp>select{appearance:none;-webkit-appearance:none;width:100%;height:28px;padding:0 6px 0 9px;border:none;background:none;font-family:inherit;font-size:12px;font-weight:650;color:inherit;cursor:pointer;letter-spacing:-.005em}
+.cc-disp>select:focus{outline:none}
+.cc-disp:focus-within{box-shadow:0 0 0 3px var(--t-100)}
+.cc-disp-none{background:var(--n-75);border-color:var(--border-s);color:var(--text-3)}
+.cc-disp-none>select{font-weight:500}
+.cc-disp-att{background:var(--amber-bg);border-color:var(--amber);color:var(--amber-tx)}
+.cc-disp-ong{background:var(--green-bg);border-color:var(--green);color:var(--green-tx)}
+.cc-disp-tech{background:var(--red-bg);border-color:var(--red);color:var(--red-tx)}
+
+/* ── the remark cell ─────────────────────────────────────────────────────────
+   Width follows the content up to a cap set by the column, so a normal remark
+   needs no sideways scrolling, and the caret opens the whole thing. Same
+   click-to-open shape as .ec, which DataTable already uses for its editable
+   cells, rather than a second idiom for the same gesture. */
+.cc-rmk{display:flex;align-items:center;gap:4px}
+.cc-rmk>input{text-overflow:ellipsis;min-width:0}
+.cc-rmk-x{width:22px;height:28px;flex-shrink:0;display:grid;place-items:center;border:1px solid transparent;border-radius:var(--r-xs);background:none;color:var(--text-4);cursor:pointer;padding:0}
+.cc-rmk-x:hover{background:var(--n-75);border-color:var(--border-s);color:var(--t-600)}
+.cc-rmk-x svg{width:13px;height:13px}
+
+/* ── the drill-down ──────────────────────────────────────────────────────────
+   Only rendered when an invoice carries more than one delegate, so the toggle's
+   presence is itself information. The spacer keeps single-delegate rows aligned
+   with the ones that have a toggle. */
+.cc-co{display:flex;align-items:flex-start;gap:7px;min-width:0}
+.cc-dz{width:19px;height:19px;flex-shrink:0;margin-top:1px;display:grid;place-items:center;border:1px solid var(--border-s);border-radius:var(--r-xs);background:var(--surface);color:var(--text-3);cursor:pointer;font-family:var(--mono);font-size:10px;font-weight:500;line-height:1;padding:0;transition:all .13s}
+.cc-dz:hover{border-color:var(--t-400);color:var(--t-600);background:var(--t-50)}
+.cc-dz[aria-expanded="true"]{background:var(--t-500);border-color:var(--t-500);color:#fff}
+.cc-dz-x{width:19px;flex-shrink:0}
+/* THE DRILL-DOWN ROW, rendered in place under the row it belongs to. It is
+   deliberately not a dialog: these lines ARE the row above them, so covering
+   the queue to read them loses the context that gives them meaning. */
+table.dt tbody tr.dt-detail>td{height:auto;padding:0;background:var(--n-25);border-bottom:2px solid var(--border-s);white-space:normal;max-width:none;text-align:left}
+table.dt tbody tr.dt-detail:hover>td{background:var(--n-25)}
+.cc-drill-in{padding:11px 12px 13px 38px}
+.cc-drill-h{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);margin-bottom:7px}
+table.cc-sub{width:auto;min-width:min(100%,760px);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);border-collapse:separate;border-spacing:0;overflow:hidden;font-size:11.5px}
+table.cc-sub th{position:static;background:var(--surface-2);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);padding:6px 11px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+table.cc-sub td{height:31px;padding:0 11px;color:var(--text-2);white-space:nowrap;border-bottom:1px solid var(--n-50)}
+table.cc-sub tbody tr:last-child td{border-bottom:none}
+
+/* ── the dashboard's own blocks ───────────────────────────────────────────── */
+.cc-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:11px;margin-bottom:18px}
+.cc-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 15px 15px;box-shadow:var(--sh-xs)}
+.cc-card-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:11px}
+.cc-card-n{font-size:14px;font-weight:750;letter-spacing:-.02em;color:var(--text)}
+.cc-card-r{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.075em;color:var(--text-4);margin-top:2px}
+.cc-card-v{font-family:var(--display);font-size:25px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--text);font-variant-numeric:tabular-nums}
+.cc-card-s{font-size:10px;color:var(--text-4);margin-top:3px}
+.cc-card-grid{display:grid;grid-template-columns:1fr max-content;gap:5px 10px;font-size:12px}
+.cc-card-grid b{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+/* State on a read-only figure: a dot and a recoloured label, never a fill. */
+.cc-dot{display:inline-flex;align-items:center;gap:7px;font-weight:500}
+.cc-dot::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.cc-dot-none{color:var(--text-4)}
+.cc-dot-att{color:var(--amber-tx)}
+.cc-dot-ong{color:var(--green-tx)}
+.cc-dot-tech{color:var(--red-tx)}
+.cc-grp td{font-weight:700;color:var(--text);background:var(--n-25)}
+.cc-ind{padding-left:26px!important}
+.cc-tot td{font-weight:700;color:var(--text);background:var(--n-25);border-top:1px solid var(--border-s)}
+.cc-hm{text-align:center;font-variant-numeric:tabular-nums}
+.cc-hm i{display:inline-grid;place-items:center;width:34px;height:24px;border-radius:var(--r-xs);font-style:normal;font-size:11.5px;font-weight:600;background:var(--t-50);color:var(--t-700)}
+.cc-src{font-size:11.5px;color:var(--text-4);margin-top:7px;line-height:1.5}
+
+/* ═══════ CREDIT CONTROL DASHBOARD ═══════  [credit_control_dash]
+   SHARP CORNERS THROUGHOUT, and colour used to carry meaning rather than to
+   decorate. The queue keeps the app's rounded, muted table language, because a
+   caller reads it as a wall of values all shift; the dashboard is scanned for
+   a few seconds by somebody deciding where to push, so it is allowed to shout.
+
+   Every colour is a theme token, so the whole thing inverts correctly. The
+   heatmaps set OPACITY on a solid token rather than mixing an alpha hex,
+   because color-mix() is not safe on older Safari and a hard-coded rgba() can
+   only ever suit one theme. */
+
+/* ── the frame ───────────────────────────────────────────────────────────── */
+.ccd{display:flex;flex-direction:column;gap:26px}
+.ccd-sec{display:flex;flex-direction:column;gap:10px}
+.ccd-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding-bottom:7px;border-bottom:2px solid var(--text);margin-bottom:2px}
+.ccd-h h3{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--text);margin:0}
+.ccd-h p{font-size:11.5px;color:var(--text-4);margin:0;line-height:1.5;flex:1;min-width:180px}
+.ccd-h .ccd-stamp{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-4);font-variant-numeric:tabular-nums}
+
+/* ── KPI strip ───────────────────────────────────────────────────────────────
+   A 3px top rail in the tile's own accent is the whole of the decoration; it
+   is what makes six sharp rectangles read as six different measures rather
+   than one grid of numbers. */
+.ccd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:1px;background:var(--border);border:1px solid var(--border)}
+.ccd-kpi{background:var(--surface);padding:15px 16px 16px;border-top:3px solid var(--ac,var(--t-500));position:relative}
+.ccd-kpi-l{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--text-4);line-height:1.3}
+.ccd-kpi-v{font-size:31px;font-weight:800;letter-spacing:-.045em;line-height:1;color:var(--text);font-variant-numeric:tabular-nums;margin-top:9px}
+.ccd-kpi-s{font-size:10.5px;color:var(--text-4);margin-top:6px;line-height:1.4}
+.ccd-kpi-s b{color:var(--ac);font-weight:700}
+.ccd-kpi.lead{background:var(--t-900)}html[data-theme=dark] .ccd-kpi.lead,html[data-theme=bastion] .ccd-kpi.lead{background:#0A1014}
+.ccd-kpi.lead .ccd-kpi-l{color:var(--t-200)}
+.ccd-kpi.lead .ccd-kpi-v{color:#fff}
+.ccd-kpi.lead .ccd-kpi-s{color:rgba(198,233,241,.72)}
+.ccd-kpi.lead .ccd-kpi-s b{color:var(--t-200)}
+
+/* ── the proportion bar ──────────────────────────────────────────────────────
+   The headline finding of the whole module, so it gets the one genuinely large
+   piece of colour on the page. Segments are sized by share and labelled in
+   place; anything under 6% drops its inline label rather than overprinting a
+   neighbour. */
+.ccd-prop{display:flex;height:54px;border:1px solid var(--border);background:var(--surface)}
+.ccd-prop-seg{display:flex;flex-direction:column;justify-content:center;padding:0 13px;min-width:0;overflow:hidden;border-right:1px solid var(--surface)}
+.ccd-prop-seg:last-child{border-right:none}
+.ccd-prop-n{font-size:17px;font-weight:800;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.ccd-prop-t{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.82}
+.ccd-prop-blind{background:var(--amber-bg);color:var(--amber-tx);box-shadow:inset 0 3px 0 var(--amber)}
+.ccd-prop-req{background:var(--green-bg);color:var(--green-tx);box-shadow:inset 0 3px 0 var(--green)}
+.ccd-prop-unc{background:var(--n-75);color:var(--text-3);box-shadow:inset 0 3px 0 var(--n-300)}
+.ccd-prop-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-4)}
+.ccd-prop-leg span{display:inline-flex;align-items:center;gap:6px}
+.ccd-prop-leg i{width:9px;height:9px;flex-shrink:0}
+
+/* ── caller cards ────────────────────────────────────────────────────────────
+   One card per caller, and the stacked bar is the point: two callers with the
+   same total but different shapes are a different problem, and a column of
+   numbers hides that while a bar cannot. */
+.ccd-people{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:1px;background:var(--border);border:1px solid var(--border)}
+.ccd-person{background:var(--surface);padding:15px 16px 16px}
+.ccd-person-h{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:13px}
+.ccd-person-n{font-size:14.5px;font-weight:750;letter-spacing:-.02em;color:var(--text);line-height:1.2}
+.ccd-role{display:inline-block;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;padding:2.5px 6px;margin-top:5px}
+.ccd-role-lead{background:var(--t-700);color:#fff}
+.ccd-role-exec{background:var(--n-75);color:var(--text-3)}
+.ccd-role-off{background:var(--red-bg);color:var(--red-tx)}
+.ccd-person-v{font-family:var(--display);font-size:28px;font-weight:800;letter-spacing:-.045em;line-height:1;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
+.ccd-person-s{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);margin-top:5px;text-align:right}
+.ccd-stack{display:flex;height:9px;background:var(--n-75);overflow:hidden}
+.ccd-stack i{display:block;height:9px}
+.ccd-legend{display:grid;grid-template-columns:1fr max-content;gap:4px 10px;margin-top:12px;font-size:11.5px}
+.ccd-legend-k{display:inline-flex;align-items:center;gap:7px;color:var(--text-3);min-width:0}
+.ccd-legend-k i{width:8px;height:8px;flex-shrink:0}
+.ccd-legend-v{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+
+/* ── heatmap tables ──────────────────────────────────────────────────────────
+   Sharp, dense, and coloured by value. The tint is an OPACITY on a solid token
+   so both themes work from one number, and the figure sits above it rather
+   than inside it so it never loses contrast against its own fill. */
+table.ccd-t{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;background:var(--surface);border:1px solid var(--border)}
+table.ccd-t th{background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--text-4);padding:9px 11px;text-align:right;white-space:nowrap;border-bottom:2px solid var(--border-s)}
+table.ccd-t th:first-child{text-align:left}
+table.ccd-t td{padding:0 11px;height:36px;border-bottom:1px solid var(--n-50);text-align:right;color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+table.ccd-t td:first-child{text-align:left;color:var(--text);font-weight:600}
+table.ccd-t tbody tr:last-child td{border-bottom:none}
+table.ccd-t tr.ccd-t-tot td{font-weight:800;color:var(--text);background:var(--surface-2);border-top:2px solid var(--border-s);border-bottom:none}
+table.ccd-t tr.ccd-t-grp td{font-weight:800;text-transform:uppercase;font-size:9.5px;letter-spacing:.09em;background:var(--surface-2)}
+table.ccd-t tr.ccd-t-grp td:first-child{box-shadow:inset 3px 0 0 var(--ac,var(--border-s))}
+table.ccd-t td.ccd-sub-row{padding-left:26px;font-weight:500;color:var(--text-2)}
+.ccd-cell{position:relative;display:block;height:36px;line-height:36px;margin:0 -11px;padding:0 11px}
+.ccd-cell b{position:relative;z-index:1;font-weight:600}
+.ccd-cell i{position:absolute;inset:0;background:var(--hm,var(--t-500));display:block}
+.ccd-zero{color:var(--text-4);opacity:.45}
+
+/* ── the case detail panel ───────────────────────────────────────────────────
+   Inside the lead modal. The one place the classifier's reasoning is legible,
+   so it is laid out to be read rather than scanned: the verdict large, the
+   basis as a sentence, and the evidence as an actual quotation. */
+.cc-case{margin-top:18px;padding-top:15px;border-top:1px solid var(--border)}
+.cc-case-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:var(--text-4);margin-bottom:9px}
+.cc-case-src{font-weight:600;letter-spacing:.02em;text-transform:none;font-size:10.5px;color:var(--text-4)}
+.cc-verdict{display:inline-block;font-size:15px;font-weight:800;letter-spacing:-.02em;padding:6px 12px;border-left:3px solid}
+.cc-verdict.is-blind{background:var(--amber-bg);color:var(--amber-tx);border-left-color:var(--amber)}
+.cc-verdict.is-req{background:var(--green-bg);color:var(--green-tx);border-left-color:var(--green)}
+.cc-verdict.is-unc{background:var(--n-75);color:var(--text-3);border-left-color:var(--n-300)}
+.cc-case-basis{font-size:12.5px;line-height:1.6;color:var(--text-2);margin:10px 0 0;max-width:62ch}
+/* The quote is the whole basis of the verdict, so it is set as a quotation,
+   with the contact's own words in their own voice rather than paraphrased. */
+.cc-case-quote{margin:12px 0 0;padding:10px 13px;background:var(--surface-2);border-left:2px solid var(--border-s);font-size:12px;line-height:1.6;color:var(--text-2);font-style:italic;max-width:66ch}
+.cc-case-quote cite{display:block;margin-top:7px;font-style:normal;font-size:10.5px;color:var(--text-4);letter-spacing:.01em}
+.cc-case-note{font-size:11.5px;line-height:1.55;color:var(--text-4);margin:10px 0 0;max-width:62ch}
+.cc-case-warn{color:var(--amber-tx)}
+.cc-case-brief{font-size:12.5px;line-height:1.65;color:var(--text-2);margin:0;max-width:64ch}
+.cc-case-ovr{display:flex;flex-direction:column;gap:5px;margin-top:15px;max-width:280px}
+
+/* ═══════ CREDIT CONTROL, MODULE CHROME ═══════  [credit_control_mod]
+   ZERO RADIUS, EVERYWHERE, and done at the token layer rather than by hunting
+   down every rule. The module root redefines the radius scale to 0, so every
+   input, button, tag, dropdown and card inside it squares off, including the
+   shared components this module did not write. One declaration, and nothing
+   can drift back to rounded later.
+
+   --r-full is squared here too. Its real circles elsewhere are the toggle in
+   .sw and the dot in .kbar-chip, neither of which this module renders, so
+   there is nothing left for it to break. */
+.cc-mod{
+  --r-xs:0;--r-sm:0;--r-md:0;--r-lg:0;--r-xl:0;--r-full:0;--r-tag:0;
+}
+
+/* ── the module header ───────────────────────────────────────────────────── */
+.cc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;padding-bottom:11px;margin-bottom:14px;border-bottom:2px solid var(--text)}
+.cc-head-t{font-size:21px;font-weight:800;letter-spacing:-.035em;margin:0;color:var(--text)}
+.cc-head-a{display:flex;align-items:center;gap:12px}
+.cc-head-n{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--text-4);font-variant-numeric:tabular-nums}
+
+/* ── caller tabs ─────────────────────────────────────────────────────────────
+   Square, butted against each other with a shared border so they read as one
+   control, and the active one inverts rather than merely underlining. A tab
+   strip of rounded chips would have been the fourth different tab language in
+   this app. */
+.cc-tabs{display:flex;flex-wrap:wrap;gap:0;margin-bottom:14px;border:1px solid var(--border-s)}
+.cc-tab{display:inline-flex;align-items:center;gap:7px;padding:0 14px;height:33px;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:-.005em;color:var(--text-3);background:var(--surface);border:none;border-right:1px solid var(--border-s);cursor:pointer;transition:background .12s,color .12s}
+.cc-tab:last-child{border-right:none}
+.cc-tab:hover{background:var(--n-50);color:var(--text)}
+.cc-tab.on{background:var(--text);color:var(--surface)}
+.cc-tab-n{font-size:10px;font-weight:800;padding:1.5px 5px;background:var(--n-75);color:var(--text-3);font-variant-numeric:tabular-nums}
+.cc-tab.on .cc-tab-n{background:rgba(255,255,255,.22);color:#fff}
+
+/* ── the new columns ─────────────────────────────────────────────────────────
+   Boxy tags, tonal fills. A squared tag with a low-chroma ground reads as set
+   type and stays scannable down a column, where a rounded pill reads as a
+   badge and, repeated, as a scoreboard. */
+.cc-lt{display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:3px 7px;white-space:nowrap}
+.cc-lt-spk{background:var(--violet-bg);color:var(--violet-tx);box-shadow:inset 2px 0 0 var(--violet)}
+.cc-lt-del{background:var(--blue-bg);color:var(--blue-tx);box-shadow:inset 2px 0 0 var(--blue)}
+.cc-lt-add{background:var(--slate-bg);color:var(--slate-tx);box-shadow:inset 2px 0 0 var(--slate)}
+/* The classifier's one-line reasoning. Clipped to the column and readable in
+   full in the case panel, because a sentence in a table cell is a preview. */
+.cc-reason{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--text-3)}
+.cc-nowrap{white-space:nowrap}
+.cc-lastcall{display:inline-flex;flex-direction:column;line-height:1.25}
+.cc-dur{font-size:10px;color:var(--text-4);font-variant-numeric:tabular-nums}
+
+/* ═══════ MINING MATRIX, SUMMARY BOXES AND THE MAILABLE COLUMN ═══════
+   [mining_boxes]
+   FIVE COMPACT BOXES ON ONE LINE, and compact is the requirement rather than a
+   preference: the table is what this page is for, so every pixel the summary
+   takes is a row somebody cannot see. The whole strip is about 40px tall.
+
+   The first attempt was a grid of tall tiles with `repeat(auto-fit, minmax(...))`.
+   Inside .kbar, which is a flex row, auto-fit resolved to ONE 148px column, so
+   the five boxes stacked into a vertical stripe and overlapped the split chips
+   beside them. A flex row of intrinsically-sized boxes cannot do that, because
+   nothing is asking the box how wide it would like to be.
+
+   THE NUMBER AND ITS LABEL SIT ON ONE BASELINE, which is what makes a box two
+   lines shorter than the stacked version, and the accent moves to the LEFT edge
+   for the same reason: a top rail costs 3px of height on every box in the row. */
+.kbar-lead{display:flex;align-items:stretch;flex-wrap:wrap;gap:7px;flex:0 1 auto;min-width:0}
+.kbar-box{display:flex;align-items:baseline;gap:7px;padding:5px 11px 6px;background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--ac);white-space:nowrap}
+.kbar-box b{font-size:16px;font-weight:800;letter-spacing:-.03em;line-height:1.15;color:var(--text);font-variant-numeric:tabular-nums}
+.kbar-box em{font-size:8.5px;font-weight:800;font-style:normal;text-transform:uppercase;letter-spacing:.085em;color:var(--text-4);line-height:1.15}
+/* The one filled box, because the audience count is the denominator for every
+   figure to its right and gets to look different. */
+.kbar-box-mail{background:var(--mm-mail-bg);border-color:var(--mm-mail-bd)}
+.kbar-box-mail b{color:var(--mm-mail-tx)}
+.kbar-box-mail em{color:var(--mm-mail-tx);opacity:.8}
+
+/* THE MAILABLE COLUMN, in a warm beige that belongs to no other block on this
+   page. Ticket type is cool and jewelled, priority is warm and earthy (see
+   [band_palette]), and this is neither: it comes from HubSpot rather than from
+   a ticket, so it reads as its own kind of fact. Applied through the column's
+   `cls`, so the header, the body cells and the frozen shadow all pick it up. */
+:root{--mm-mail-bg:#FBF3DF;--mm-mail-tx:#6B5312;--mm-mail-bd:#E8D9AE}html[data-theme=dark],html[data-theme=bastion]{--mm-mail-bg:rgba(232,205,132,.12);--mm-mail-tx:#E8CD84;--mm-mail-bd:rgba(232,205,132,.28)}
+table.dt thead th.mm-mail{background:var(--mm-mail-bg);color:var(--mm-mail-tx);border-bottom-color:var(--mm-mail-bd)}
+table.dt tbody td.mm-mail{background:var(--mm-mail-bg)}
+table.dt tbody td.mm-mail b{color:var(--mm-mail-tx)!important}
+table.dt thead tr.sum th.mm-mail{background:var(--mm-mail-bg);color:var(--mm-mail-tx)}
+table.dt tbody tr:hover td.mm-mail{background:var(--mm-mail-bg);filter:brightness(.985)}
+
+/* ── the caller's own columns ────────────────────────────────────────────────
+   The three columns the callers control, tinted across their whole width and
+   through the header, so a caller can see which part of a very wide table is
+   theirs without reading a single label. Applied through the column's `cls`,
+   so the header, the body cells, the frozen shadow and the group band above
+   all pick it up together. */
+table.dt thead th.cc-own{background:var(--t-50);color:var(--t-700);border-bottom-color:var(--t-200)}
+table.dt tbody td.cc-own{background:var(--t-50);background:color-mix(in srgb,var(--t-50) 55%,var(--surface))}
+@supports not (color:color-mix(in srgb,red,blue)){table.dt tbody td.cc-own{background:var(--t-50)}}
+table.dt tbody tr:hover td.cc-own{background:var(--t-50)}
+table.dt thead tr.grp th.cc-own{background:var(--t-100);color:var(--t-700)}
+/* The delegate count doubles as the drill-down control, so the number IS the
+   affordance rather than a plus sign beside one. */
+.cc-dz{font-variant-numeric:tabular-nums}
+
+/* ── the schedule brief ──────────────────────────────────────────────────────
+   One line at the top of the dashboard answering the question somebody asks
+   before trusting a figure: is this about to move. Deliberately small: it is
+   context for the numbers below, not a number itself. */
+.cc-sched{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--border);background:var(--surface-2)}
+.cc-sched-i{display:flex;align-items:baseline;gap:7px;padding:6px 12px;border-right:1px solid var(--border);white-space:nowrap}
+.cc-sched-i:last-child{border-right:none}
+.cc-sched-i b{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--text-4)}
+.cc-sched-i em{font-style:normal;font-size:11.5px;font-weight:700;color:var(--text-2);font-variant-numeric:tabular-nums}
+/* Under an hour away is worth noticing, because it means a figure on this page
+   is about to change while somebody is reading it. */
+.cc-sched-i em.is-soon{color:var(--t-600)}
+
+/* ── sponsor tiers ───────────────────────────────────────────────────────────
+   The booking code as written, so PLT SpEx and SLV SpEx read as themselves
+   instead of collapsing into one "SpEx". One company can hold several. */
+.cc-tiers{display:inline-flex;flex-wrap:wrap;gap:4px}
+.cc-tier{display:inline-block;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:2.5px 6px;background:var(--violet-bg);color:var(--violet-tx);box-shadow:inset 2px 0 0 var(--violet);white-space:nowrap}
+
+/* ── three figures per status ────────────────────────────────────────────────
+   A group's total says how much is sitting there; how much of it is past 36
+   and 72 hours says whether it is sitting there for a reason. */
+.ccd-legend.is-aged{grid-template-columns:1fr max-content max-content max-content;gap:4px 12px}
+.ccd-legend-h{font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--text-4);text-align:right;padding-bottom:2px;border-bottom:1px solid var(--border)}
+.ccd-legend-h:first-child{border-bottom:none}
+.ccd-legend-v.is-nil{color:var(--text-4);opacity:.5}
+
+/* ── run one job now ─────────────────────────────────────────────────────────
+   Cron owns the cadence. This is for when somebody has just corrected a
+   verdict or an invoice date and wants to watch it land, so it is quiet until
+   hovered rather than five buttons competing with the figures below. */
+.cc-sched-run{margin-left:2px;padding:1px 6px;font-family:inherit;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-4);background:none;border:1px solid var(--border-s);cursor:pointer;transition:all .12s}
+.cc-sched-run:hover:not(:disabled){background:var(--t-500);border-color:var(--t-500);color:#fff}
+.cc-sched-run:disabled{opacity:.4;cursor:progress}
+.cc-sched-run:focus-visible{outline:2px solid var(--t-400);outline-offset:1px}
+
+/* ── the mailable box's own sync control ─────────────────────────────────────
+   The figure comes from outside the CRM, so its age is part of reading it, and
+   the button that refreshes it belongs beside the number rather than on some
+   other module's dashboard. */
+.kbar-sync{display:flex;align-items:center;gap:7px;margin-top:3px}
+.kbar-sync-at{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--mm-mail-tx);opacity:.7;white-space:nowrap}
+.kbar-sync-go{padding:1px 6px;font-family:inherit;font-size:8.5px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--mm-mail-tx);background:none;border:1px solid var(--mm-mail-bd);cursor:pointer;transition:all .12s}
+.kbar-sync-go:hover:not(:disabled){background:var(--mm-mail-tx);border-color:var(--mm-mail-tx);color:var(--mm-mail-bg)}
+.kbar-sync-go:disabled{opacity:.45;cursor:progress}
+.kbar-sync-go:focus-visible{outline:2px solid var(--t-400);outline-offset:1px}
+
+/* The last-run half of a schedule chip, quieter than the next-run half: what
+   is about to happen matters more than what already did, unless it failed. */
+.cc-sched-i em.cc-sched-last{font-weight:600;color:var(--text-4);font-size:10.5px}

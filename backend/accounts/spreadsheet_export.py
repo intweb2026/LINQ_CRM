@@ -51,25 +51,17 @@ ADMIN ON TOP OF THE MODULE GATE, NOT INSTEAD OF IT
 action would REPLACE the viewset's crm_permission, which is the bug already
 documented on `bulk_delete` in book_delegate/views.py.
 """
-from datetime import timedelta, timezone
 from io import BytesIO
 
 from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponse
+from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework.decorators import action
 
 from .permissions import IsAdminRole
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-# The zone the CRM is READ in. Timestamps are stored UTC (settings.TIME_ZONE)
-# and every table renders them at +05:30 — see IST_OFFSET_MS in
-# frontend/src/lib/helpers.js, which explains why the offset is fixed rather
-# than looked up: India has run a single +05:30 with no DST since 1945. A
-# workbook that wrote the UTC instant would put "Added Time" on the previous
-# day for anything logged after 18:30, against a screen that says otherwise.
-IST = timezone(timedelta(hours=5, minutes=30))
 
 # Excel refuses a sheet name over 31 characters or holding : \ / ? * [ ].
 _SHEET_BANNED = r':\/?*[]'
@@ -177,17 +169,26 @@ def _excel_value(value):
     shows on screen either. Parsed here into a datetime/date, which openpyxl
     writes as a date-formatted cell.
 
-    Timestamps are shifted to IST first, so the cell reads the day and time the
-    table read. Plain dates are NOT shifted: a DateField holds a calendar day
-    with no instant behind it, and moving it by five and a half hours would be
-    inventing a timezone for a value that has none.
+    Timestamps are shifted into settings.TIME_ZONE first — Pacific — so the cell
+    reads the day and time the table read. A workbook that wrote the raw UTC
+    instant would put "Added Time" on the FOLLOWING day for anything logged
+    after 16:00 or 17:00 local, against a screen that says otherwise.
+
+    timezone.localtime, not a fixed offset: Pacific is -08:00 for part of the
+    year and -07:00 for the rest, so the conversion has to be looked up per
+    instant. It is the same call the rest of the project uses, which is what
+    keeps the workbook and the screen from drifting apart.
+
+    Plain dates are NOT shifted: a DateField holds a calendar day with no
+    instant behind it, and moving it by some hours would be inventing a timezone
+    for a value that has none.
     """
     if not isinstance(value, str):
         return value
     stamp = parse_datetime(value)
     if stamp is not None:
         if stamp.tzinfo is not None:
-            stamp = stamp.astimezone(IST)
+            stamp = timezone.localtime(stamp)
         # Excel has no concept of an offset, and openpyxl refuses an aware
         # datetime outright. Microseconds go with it; no column shows them.
         return stamp.replace(tzinfo=None, microsecond=0)

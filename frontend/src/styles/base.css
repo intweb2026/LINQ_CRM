@@ -27,10 +27,35 @@
   --sh-lg:0 12px 28px -6px rgba(19,26,35,.1),0 4px 8px -4px rgba(19,26,35,.05);
   --sh-xl:0 28px 56px -12px rgba(19,26,35,.16),0 8px 16px -8px rgba(19,26,35,.06);
   --font:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+  /* The heading face. Defaults to --font, so the shipped light and dark
+     themes are unchanged; a named theme can pair a display face against a
+     different body face, which is the whole point of Provenance's serif over
+     Public Sans. Read by the breadcrumb's current page (which is this app's
+     page title) and by the big figures. */
+  --display:var(--font);
   --mono:'JetBrains Mono',ui-monospace,monospace;
   --r-xs:4px;--r-sm:6px;--r-md:9px;--r-lg:13px;--r-xl:18px;--r-full:9999px;
+  /* SMALL TAGS ARE BOXY, NOT PILLS.
+     Badges, status tags, counts and filter chips used --r-full, which is
+     9999px, so every one of them was a fully rounded pill. At tag size that
+     reads as a toy badge, and stacked down a table column it reads as a
+     scoreboard. They take this instead.
+     --r-full stays 9999px and keeps its real circles: the 36x20 toggle in
+     .sw and the 6px dot in .kbar-chip i, both of which a boxy radius would
+     visibly break. */
+  --r-tag:4px;
   --ease:cubic-bezier(.32,.72,0,1);
   --rail-w:236px;--top-h:56px;
+  /* PER-ELEMENT LOCALS, declared here so they have a defined default.
+     --ac is an element's own accent (the rail on a Credit Control KPI tile, the
+     spine on a grouped table row) and --hm is a heatmap cell's hue; both are
+     set inline by the component that knows which measure it is drawing, since
+     the hue is data-dependent and cannot be a static class.
+     They are declared globally for two reasons: a rule that forgets to set one
+     still renders in the brand teal rather than transparent, and tokens.test.js
+     asserts that no stylesheet reads a variable nothing defines — an invariant
+     worth keeping, because the usual cause of it failing is a genuine typo. */
+  --ac:var(--t-500);--hm:var(--t-500);
 }
 html[data-theme=dark]{
   --n-0:#161B22;--n-25:#1A2029;--n-50:#1F2630;--n-75:#252D38;--n-100:#2C3541;
@@ -120,7 +145,7 @@ html[data-theme=dark]{
   --bd-media:#A2606A;--bd-media-bg:#FAF1F2;--bd-media-tx:#6D3D45;
   --bd-ab:#7A5C45;--bd-ab-bg:#F6F3F0;--bd-ab-tx:#513C2C;
 }
-html[data-theme=dark]{
+html[data-theme=dark],html[data-theme=bastion]{
   /* Accents lift to the light end of each hue, tints become a low-alpha wash of
      the accent so they sit ON the dark surface rather than replacing it, and the
      label takes the accent itself — the light theme's deep -tx values would be
@@ -143,6 +168,258 @@ html[data-theme=dark]{
   --bd-media:#C98693;--bd-media-bg:rgba(201,134,147,.12);--bd-media-tx:#DCA9B3;
   --bd-ab:#A88769;--bd-ab-bg:rgba(168,135,105,.12);--bd-ab-tx:#C4A98C;
 }
+/* ═══════ NAMED THEMES ═══════  [named_themes]
+   Four complete identities beyond light and dark. Each one is a TOKEN BLOCK
+   and nothing more, in the same shape as the dark overrides above, which is
+   why they cost almost no component CSS — only the handful of rail rules
+   that a dark rail under a light ramp genuinely cannot express.
+
+   WHY EACH ONE RESTATES THE WHOLE NEUTRAL RAMP
+   --n-50 is every hover, --n-75 every badge ground, --n-200 the scrollbar
+   thumb and --n-300 its hover. A theme that set only --canvas and --surface
+   would put a cool grey hover on Provenance's bone paper and a graphite one
+   on Bastion's teal — a temperature clash on every pointer move, in a place
+   no palette swatch would ever show it. So the ramp is tinted to the ground,
+   and in exchange nothing else has to be hand-patched.
+
+   THE TEAL RAMP IS THE ACCENT RAMP
+   --t-500 is every primary button, --t-600 every link, event code, invoice
+   number and active tab, --t-700 the filter chips. Three of these four
+   themes leave the brand teal behind, so what they are really redefining is
+   that ramp; the name --t-* is kept because 2,400 lines of CSS read it.
+   --t-500 must always be a rung that takes WHITE type — .btn-p and .skip
+   both pair it with #fff. Bastion is the one exception and says why. */
+
+/* ── BASTION ─ the iQ Hub ramp, inverted ────────────────────────────────
+   The house teal stops being an accent on white and becomes the room. Same
+   brand hues as :root — #04262F and #073A47 are the deep rungs, #8FD6E4 the
+   pale one — with the roles swapped. Dark because this is the screen a
+   credit-control caller keeps open for a nine-hour shift.
+   Shares the dark band palette, selection, wordmark and tooltip above. */
+html[data-theme=bastion]{
+  /* Neutral ramp, tinted teal rather than graphite. Same direction of travel
+     as the dark theme: --n-0 is the darkest surface, --n-900 the brightest. */
+  --n-0:#073A47;--n-25:#08404E;--n-50:#0A4A5A;--n-75:#0D5566;--n-100:#115F72;
+  --n-200:#1A7183;--n-300:#4E9AAA;--n-400:#79B7C4;--n-500:#97CBD5;
+  --n-600:#B4DCE3;--n-700:#D3ECF1;--n-800:#E9F7FA;--n-900:#FFFFFF;
+  /* The brand ramp, inverted. --t-500 stays a MID rung because .btn-p and
+     .skip put white type on it; the pale rungs go to --t-600/--t-700, which
+     are the links and the chips, exactly as the dark theme does. */
+  --t-50:rgba(143,214,228,.13);--t-100:rgba(143,214,228,.22);--t-200:#8FD6E4;
+  --t-300:#A5DFEA;--t-400:#B8E6EE;--t-500:#0F7F99;--t-600:#C6E9F1;
+  --t-700:#E0F4F8;--t-800:#EDF9FB;--t-900:#04262F;
+  --green:#5FD3A4;--green-bg:rgba(95,211,164,.14);--green-tx:#8AE3C0;
+  --amber:#EBC067;--amber-bg:rgba(235,192,103,.14);--amber-tx:#F5D590;
+  --red:#F2897F;--red-bg:rgba(242,137,127,.14);--red-tx:#F8ADA6;
+  --blue:#7FC0EE;--blue-bg:rgba(127,192,238,.14);--blue-tx:#A6D5F4;
+  --violet:#BAA3F7;--violet-bg:rgba(186,163,247,.14);--violet-tx:#CBB8FA;
+  --cyan:#6ED6EB;--cyan-bg:rgba(110,214,235,.14);--cyan-tx:#9AE4F1;
+  --slate:#A0C4CE;--slate-bg:rgba(160,196,206,.13);--slate-tx:#C2DAE1;
+  --canvas:#04262F;--surface:#073A47;--surface-2:#094452;
+  --border:#125565;--border-s:#1A6E80;
+  --text:#EAF7FA;--text-2:#ACD8E3;--text-3:#81BFCD;--text-4:#5D9CAE;
+  --rail:#021D25;--rail-bd:#0B3E4D;--rail-tx:#A6D3DD;--rail-dim:#6AA6B6;
+  --sh-xs:0 1px 2px rgba(0,0,0,.3);
+  --sh-sm:0 1px 3px rgba(0,0,0,.36);
+  --sh-md:0 4px 10px -2px rgba(0,0,0,.42);
+  --sh-lg:0 12px 28px -6px rgba(0,0,0,.52);
+  --sh-xl:0 28px 56px -12px rgba(0,0,0,.62);
+  --font:'Inter Tight',system-ui,-apple-system,sans-serif;
+  --display:'Sora',system-ui,sans-serif;
+  --r-xs:3px;--r-sm:4px;--r-md:7px;--r-lg:10px;--r-xl:14px;--r-tag:3px;
+}
+/* The one component override Bastion needs. Inverted means the primary
+   button is the PALE rung carrying DARK type — the mirror of a deep teal
+   button with white type — which no token alone can express, because
+   .btn-p hardcodes color:#fff. */
+html[data-theme=bastion] .btn-p{background:var(--t-200);color:#04262F;box-shadow:none}
+html[data-theme=bastion] .btn-p:hover{background:var(--t-300);color:#04262F}
+
+/* ── PROVENANCE ─ bone paper, institutional green ──────────────────────
+   The system of record, dressed as a record. Lowest contrast of the four on
+   purpose: nothing in the chrome outranks the data. */
+html[data-theme=provenance]{
+  --n-0:#FFFFFF;--n-25:#FAF9F5;--n-50:#F1EFE7;--n-75:#E9E6DC;--n-100:#E0DCD1;
+  --n-200:#CCC7B8;--n-300:#A8A89C;--n-400:#7C7F74;--n-500:#5E6157;
+  --n-600:#494C46;--n-700:#2A2C27;--n-800:#1A1C19;--n-900:#0E100D;
+  --t-50:#E2EDE7;--t-100:#CBDFD5;--t-200:#A6C9B8;--t-300:#7BAE97;
+  --t-400:#4E8C72;--t-500:#2F5D4A;--t-600:#2A5643;--t-700:#224636;
+  --t-800:#1A3729;--t-900:#12241C;
+  --green:#2F5D4A;--green-bg:#DDEAE2;--green-tx:#22513C;
+  --amber:#956A22;--amber-bg:#F3E6CD;--amber-tx:#785215;
+  --red:#A34434;--red-bg:#F6E4E0;--red-tx:#7D3125;
+  --blue:#2E5A8C;--blue-bg:#E4EAF2;--blue-tx:#22456B;
+  --violet:#6B5480;--violet-bg:#EDE7F0;--violet-tx:#5A4568;
+  --cyan:#37707C;--cyan-bg:#E0EDEF;--cyan-tx:#2C5A63;
+  --slate:#61645A;--slate-bg:#E9E7DF;--slate-tx:#4E5148;
+  --canvas:#EFEDE6;--surface:#FAF9F5;--surface-2:#F4F2EB;
+  --border:#E0DCD1;--border-s:#CCC7B8;
+  --text:#1A1C19;--text-2:#494C46;--text-3:#71756C;--text-4:#9A9D92;
+  --rail:#E9E7DE;--rail-bd:#DBD8CC;--rail-tx:#545750;--rail-dim:#8F9288;
+  --sh-xs:0 1px 2px rgba(75,65,45,.05);
+  --sh-sm:0 1px 3px rgba(75,65,45,.07),0 1px 2px rgba(75,65,45,.04);
+  --sh-md:0 4px 10px -2px rgba(75,65,45,.08),0 2px 4px -2px rgba(75,65,45,.05);
+  --sh-lg:0 12px 28px -6px rgba(75,65,45,.11),0 4px 8px -4px rgba(75,65,45,.06);
+  --sh-xl:0 28px 56px -12px rgba(75,65,45,.17),0 8px 16px -8px rgba(75,65,45,.07);
+  --font:'Public Sans',system-ui,-apple-system,sans-serif;
+  --display:'Faustina',Georgia,serif;
+  --r-xs:4px;--r-sm:5px;--r-md:8px;--r-lg:13px;--r-xl:18px;--r-tag:3px;
+}
+
+/* ── ATRIUM ─ bottle green on off-white, and it floats ─────────────────
+   The one theme built around MOTION rather than around a colour. Every other
+   theme here is a token block; this is a token block plus a short set of rules
+   that give the chrome depth, because "cinematic" is not a hue and cannot be
+   expressed as one.
+
+   THE COLOUR IS QUIET SO THE MOTION CAN BE THE EVENT. Bottle green appears as
+   an accent and almost never as a field: the ground is off-white, the ramp
+   underneath it is a warm grey rather than a cold one, and the green arrives
+   on the things you can act on. A theme that painted the rail green would be
+   Cardinal again in another colour, and would be fighting its own animation
+   for attention.
+
+   WHY THE RAIL STAYS LIGHT. The wordmark is a fixed asset carrying the brand
+   teal on an opaque tile, so any coloured rail needs a second set of rules to
+   keep the logo legible; Cardinal carried eleven of them and a light-band
+   exception on top. Depth here comes from shadow and movement, which cost no
+   exceptions at all. */
+html[data-theme=atrium]{
+  --n-0:#FFFFFF;--n-25:#FBFBF8;--n-50:#F4F4EF;--n-75:#ECECE6;--n-100:#E4E4DD;
+  --n-200:#D2D2C9;--n-300:#A3A79E;--n-400:#7B8078;--n-500:#5C625B;
+  --n-600:#414741;--n-700:#232823;--n-800:#151915;--n-900:#0A0D0A;
+  /* Bottle green, from the deep bottle itself at --t-500 outwards. The rungs
+     above it are the tints the chips and row washes use; the rungs below carry
+     link text and active chrome, where the ground is off-white and the text has
+     to win. */
+  --t-50:#E8F2ED;--t-100:#CDE4DA;--t-200:#9CC9B6;--t-300:#63A98C;
+  --t-400:#2E8462;--t-500:#0C5138;--t-600:#0A4530;--t-700:#083826;
+  --t-800:#062A1D;--t-900:#041C13;
+  /* --green is deliberately NOT the accent. A paid row and a primary button
+     reading as the same colour would make the accent mean nothing, so the
+     status green sits a ramp lighter and warmer than bottle. */
+  --green:#17724F;--green-bg:#E4F1EA;--green-tx:#0D5238;
+  --amber:#8A6212;--amber-bg:#F4EDDC;--amber-tx:#6E4E0E;
+  --red:#A5342A;--red-bg:#F7E7E4;--red-tx:#7E2620;
+  --blue:#245C86;--blue-bg:#E5EDF3;--blue-tx:#1A4665;
+  --violet:#5B4A78;--violet-bg:#ECE9F2;--violet-tx:#4B3D64;
+  --cyan:#1F6A72;--cyan-bg:#E3EFF0;--cyan-tx:#18545A;
+  --slate:#5A605A;--slate-bg:#ECEDE9;--slate-tx:#4A4F4A;
+  /* Off-white, and three steps of it: the canvas is the deepest so a card reads
+     as lifted off the page before a single shadow is drawn. */
+  --canvas:#F4F4EF;--surface:#FDFDFB;--surface-2:#F8F8F3;
+  --border:#E4E4DD;--border-s:#D2D2C9;
+  --text:#151915;--text-2:#414741;--text-3:#666C66;--text-4:#868C85;
+  --rail:#F1F1EB;--rail-bd:#E4E4DD;--rail-tx:#414741;--rail-dim:#7E847D;
+  /* LONGER AND SOFTER THAN ANY OTHER THEME'S, and tinted with the green-black
+     rather than a neutral one. This is where the depth actually comes from: an
+     --sh-xl that throws 80px is the difference between a modal sitting on the
+     page and one hovering over it. */
+  --sh-xs:0 1px 2px rgba(10,29,20,.04);
+  --sh-sm:0 1px 3px rgba(10,29,20,.06),0 1px 2px rgba(10,29,20,.03);
+  --sh-md:0 6px 16px -4px rgba(10,29,20,.10),0 2px 6px -2px rgba(10,29,20,.05);
+  --sh-lg:0 18px 40px -8px rgba(10,29,20,.14),0 6px 14px -6px rgba(10,29,20,.07);
+  --sh-xl:0 40px 80px -16px rgba(10,29,20,.22),0 12px 24px -10px rgba(10,29,20,.09);
+  /* THE SYSTEM FACE FIRST, so this renders in SF Pro on Apple hardware and in
+     the platform UI face everywhere else. Inter Tight is the fallback and is
+     already in the font link, so this theme adds no request. */
+  --font:-apple-system,BlinkMacSystemFont,'SF Pro Text','Inter Tight',system-ui,sans-serif;
+  --display:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter Tight',system-ui,sans-serif;
+  --r-xs:5px;--r-sm:8px;--r-md:11px;--r-lg:16px;--r-xl:22px;
+  /* Tags stay SQUARED, like every other theme. Rounding the chrome does not
+     license rounding the state tags into pills. */
+  --r-tag:5px;
+  /* The curve everything already reads. Overriding it here re-times every
+     entrance the app already animates — the popover, the modal, the toast, the
+     drawer, the bulk bar — into one long decelerating settle, without touching
+     a single one of those rules. It is the cheapest half of "cinematic". */
+  --ease:cubic-bezier(.16,1,.3,1);
+}
+
+/* ── the floating half ──  [atrium_motion]
+   Scoped to this theme so no other one moves. Nothing below invents a surface;
+   each rule takes an element that already exists and gives it either depth or
+   travel. The global prefers-reduced-motion rule in overlays.css already
+   collapses every duration here to nothing, so none of it needs its own guard.
+
+   THE CHROME IS TRANSLUCENT ONLY WHERE SOMETHING PASSES UNDER IT. The top bar
+   is fixed and the page scrolls beneath it, so a blur there is real depth. The
+   rail has nothing behind it but the canvas, so blurring it would cost a
+   composite layer to show a flat colour, and it stays opaque. */
+html[data-theme=atrium] .top{
+  background:rgba(253,253,251,.72);
+  backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
+}
+html[data-theme=atrium] .pop,
+html[data-theme=atrium] .ts{
+  background:rgba(253,253,251,.82);
+  backdrop-filter:saturate(180%) blur(22px);
+  -webkit-backdrop-filter:saturate(180%) blur(22px);
+}
+/* The modal stays OPAQUE. It holds forms, and text over a blurred table is the
+   one place this effect stops being atmosphere and starts being a legibility
+   problem. It gets the travel instead: further, slower, and settling rather
+   than stopping. */
+html[data-theme=atrium] .md{animation:atriumRise .44s var(--ease)}
+@keyframes atriumRise{
+  from{opacity:0;transform:scale(.94) translateY(18px)}
+  to{opacity:1;transform:scale(1) translateY(0)}
+}
+/* Surfaces lift toward the pointer. .kpi and .rc already carry a 1px lift and a
+   transition to run it on; this deepens the travel and hands the same behaviour
+   to the two cards that never had it. */
+html[data-theme=atrium] .card,
+html[data-theme=atrium] .kk{transition:box-shadow .24s var(--ease),transform .24s var(--ease)}
+html[data-theme=atrium] .kpi:hover,
+html[data-theme=atrium] .rc:hover,
+html[data-theme=atrium] .card:hover,
+html[data-theme=atrium] .kk:hover{box-shadow:var(--sh-lg);transform:translateY(-3px)}
+/* A button that only changes colour under the finger feels like a link. This is
+   the press, not the hover: down on contact, back on release. */
+html[data-theme=atrium] .btn:active{transform:scale(.97)}
+/* The rail entry steps toward the content it opens. Transform is added to a
+   transition that listed only background and colour, so without this line the
+   travel would snap. */
+html[data-theme=atrium] .rail-item{transition:background .18s var(--ease),color .18s var(--ease),transform .18s var(--ease)}
+html[data-theme=atrium] .rail-item:hover{transform:translateX(3px)}
+
+/* ── FOLIO ─ porcelain, one navy, squared ──────────────────────────────
+   Editorial with a spine. Hairline rules, zero radius and no shadow, so
+   hierarchy is carried by type size and white space alone. The overlay
+   shadows are the exception and keep a hairline lift: a modal that casts
+   nothing at all cannot be told from the page underneath it. */
+html[data-theme=folio]{
+  --n-0:#FFFFFF;--n-25:#FBFCFD;--n-50:#F3F5F7;--n-75:#ECEEF1;--n-100:#E5E8EC;
+  --n-200:#D1D6DC;--n-300:#A2AAB4;--n-400:#7C848E;--n-500:#5E666E;
+  --n-600:#414750;--n-700:#252A31;--n-800:#101418;--n-900:#080B0E;
+  --t-50:#EBEEF8;--t-100:#D6DDF0;--t-200:#AFBCE0;--t-300:#8195CE;
+  --t-400:#4C67AE;--t-500:#24408F;--t-600:#1F3880;--t-700:#1A2F6B;
+  --t-800:#132250;--t-900:#0C1630;
+  --green:#1F6B4A;--green-bg:#E6EFEA;--green-tx:#16543A;
+  --amber:#87610F;--amber-bg:#F3ECD9;--amber-tx:#6C5110;
+  --red:#A32B22;--red-bg:#F7E5E3;--red-tx:#7E1F19;
+  --blue:#24408F;--blue-bg:#EBEEF8;--blue-tx:#1A2F6B;
+  --violet:#584A7A;--violet-bg:#EDEAF5;--violet-tx:#493C6B;
+  --cyan:#2F6070;--cyan-bg:#E4EDF1;--cyan-tx:#27505E;
+  --slate:#535A62;--slate-bg:#EDEFF2;--slate-tx:#464D55;
+  --canvas:#FFFFFF;--surface:#FFFFFF;--surface-2:#F6F7F9;
+  --border:#E5E8EC;--border-s:#D1D6DC;
+  --text:#101418;--text-2:#414750;--text-3:#6A717B;--text-4:#98A0AA;
+  --rail:#FFFFFF;--rail-bd:#E5E8EC;--rail-tx:#414750;--rail-dim:#98A0AA;
+  --sh-xs:none;
+  --sh-sm:none;
+  --sh-md:0 1px 3px rgba(16,20,24,.07);
+  --sh-lg:0 6px 20px -6px rgba(16,20,24,.13);
+  --sh-xl:0 18px 44px -12px rgba(16,20,24,.18);
+  --font:'Karla',system-ui,-apple-system,sans-serif;
+  --display:'Spectral',Georgia,serif;
+  --r-xs:0;--r-sm:0;--r-md:2px;--r-lg:2px;--r-xl:3px;--r-tag:0;
+}
+/* Squared means squared: the active rail marker is a left rule, not a
+   rounded tab. */
+html[data-theme=folio] .rail-item.on::before{border-radius:0}
+
 /* ═══════ RESET / SCROLLBARS / A11Y ═══════  [global_reset_scrollbar]
    The reset, the base typography, the custom scrollbar, .sr for
    screen-reader-only text, and .skip for the skip-to-content link. */
@@ -153,7 +430,7 @@ body{font-family:var(--font);color:var(--text);background:var(--canvas);line-hei
 a{color:var(--t-600);text-decoration:none}a:hover{text-decoration:underline}
 button,input,select,textarea{font:inherit;color:inherit}
 ::selection{background:var(--t-100);color:var(--t-900)}
-html[data-theme=dark] ::selection{color:#fff}
+html[data-theme=dark] ::selection,html[data-theme=bastion] ::selection{color:#fff}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--n-200);border-radius:6px;border:2.5px solid transparent;background-clip:content-box}
@@ -183,8 +460,16 @@ html[data-theme=dark] ::selection{color:#fff}
 .rail-mark{display:flex;align-items:center;flex-shrink:0;cursor:pointer}
 .rail-mark img{height:28px;width:auto;display:none}
 .rail-mark .lg-light{display:block}
-html[data-theme=dark] .rail-mark .lg-light{display:none}
-html[data-theme=dark] .rail-mark .lg-dark{display:block}
+/* The wordmark follows the RAIL HEAD, which is not always the rail. Bastion's
+   head is dark teal and takes the dark asset with the dark theme. Every other
+   theme keeps a light head and so keeps the light asset; the rule is the head,
+   not the rail, because the asset carries the brand teal on an OPAQUE tile and
+   cannot be filtered to a silhouette. Atrium leaves its rail light for exactly
+   that reason. */
+html[data-theme=dark] .rail-mark .lg-light,
+html[data-theme=bastion] .rail-mark .lg-light{display:none}
+html[data-theme=dark] .rail-mark .lg-dark,
+html[data-theme=bastion] .rail-mark .lg-dark{display:block}
 .rail-name{flex:1;min-width:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
 .rail-name span{display:block;font-size:8.5px;font-weight:650;text-transform:uppercase;letter-spacing:.045em;color:var(--rail-dim);white-space:nowrap}
 .rail-collapse{width:34px;height:24px;display:grid;place-items:center;border:none;border-left:1px solid var(--rail-bd);background:none;color:var(--rail-dim);border-radius:0;cursor:pointer;flex-shrink:0;transition:all .13s}
@@ -202,17 +487,9 @@ html[data-theme=dark] .rail-mark .lg-dark{display:block}
 .rail-ic{width:18px;height:18px;flex-shrink:0;display:grid;place-items:center}
 .rail-ic svg{width:17px;height:17px;stroke-width:1.85}
 .rail-lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rail-bdg{font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:var(--r-full);background:var(--n-75);color:var(--text-3);flex-shrink:0}
+.rail-bdg{font-family:var(--mono);font-size:10px;font-weight:500;padding:1px 6px;border-radius:var(--r-tag);background:var(--n-75);color:var(--text-3);flex-shrink:0}
 .rail-item.on .rail-bdg{background:var(--t-100);color:var(--t-700)}
 .rail-foot{padding:9px;border-top:1px solid var(--rail-bd);flex-shrink:0}
-.rail-user{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--r-md);cursor:pointer;transition:background .13s;width:100%;border:none;background:none;text-align:left}
-.rail-user:hover{background:var(--n-50)}
-.rail-utx{flex:1;min-width:0;overflow:hidden}
-.rail-utx b{display:block;font-size:12.5px;font-weight:650;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
-.rail-utx span{display:block;font-size:10.5px;color:var(--text-4);white-space:nowrap;text-transform:capitalize}
-.rail-out{width:27px;height:27px;display:grid;place-items:center;border:none;background:none;color:var(--rail-dim);border-radius:var(--r-sm);cursor:pointer;flex-shrink:0}
-.rail-out:hover{background:var(--red-bg);color:var(--red)}
-.rail-out svg{width:15px;height:15px}
 /* ── collapsed rail ──  [sidebar_rail_collapsed]
    Driven entirely by body.rail-min, so nothing here fires unless that class
    is on <body>; the rules below only override what has to change at 62px. */
@@ -223,8 +500,7 @@ body.rail-min{--rail-w:62px}
 body.pm-full{--rail-w:0px;--top-h:0px}
 body.pm-full .rail,body.pm-full .top{display:none}
 body.pm-full #main{padding:10px 12px}
-body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,
-body.rail-min .rail-utx,body.rail-min .rail-out{display:none}
+body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel{display:none}
 body.rail-min .rail-head{justify-content:center;padding:13px 0}
 body.rail-min .rail-mark{width:100%;justify-content:center}
 body.rail-min .rail-mark .lg-light,body.rail-min .rail-mark .lg-dark{display:none}
@@ -235,15 +511,160 @@ body.rail-min .rail-item{justify-content:center;padding:0;height:38px}
 body.rail-min .rail-group{margin-bottom:9px;padding-top:9px;border-top:1px solid var(--rail-bd)}
 body.rail-min .rail-group:first-child{border-top:none;padding-top:0}
 body.rail-min .rail-bdg{position:absolute;top:2px;right:4px;font-size:8.5px;padding:0 3.5px;min-width:14px;height:14px;display:grid;place-items:center;background:var(--t-500);color:#fff;box-shadow:0 0 0 1.5px var(--rail)}
-body.rail-min .rail-user{justify-content:center;padding:6px 0}
 body.rail-min .rail-tip{display:block}
 /* ── icon tooltip ──  [sidebar_rail_tooltip]
    Only visible while the rail is collapsed, where the labels are hidden. */
 .rail-tip{display:none;position:absolute;left:calc(100% + 11px);top:50%;transform:translateY(-50%) translateX(-3px);padding:5px 9px;background:var(--n-800);color:var(--n-0);font-size:11px;font-weight:600;border-radius:var(--r-sm);white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .13s,transform .13s var(--ease);z-index:95;box-shadow:var(--sh-md)}
-html[data-theme=dark] .rail-tip{background:var(--n-100);color:var(--text)}
+html[data-theme=dark] .rail-tip,html[data-theme=bastion] .rail-tip{background:var(--n-100);color:var(--text)}
 .rail-tip::before{content:'';position:absolute;right:100%;top:50%;transform:translateY(-50%);border:4px solid transparent;border-right-color:var(--n-800)}
-html[data-theme=dark] .rail-tip::before{border-right-color:var(--n-100)}
+html[data-theme=dark] .rail-tip::before,html[data-theme=bastion] .rail-tip::before{border-right-color:var(--n-100)}
 .rail-item:hover .rail-tip{opacity:1;transform:translateY(-50%) translateX(0)}
+
+/* ═══════ RAIL PLACEMENT ═══════  [rail_placement]
+   The rail can sit on the LEFT (the default, and everything above describes
+   it), across the TOP, or across the BOTTOM. Driven entirely by two classes
+   on <body> — `rail-h` for either horizontal arrangement plus `rail-top` or
+   `rail-bottom` for which edge — so nothing outside this block knows there is
+   more than one arrangement.
+
+   WHY THIS COSTS SO LITTLE
+   #main and .top already position themselves off --rail-w and --top-h rather
+   than off literals. Setting --rail-w to 0 is therefore the whole of "give the
+   page its left edge back"; the bar's own height is a third token, and only
+   the two edges have to say which way to push. The .bulk toolbar centres on
+   `calc(50% + var(--rail-w)/2)` and re-centres for free.
+
+   WHY A HORIZONTAL RAIL DROPS THE SECTION LABELS
+   PIPELINE / MANAGEMENT / ADMIN are stacked headings; laid out in a row they
+   would take more width than the items they head, on the one axis that is
+   scarce. The sections survive as hairline separators instead, so the grouping
+   is still visible without being spelled out — and the item labels stay, which
+   is why the collapsed-rail tooltips are switched off here.
+
+   THE ACTIVE MARKER TURNS WITH THE BAR
+   On the left it is a 3px rule down the leading edge. In a bar it becomes an
+   underline, and on a BOTTOM bar an overline — the marker always sits on the
+   edge facing the content it belongs to. */
+body.rail-h{--rail-w:0px;--railbar-h:46px}
+body.rail-h .rail{
+  left:0;right:0;width:auto;height:var(--railbar-h);
+  flex-direction:row;align-items:center;gap:3px;padding:0 12px;
+  border-right:none;
+}
+body.rail-top .rail{top:0;bottom:auto;border-bottom:1px solid var(--rail-bd)}
+body.rail-top .top{top:var(--railbar-h)}
+body.rail-top #main{top:calc(var(--railbar-h) + var(--top-h))}
+body.rail-bottom .rail{top:auto;bottom:0;border-top:1px solid var(--rail-bd)}
+body.rail-bottom #main{bottom:var(--railbar-h)}
+
+/* The head keeps the wordmark and becomes the bar's leading block. Its
+   --surface-2 background and bottom border both belong to a vertical rail. */
+body.rail-h .rail-head{
+  height:auto;padding:0 12px 0 0;gap:8px;background:none;
+  border-bottom:none;border-right:1px solid var(--rail-bd);
+}
+body.rail-h .rail-name,
+body.rail-h .rail-collapse{display:none}
+
+body.rail-h .rail-nav{
+  flex:1;min-width:0;display:flex;flex-direction:row;align-items:center;
+  gap:2px;padding:0 4px;overflow-x:auto;overflow-y:hidden;
+}
+body.rail-h .rail-group{display:flex;flex-direction:row;align-items:center;gap:2px;margin:0}
+body.rail-h .rail-glabel{display:none}
+body.rail-h .rail-group+.rail-group{margin-left:7px;padding-left:7px;border-left:1px solid var(--rail-bd)}
+body.rail-h .rail-item{width:auto;height:32px;padding:0 10px;margin:0;flex-shrink:0}
+/* Anchored inside the item rather than to the bar's outer edge: the item is
+   the only box whose height is known here, so a marker measured from it stays
+   put whatever --railbar-h becomes. */
+body.rail-h .rail-item.on::before{
+  left:0;right:0;top:auto;bottom:0;width:auto;height:2px;
+  transform:none;border-radius:0;
+}
+body.rail-bottom .rail-item.on::before{bottom:auto;top:0}
+/* The labels are visible in a bar, so the collapsed-rail tooltip would just
+   repeat them under the cursor. */
+body.rail-h .rail-tip{display:none!important}
+
+body.rail-h .rail-foot{
+  padding:0 0 0 12px;flex-shrink:0;
+  border-top:none;border-left:1px solid var(--rail-bd);
+}
+
+/* ── what else is pinned to an edge ──
+   Four fixed elements measure themselves from a viewport edge the bar now
+   occupies. They are styled in components.css and overlays.css, but the reason
+   they need moving is placement and nothing else, so the overrides live here
+   with the rest of it rather than as an unexplained rail-bottom rule three
+   files away.
+
+   .bulk is the worse of the two collisions and the quiet one: at bottom:18px
+   it lands inside a bottom bar, and its z-index of 60 is UNDER the rail's 80,
+   so the bar paints over the selection toolbar and the count and its buttons
+   simply are not there. Toasts have the opposite problem — z-index 125 is over
+   the rail, so they cover the nav instead of being covered by it. */
+body.rail-bottom .bulk{bottom:calc(var(--railbar-h) + 14px)}
+body.rail-bottom .tst{bottom:calc(var(--railbar-h) + 14px)}
+/* The scrim deliberately leaves the rail uncovered — see `left:var(--rail-w)`
+   on it — so a drawer keeps the nav reachable. Same intent, other axis. */
+body.rail-top .scrim{top:var(--railbar-h)}
+body.rail-bottom .scrim{bottom:var(--railbar-h)}
+/* A popover pinned under the top bar at a literal 88px. */
+body.rail-top .ped-ev-pop{top:calc(88px + var(--railbar-h))}
+
+/* ── the theme control ──  [topbar_theme_button]
+   A labelled, boxy button rather than a bare icon: there are five themes now
+   and an icon alone could not say which was on, let alone that a menu was
+   behind it. The swatch is the current theme's accent, set inline from the
+   THEMES table in lib/constants.js — a token cannot be read off a rule that is
+   not in effect, which is also why the table carries the hex. */
+.top-theme{
+  display:inline-flex;align-items:center;gap:7px;height:33px;padding:0 11px;
+  background:var(--surface-2);border:1px solid var(--border);
+  border-radius:var(--r-tag);cursor:pointer;flex-shrink:0;
+  font-family:var(--font);font-size:12px;font-weight:640;
+  letter-spacing:-.01em;color:var(--text-2);transition:all .13s;
+}
+.top-theme:hover{background:var(--surface);border-color:var(--border-s);color:var(--text)}
+.top-theme.on{background:var(--t-50);border-color:var(--t-500);color:var(--t-700)}
+.top-theme i{
+  width:12px;height:12px;flex-shrink:0;border-radius:var(--r-tag);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.22);
+}
+/* ── who is signed in, and the way out ──  [topbar_identity]
+   A name and a labelled button, nothing else. Both are boxy on the theme's own
+   --r-tag, so they square off with the tag/pill language rather than carrying
+   the softer --r-md the inputs use. Sign out is the only destructive control on
+   the bar and reads as one at rest, without shouting: a red-tinted box that
+   fills solid on hover. */
+.top-me{display:flex;align-items:center;gap:10px;margin-left:2px;flex-shrink:0}
+.top-me-n{
+  font-size:12.5px;font-weight:650;letter-spacing:-.01em;color:var(--text);
+  white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;
+}
+.top-out{
+  display:inline-flex;align-items:center;gap:7px;height:33px;padding:0 12px;
+  background:var(--red-bg);border:1px solid var(--red);color:var(--red-tx);
+  border-radius:var(--r-tag);cursor:pointer;flex-shrink:0;
+  font-family:var(--font);font-size:12px;font-weight:680;
+  letter-spacing:-.01em;transition:all .13s;
+}
+.top-out:hover{background:var(--red);border-color:var(--red);color:#fff}
+.top-out:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.top-out svg{width:15px;height:15px;flex-shrink:0}
+/* On the two dark themes the tinted fill is a wash and the darker --red-tx
+   loses against it, so the border colour carries the label instead. */
+html[data-theme=dark] .top-out,html[data-theme=bastion] .top-out{color:var(--red)}
+
+/* The placement choice, three boxy segments in one control. */
+.pop-seg{display:flex;gap:4px;padding:4px 9px 8px}
+.pop-seg button{
+  flex:1;height:30px;border:1px solid var(--border-s);background:var(--surface);
+  border-radius:var(--r-tag);cursor:pointer;font-family:var(--font);
+  font-size:11.5px;font-weight:640;color:var(--text-3);transition:all .13s;
+}
+.pop-seg button:hover{border-color:var(--n-300);color:var(--text)}
+.pop-seg button[aria-pressed=true]{background:var(--t-50);border-color:var(--t-500);color:var(--t-700)}
 
 /* ═══════ TOPBAR ═══════  [topbar]
    The fixed bar across the top of every page; the burger, the breadcrumb,
@@ -252,7 +673,7 @@ html[data-theme=dark] .rail-tip::before{border-right-color:var(--n-100)}
 .top-burger{display:none;width:33px;height:33px;place-items:center;border:none;background:none;border-radius:var(--r-sm);cursor:pointer;color:var(--text-3)}
 .top-burger svg{width:18px;height:18px}
 .top-crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-4);min-width:0}
-.top-crumb .cur{color:var(--text);font-weight:650}
+.top-crumb .cur{color:var(--text);font-weight:650;font-family:var(--display)}
 /* --text-4, not --n-200: n-200 is the BORDER rung of the neutral ramp, and a
    border tone used as type is invisible by construction — in dark it measured
    1.8:1, so the "›" between "Pipeline" and the page name was a smudge. */

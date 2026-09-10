@@ -11,6 +11,7 @@
 // the same button somebody wanting paper reaches for anyway. A jspdf-shaped
 // dependency would add a second definition of every one of these tables.
 import * as XLSX from 'xlsx';
+import { todayISO } from './dateFilter';
 
 /**
  * Build the worksheet, laid out as the workbook the desk actually sends out.
@@ -158,7 +159,9 @@ export const sheetTitle = (eventLabel, what) => `${codeAndEdition(eventLabel) ||
 
 /** `ACU 2026 name badges 2026-09-04.xlsx`, which is what a desk wants to find later. */
 export function fileName(eventLabel, what) {
-  const day = new Date().toISOString().slice(0, 10);
+  // todayISO, not toISOString: the latter is the UTC day, so a sheet run
+  // after 17:00 Pacific was filed under tomorrow's date.
+  const day = todayISO();
   const safe = (codeAndEdition(eventLabel) || 'event').replace(/[^\w\s-]/g, '');
   return `${safe} ${what} ${day}`;
 }

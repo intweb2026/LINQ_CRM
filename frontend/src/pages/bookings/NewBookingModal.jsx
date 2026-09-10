@@ -8,10 +8,11 @@ import { useToast } from '../../context/ToastContext';
 import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
+import { todayISO } from '../../lib/dateFilter';
 
 export default function NewBookingModal({ onClose, onCreated }) {
   const toast = useToast();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();   // the Pacific day, not the UTC one
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
   const EVENTS = events || [];
   const openEvents = useMemo(() => (events || []).filter((e) => e.status !== 'Completed'), [events]);

@@ -2,10 +2,9 @@ import { useCallback, useState } from 'react';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import { Icon } from '../lib/icons';
-import { Who, RoleBadge, ReportsTo, StatusPill } from '../components/Badge';
+import { Who, ReportsTo, StatusPill } from '../components/Badge';
 import { reportingManagerOf } from '../lib/reporting';
 import { avc, ini, rel } from '../lib/helpers';
-import { TEAM_ROLES, ROLE_FULL } from '../lib/constants';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import { useFetch } from '../hooks/useFetch';
@@ -68,7 +67,7 @@ export default function UsersPage() {
 
   async function invite(e) {
     e.preventDefault();
-    const ok = await usersApi.inviteByEmail(e.target.elements.emails.value, e.target.elements.role.value, e.target.elements.team.value);
+    const ok = await usersApi.inviteByEmail(e.target.elements.emails.value, e.target.elements.team.value);
     setInviteOpen(false);
     toast(ok ? 'Invitations sent' : 'Email invites are not available yet — create accounts directly for now', ok ? 'ok' : 'nf');
   }
@@ -76,7 +75,7 @@ export default function UsersPage() {
   return (
     <>
       <DataTable
-        rows={USERS} noun="users" pageSize={1000} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or username…"
+        rows={USERS} noun="users" pageSize={1000} defaultSort={{ key: 'name', dir: 'asc' }} searchPlaceholder="Search name or team…"
         // No tabs or date-range row on this page to fold these into (see
         // BookingsPage / TicketCentralPage, PaperReviewPage / ProposalSubmissionPage),
         // so they ride on the table's own toolbar row instead of a PageHead row
@@ -86,8 +85,13 @@ export default function UsersPage() {
           <button className="btn btn-p" onClick={() => setFormUser(null)}><Icon name="plus" size={15} />Add user</button>
         </> : null}
         cols={[
-          { key: 'name', label: 'User', cls: 'st usr-name', cell: (v, r) => <Who name={v} sub={r.username} mono avatar={false} /> },
-          { key: 'role', label: 'Role', cell: (v) => <RoleBadge value={v} />, opts: () => TEAM_ROLES },
+          // The sub-line is the EMAIL, not the login handle: email is what people
+          // sign in with (Google) and the only one of the two anybody outside
+          // this screen would recognise.
+          { key: 'name', label: 'User', cls: 'st usr-name', cell: (v, r) => <Who name={v} sub={r.email} avatar={false} /> },
+          // Role is gone from this screen. It is derived from the team's name
+          // server-side (accounts/models.py role_from_team_name) and grants
+          // nothing, so a column of it was the team said twice.
           { key: 'team_id', label: 'Team', cell: (v) => teamName(v), opts: () => TEAMS.map((t) => t.name) },
           // Two different jobs in one column, and they are not the same job:
           // Lead is who a member reports to, Manager is who administers the
@@ -110,11 +114,10 @@ export default function UsersPage() {
         card={(r) => (
           <div className="rc">
             <div className="rc-t"><span className="av av-lg" style={{ background: avc(r.name) }}>{ini(r.name)}</span>
-              <span className="who-t" style={{ flex: 1 }}><span className="who-n">{r.name}</span><span className="who-s mono">@{r.username}</span></span>
+              <span className="who-t" style={{ flex: 1 }}><span className="who-n">{r.name}</span><span className="who-s">{r.email}</span></span>
               <StatusPill value={r.status} />
             </div>
             <div className="rc-m">
-              <div><div className="l">Role</div><div className="v">{ROLE_FULL[r.role]}</div></div>
               <div><div className="l">Team</div><div className="v">{teamName(r.team_id)}</div></div>
               <div><div className="l">Events</div><div className="v">{r.events_count}</div></div>
               <div><div className="l">Lead</div><div className="v">{r.is_lead ? 'Yes' : 'No'}</div></div>
@@ -136,10 +139,7 @@ export default function UsersPage() {
           footer={<><button className="btn btn-s" onClick={() => setInviteOpen(false)}>Cancel</button><button className="btn btn-p" type="submit" form="inviteForm"><Icon name="mail" size={15} />Send invites</button></>}>
           <form id="inviteForm" onSubmit={invite}>
             <div className="fd" style={{ marginBottom: 12 }}><label className="fd-l">Email addresses</label><textarea className="in" name="emails" placeholder="one@iq-hub.com, two@iq-hub.com" /></div>
-            <div className="fg">
-              <div className="fd"><label className="fd-l">Role</label><select className="in" name="role">{TEAM_ROLES.map((r) => <option key={r} value={r}>{ROLE_FULL[r]}</option>)}</select></div>
-              <div className="fd"><label className="fd-l">Team</label><select className="in" name="team">{TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-            </div>
+            <div className="fd"><label className="fd-l">Team</label><select className="in" name="team">{TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
           </form>
         </Modal>
       ) : null}

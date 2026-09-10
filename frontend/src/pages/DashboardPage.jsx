@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
 import { Donut, Sparkline } from '../components/UI';
-import { Who, RoleBadge, EvBadge } from '../components/Badge';
+import { Who, EvBadge } from '../components/Badge';
 import { nf, pc, plur, rel, MON } from '../lib/helpers';
 import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
 import { DASH_MODULES } from '../lib/nav';
@@ -198,7 +198,10 @@ export default function DashboardPage() {
         <div className="hero-r">
           <div>
             <h2>{greet}, {first}</h2>
-            <p>{ROLE_FULL[user.role]} · {perms.is_all_access ? 'full access' : plur(ALL_MODULES.filter(canView).length, 'module') + ' available'} · Signed in as <b style={{ color: '#fff' }}>{user.username}</b></p>
+            {/* The name, not the login handle, and no role: what this line is
+                for is saying who you are signed in as and how much of the app
+                that opens. */}
+            <p>{perms.is_all_access ? 'Full access' : plur(ALL_MODULES.filter(canView).length, 'module') + ' available'} · Signed in as <b style={{ color: '#fff' }}>{user.name}</b></p>
           </div>
           <div className="hero-st">
             {canView('bookings') ? <div><div className="l">Pending</div><div className="v">{nf(OUT.pending)}<small>bookings</small></div></div> : null}
@@ -383,14 +386,16 @@ export default function DashboardPage() {
                       </div>
                     ) : null}
                     <table className="gt">
-                      <thead><tr><th>Member</th><th>Role</th><th className="num">Bookings</th><th className="num">Paid</th><th className="num">Conversion</th></tr></thead>
+                      {/* No Role column: this table is already inside one team's
+                          card, so it would be that team's name repeated down every
+                          row. */}
+                      <thead><tr><th>Member</th><th className="num">Bookings</th><th className="num">Paid</th><th className="num">Conversion</th></tr></thead>
                       <tbody>
                         {t.members.slice().sort((a, b) => b.bookings - a.bookings).map((mb) => {
                           const tn = mb.conv >= 70 ? 'var(--green)' : mb.conv >= 50 ? 'var(--t-500)' : 'var(--amber)';
                           return (
                             <tr key={mb.user_id}>
                               <td><Who name={mb.name} sub={mb.is_lead ? 'Team lead' : ''} avatar={false} /></td>
-                              <td><RoleBadge value={mb.role} /></td>
                               <td className="num" style={{ fontWeight: 650, color: 'var(--text)' }}>{nf(mb.bookings)}</td>
                               <td className="num" style={{ color: 'var(--green)', fontWeight: 650 }}>{nf(mb.paid)}</td>
                               <td className="num"><span className="cv"><span>{mb.conv}%</span><span className="cv-b"><i style={{ width: mb.conv + '%', background: tn }} /></span></span></td>

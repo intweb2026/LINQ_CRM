@@ -150,7 +150,9 @@ class ReportingManagerAPITests(TestCase):
 
         self.primary.refresh_from_db()
         self.assertEqual(self.primary.mapped_lead_id, self.admin.id)
-        self.assertEqual(self._row(self.primary)["mapped_lead_name"], "hp")
+        # "Hp", not "hp": this account has no first/last name, so the name the
+        # payload carries is built from the username by User.get_full_name.
+        self.assertEqual(self._row(self.primary)["mapped_lead_name"], "Hp")
 
     def test_the_admin_team_is_identifiable_from_the_payload(self):
         """

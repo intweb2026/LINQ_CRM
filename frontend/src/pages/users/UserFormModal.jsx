@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import Modal from '../../components/Modal';
 import { Icon } from '../../lib/icons';
-import { TEAM_ROLES, ROLE_FULL, CRM_MODULES, PERM_ACTIONS } from '../../lib/constants';
-import { roleFromTeamName } from '../../lib/roleFromTeam';
+import { CRM_MODULES, PERM_ACTIONS } from '../../lib/constants';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { useSession } from '../../context/SessionContext';
@@ -32,9 +31,12 @@ import * as teamsApi from '../../api/teams';
  * in between where the account existed with the wrong access. Create takes two
  * requests because the exceptions need an id to hang off; see save().
  *
- * `Role` remains, and remains a label: it names a job function, drives the
- * Users list filters, and User.save() fills it in from the team's name. It
- * grants nothing.
+ * THERE IS NO ROLE FIELD. `role` is still a column, and things still read it
+ * (accounts/permissions.py, the ticket forms, owner routing), but nothing ever
+ * chose it here that the team did not already decide: User.save() derives it
+ * from the team's NAME, and the picker's only job was to agree with that
+ * derivation before the save. Omitting it from the payload is what lets the
+ * server derive it, on a create and on every move between teams.
  */
 export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   const isNew = !u;
@@ -74,7 +76,6 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       username: u?.username || '',
       email: u?.email || '',
       password: '',
-      role: u?.role || 'sales',
       team_id: u?.team_id ? String(u.team_id) : (managedTeam ? String(managedTeam.id) : ''),
       managed_team_id: u?.managed_team_id ? String(u.managed_team_id) : '',
       mapped_lead_id: u?.mapped_lead_id ? String(u.mapped_lead_id) : '',
@@ -94,44 +95,21 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   // them and would otherwise have nothing to pick.
   const managerGroups = managerOptionGroups(chosenTeam, u, users);
   const managerChoices = managerGroups.flatMap((g) => g.items);
-  const impliedRole = chosenTeam ? roleFromTeamName(chosenTeam.name) : null;
   /**
-   * A manager gets a READ-OUT here, not a picker.
+   * A value the user has not supplied is GREY; one they typed or picked is not.
    *
-   * They work in one team, and that team's name already implies exactly one
-   * role — the keyword chain in lib/roleFromTeam.js, mirroring
-   * role_from_team_name on the server. Offering all seven let a manager of Sales
-   * file somebody as Operations; the server now drops the field for them
-   * outright (UserWriteSerializer.validate), so a picker would have been a
-   * control whose every setting produced the same stored value.
-   *
-   * A NEW account shows what the team is about to make it. An EXISTING one shows
-   * what it actually IS, which can differ — a super admin may have set it by
-   * hand, and the server leaves that alone on an edit that does not move teams.
-   * Showing the implied role there would be the form reporting a value nobody
-   * stored.
+   * Empty text inputs get this for free from ::placeholder. A `<select>` sitting
+   * on its own empty option does not; it renders "Not recorded" in full
+   * strength, which reads as an answer rather than as the absence of one.
    */
-  const lockedRole = managedTeam
-    ? (isNew ? (impliedRole || form.role) : form.role)
-    : null;
-  const roleOverridden = !!impliedRole && form.role !== impliedRole;
+  const unset = (v) => (v ? '' : ' in-un');
 
-  /**
-   * Picking a team fills the role in, and leaves it editable.
-   *
-   * The server derives the role from the team's name on save, so a form that
-   * did not show that left the user staring at a Role they had picked and a
-   * Role that was about to be stored, with no hint they differed. Filling it in
-   * here makes the two agree by default; changing it afterwards is honoured,
-   * because the request names a role and a named role wins server-side.
-   */
   function setTeam(e) {
     const teamId = e.target.value;
     const team = TEAMS.find((t) => String(t.id) === String(teamId));
-    const implied = team ? roleFromTeamName(team.name) : null;
     // The reporting manager is a lead OF THIS TEAM, so moving team invalidates it.
     // Left alone it would keep pointing at a lead of the team the person just left.
-    setForm((f) => ({ ...f, team_id: teamId, role: implied || f.role, mapped_lead_id: '' }));
+    setForm((f) => ({ ...f, team_id: teamId, mapped_lead_id: '' }));
     // Exceptions were relative to the OLD team's grid. Carrying them across
     // would mean "revoke Bookings delete" following someone into a team that
     // never granted it, and reading afterwards as a deliberate decision about
@@ -190,7 +168,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
 
   function validate() {
     if (!form.username.trim()) return 'Username is required';
-    if (!form.email.trim()) return 'Email is required — it is how people sign in';
+    if (!form.email.trim()) return 'Email is required; it is how people sign in';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'That email address does not look right';
     if (form.password && form.password.length < 8) return 'Password must be at least 8 characters';
     return null;
@@ -212,12 +190,9 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
       login_access: form.login_access,
       password: form.password,
     };
-    // Omitted for a manager, whose role comes from the team they manage and is
-    // dropped server-side either way. Sending it would only make the request
-    // disagree with the read-only field the form just showed them.
-    if (!managedTeam) {
-      payload.role = form.role;
-    }
+    // `role` is deliberately absent: see the note at the top of this file. The
+    // server derives it from the team's name, which is the only thing this form
+    // ever let anybody choose about it.
     // Omitted entirely for anyone who cannot grant it. Sending the key at all
     // is a validation error server-side, which is the right answer for a forged
     // request and the wrong one for an ordinary save by a manager.
@@ -268,7 +243,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
   async function del() {
     const ok = await confirm({
       title: 'Delete ' + u.name + '?', danger: true, ok: 'Delete',
-      sub: '@' + u.username,
+      sub: u.email,
       body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>The account is removed permanently. Deactivate instead if they may come back.</p>,
     });
     if (!ok) return;
@@ -289,7 +264,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
 
   return (
     <Modal size="lg" title={isNew ? 'Add user' : 'Edit ' + u.name}
-      sub={isNew ? 'Create an account and set what it can reach.' : '@' + u.username}
+      sub={isNew ? 'Create an account and set what it can reach.' : u.email}
       onClose={onClose}
       footer={<>
         <button className="btn btn-s" onClick={onClose} disabled={busy}>Cancel</button>
@@ -300,63 +275,41 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
           <Icon name="check" size={15} />{busy ? 'Saving…' : (isNew ? 'Create user' : 'Save changes')}
         </button>
       </>}>
+      {/* `.ufm` squares every control off and tightens the grid. Scoped to this
+          form rather than pushed into `.in` / `.fg`, which are the shared form
+          language every other modal in the CRM is drawn in. */}
+      <div className="ufm">
       <div className="fs">
         <div className="fs-t"><Icon name="users" size={13} />Identity</div>
-        <div className="fg">
-          <div className="fd"><label className="fd-l">First name</label><input className="in" value={form.first_name} onChange={set('first_name')} placeholder="e.g. Ada" /></div>
-          <div className="fd"><label className="fd-l">Last name</label><input className="in" value={form.last_name} onChange={set('last_name')} placeholder="e.g. Lovelace" /></div>
-          <div className="fd"><label className="fd-l">Username<span className="req">*</span></label><input className="in mono" value={form.username} onChange={set('username')} placeholder="e.g. ada" autoComplete="off" /></div>
-          <div className="fd"><label className="fd-l">Email<span className="req">*</span></label><input className="in" type="email" value={form.email} onChange={set('email')} placeholder="ada@iq-hub.com" autoComplete="off" /></div>
-          <div className="fd f">
+        {/* THREE COLUMNS, not two. Every field here but one holds a short value,
+            and a half-modal box around "Ada" is white space pretending to be a
+            control. Email is the exception and takes the width it needs. */}
+        <div className="fg c3">
+          <div className="fd"><label className="fd-l">First name</label><input className="in" value={form.first_name} onChange={set('first_name')} placeholder="Ada" /></div>
+          <div className="fd"><label className="fd-l">Last name</label><input className="in" value={form.last_name} onChange={set('last_name')} placeholder="Lovelace" /></div>
+          <div className="fd"><label className="fd-l">Username<span className="req">*</span></label><input className="in mono" value={form.username} onChange={set('username')} placeholder="ada.lovelace" autoComplete="off" /></div>
+          <div className="fd f2"><label className="fd-l">Email<span className="req">*</span></label><input className="in" type="email" value={form.email} onChange={set('email')} placeholder="ada@iq-hub.com" autoComplete="off" /></div>
+          <div className="fd">
             <label className="fd-l">{isNew ? 'Password' : 'New password'}</label>
-            <input className="in" type="password" value={form.password} onChange={set('password')} placeholder={isNew ? 'Optional — 8 characters minimum' : 'Leave blank to keep the current one'} autoComplete="new-password" />
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>Sign-in is by emailed one-time code, so a password is optional.</span>
+            <input className="in" type="password" value={form.password} onChange={set('password')} placeholder={isNew ? 'Optional, 8 characters' : 'Leave blank to keep'} autoComplete="new-password" />
           </div>
         </div>
       </div>
       <div className="fs">
-        <div className="fs-t"><Icon name="team" size={13} />Team, and the role it implies</div>
-        <div className="fg">
+        {/* The team is the whole of the placement now. It decides the role
+            server-side and it carries the permission grid below. */}
+        <div className="fs-t"><Icon name="team" size={13} />Team and placement</div>
+        <div className="fg c3">
           <div className="fd">
             <label className="fd-l">Team</label>
-            <select className="in" value={form.team_id} onChange={setTeam} disabled={!!managedTeam}>
+            <select className={'in' + unset(form.team_id)} value={form.team_id} onChange={setTeam} disabled={!!managedTeam}>
               {managedTeam
                 ? <option value={managedTeam.id}>{pinnedTeam?.name || managedTeam.name}</option>
                 : <>
-                  <option value="">— Unassigned —</option>
+                  <option value="">Unassigned</option>
                   {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </>}
             </select>
-            {managedTeam ? (
-              <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-                You manage {pinnedTeam?.name || managedTeam.name}, so accounts you create or edit stay in it.
-              </span>
-            ) : null}
-          </div>
-          <div className="fd">
-            <label className="fd-l">Role</label>
-            {lockedRole ? (
-              <>
-                <input className="in" value={ROLE_FULL[lockedRole] || lockedRole} disabled readOnly />
-                <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-                  Set by {chosenTeam?.name || 'the team you manage'}. Moving someone to a
-                  different job is an administrator&rsquo;s call.
-                </span>
-              </>
-            ) : (
-              <>
-                <select className="in" value={form.role} onChange={set('role')}>
-                  {TEAM_ROLES.map((r) => <option key={r} value={r}>{ROLE_FULL[r]}</option>)}
-                </select>
-                <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-                  {roleOverridden
-                    ? `Set by hand. ${chosenTeam.name} would otherwise make this ${ROLE_FULL[impliedRole]}; your choice is kept.`
-                    : impliedRole
-                      ? `Filled in from ${chosenTeam.name}. Change it if this person does something else.`
-                      : 'Job function, shown on the Users list and used to filter it. Grants nothing by itself.'}
-                </span>
-              </>
-            )}
           </div>
           <div className="fd">
             <label className="fd-l">Status</label>
@@ -365,24 +318,16 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
               <option value="inactive">Inactive</option>
               <option value="suspended">Suspended</option>
             </select>
-            {isSelf ? <span style={{ fontSize: 10.5, color: 'var(--text-4)' }}>You cannot deactivate your own account.</span> : null}
-          </div>
-          <div className="fd">
-            <label className="fd-l" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
-              <input type="checkbox" className="ck" checked={form.is_lead} onChange={setChk('is_lead')} />
-              Team lead
-            </label>
           </div>
           <div className="fd">
             <label className="fd-l">Reporting manager</label>
             {/* Scoped to the leads of the chosen team, because that is what the
-                column means — "the specific team lead this member is mapped
-                under". A team may have several, so this is a real choice rather
-                than a formality: Sales Team has two. Any stored value that is no
-                longer a lead is kept as an option so opening the form and saving
-                it does not quietly drop it. */}
-            <select className="in" value={form.mapped_lead_id} onChange={set('mapped_lead_id')} disabled={!managerChoices.length && !form.mapped_lead_id}>
-              <option value="">— Not recorded —</option>
+                column means: the specific team lead this member is mapped under.
+                A team may have several, so this is a real choice rather than a
+                formality. Any stored value that is no longer a lead is kept as an
+                option so opening the form and saving it does not quietly drop it. */}
+            <select className={'in' + unset(form.mapped_lead_id)} value={form.mapped_lead_id} onChange={set('mapped_lead_id')} disabled={!managerChoices.length && !form.mapped_lead_id}>
+              <option value="">Not recorded</option>
               {form.mapped_lead_id && !managerChoices.some((m) => String(m.id) === String(form.mapped_lead_id))
                 ? <option value={form.mapped_lead_id}>{u?.mapped_lead_name || 'Current manager'}</option>
                 : null}
@@ -392,11 +337,6 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
                 </optgroup>
               ))}
             </select>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-              {!managerChoices.length
-                ? 'Nobody available to report to \u2014 no team leads and no administrators.'
-                : 'Left unrecorded, the profile shows the leads of this person\u2019s team, or the administrators if they lead it themselves.'}
-            </span>
           </div>
           {canAssignManager ? (
             <div className="fd">
@@ -404,28 +344,36 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
               {/* Any team, not only the one they are IN. A head of department can
                   sit in Admin and run Sales, and forcing the two to match would
                   make that unrepresentable. */}
-              <select className="in" value={form.managed_team_id} onChange={set('managed_team_id')}>
-                <option value="">— Not a manager —</option>
+              <select className={'in' + unset(form.managed_team_id)} value={form.managed_team_id} onChange={set('managed_team_id')}>
+                <option value="">Not a manager</option>
                 {TEAMS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
-              <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-                Opens the Users screen for them and limits every account they create,
-                edit or delete to this one team. It grants nothing else — permissions
-                themselves stay with an administrator. Clear it to take the rights away.
-              </span>
             </div>
           ) : null}
-          <div className="fd">
-            <label className="fd-l" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 22 }}>
-              <input type="checkbox" className="ck" checked={form.login_access} onChange={setChk('login_access')} />
-              Provide login access
-            </label>
-            <span style={{ fontSize: 10.5, color: 'var(--text-4)', lineHeight: 1.45 }}>
-              Off means the account still exists, and everything assigned to it stays
-              assigned, but Google Sign-In refuses it.
-            </span>
-          </div>
         </div>
+        {/* Two booleans as boxy tiles on one row. As stacked checkboxes they cost
+            a grid cell each and needed a 22px top margin to fake alignment with
+            the labelled fields beside them. Ticked is the only state that takes
+            colour; untouched stays grey like every other unset value here. */}
+        <div className="ufm-flags">
+          <label className={'ufm-flag' + (form.is_lead ? ' on' : '')}>
+            <input type="checkbox" className="ck" checked={form.is_lead} onChange={setChk('is_lead')} />
+            Team lead
+          </label>
+          <label className={'ufm-flag' + (form.login_access ? ' on' : '')}>
+            <input type="checkbox" className="ck" checked={form.login_access} onChange={setChk('login_access')} />
+            Login access
+          </label>
+        </div>
+        {/* ONE note block, and only what applies. Every field above used to carry
+            its own paragraph, which was most of the height of this form. */}
+        <ul className="ufm-n">
+          {managedTeam ? <li>You manage {pinnedTeam?.name || managedTeam.name}, so accounts you create or edit stay in it.</li> : null}
+          {isSelf ? <li>You cannot deactivate your own account.</li> : null}
+          {!managerChoices.length ? <li>Nobody to report to yet: this team has no leads and there are no administrators.</li> : null}
+          {canAssignManager ? <li><b>Manager of</b> opens the Users screen for them and pins every account they touch to that one team. Permissions themselves stay with an administrator.</li> : null}
+          <li><b>Login access</b> off keeps the account and everything assigned to it, but Google Sign-In refuses it.</li>
+        </ul>
       </div>
       <div className="fs">
         <div className="fs-t">
@@ -440,7 +388,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
           {!canEditGrid
             ? <>What this account can reach, inherited from {chosenTeam ? <b>{chosenTeam.name}</b> : 'no team'}. Changing it needs the Permissions right.</>
             : chosenTeam
-            ? <>Inherited from <b>{chosenTeam.name}</b>. Tick to add something on top, untick to take something away; anything you leave alone keeps following the team, including when {chosenTeam.name} changes later.</>
+            ? <>Inherited from <b>{chosenTeam.name}</b>. Tick to add something on top, untick to take one away. Anything you leave alone keeps following the team, including when {chosenTeam.name} changes later.</>
             : 'No team, so nothing is inherited. Anything ticked here is granted to this person alone.'}
         </p>
         {allAccess ? (
@@ -451,14 +399,14 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
           <>
             <PermissionGrid value={grid} inherited={teamGrid} onToggle={toggleCell} disabled={busy || !canEditGrid} />
             <PermissionLegend />
-            <p style={{ fontSize: 10.5, color: 'var(--text-4)', marginTop: 8, lineHeight: 1.45 }}>
-              <b>All records</b> is how one person is given a whole module — tick it on Paper
+            <p className="ufm-n" style={{ marginTop: 8 }}>
+              <b>All records</b> is how one person is given a whole module: tick it on Paper
               Review and they see every paper review, not only the ones their assigned events
-              cover. It works module by module, so nothing else widens with it. The modules
-              showing a dash were never restricted by event.
+              cover. It works module by module, so nothing else widens with it.
             </p>
           </>
         )}
+      </div>
       </div>
     </Modal>
   );

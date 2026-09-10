@@ -9,7 +9,6 @@ Field names are the wire contract that frontend/src/api/proposalSubmission.js
 depends on; rename here if the underlying column ever changes, never in the
 frontend (see reports/serializers.py for the precedent).
 """
-from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -38,16 +37,21 @@ _MR_ONLY_FIELDS = frozenset([
 # Public alias — views.py imports this rather than keeping a second list.
 MR_ONLY_FIELDS = _MR_ONLY_FIELDS
 
-# The team works in IST. TIME_ZONE is UTC, so between 00:00 and 05:30 IST the UTC
-# date is still yesterday and an early-morning submission would be stamped a day
-# early. Storage stays UTC and TIME_ZONE/USE_TZ are untouched — this is a local
-# default for one field, not a project-wide change.
-BUSINESS_TZ = ZoneInfo("Asia/Kolkata")
+# This was a LOCAL override: TIME_ZONE was UTC while the team worked in IST, so
+# one field defaulted through a hardcoded Asia/Kolkata to stop early-morning
+# submissions being stamped a day early. settings.TIME_ZONE is now
+# America/Los_Angeles and localdate() reads the day in it, so the override has
+# nothing left to override and the private zone is gone — one zone in the
+# project, set in one place.
+#
+# The function stays. It is the name three modules and two test files already
+# call, and "the date a submission is stamped with" is worth a word of its own
+# even when it is a one-line delegation.
 
 
 def business_today():
-    """Today's date as the team experiences it, regardless of server TIME_ZONE."""
-    return timezone.now().astimezone(BUSINESS_TZ).date()
+    """Today's date as the team experiences it: settings.TIME_ZONE, Pacific."""
+    return timezone.localdate()
 
 # Everything the client may write. Audit columns are appended read-only below.
 EDITABLE_FIELDS = [

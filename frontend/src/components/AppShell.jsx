@@ -4,7 +4,8 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
 import IdleLogout from './IdleLogout';
-import { NAV, homeFor } from '../lib/nav';
+import { homeFor, navEntryFor } from '../lib/nav';
+import { isTheme, isRailPos } from '../lib/constants';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
 import * as bookingsApi from '../api/bookings';
@@ -23,16 +24,43 @@ export default function AppShell() {
   const [collapsedRail, setCollapsedRail] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('iqhub_theme') || 'light');
+  // isTheme, not a bare read: the stored value is now one of six names
+  // rather than a light/dark flag, and an unknown one — a theme renamed or
+  // removed, a hand-edited key — would be written to html[data-theme] and
+  // match no CSS block at all, leaving the app on the :root tokens with no
+  // way for the user to tell why. Anything off the list falls back to light.
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem('iqhub_theme');
+    return isTheme(stored) ? stored : 'light';
+  });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('iqhub_theme', theme);
   }, [theme]);
 
+  // Where the rail sits: 'left' (the default), 'top' or 'bottom'. Same
+  // storage-and-validate shape as the theme above, for the same reason — an
+  // unknown value would put a class on <body> that no CSS matches and leave
+  // the rail in a half-applied arrangement.
+  const [railPos, setRailPos] = useState(() => {
+    const stored = localStorage.getItem('iqhub_rail_pos');
+    return isRailPos(stored) ? stored : 'left';
+  });
+
   useEffect(() => {
-    document.body.classList.toggle('rail-min', collapsedRail);
-  }, [collapsedRail]);
+    const horizontal = railPos !== 'left';
+    // COLLAPSE ONLY APPLIES TO A VERTICAL RAIL. rail-min is what narrows the
+    // rail to 62px and hides its labels; in a bar the labels are the only
+    // thing identifying an item, so the two states would fight. Held here
+    // rather than by disabling the button, so the user's collapse preference
+    // survives a trip through top/bottom and back.
+    document.body.classList.toggle('rail-min', collapsedRail && !horizontal);
+    document.body.classList.toggle('rail-h', horizontal);
+    document.body.classList.toggle('rail-top', railPos === 'top');
+    document.body.classList.toggle('rail-bottom', railPos === 'bottom');
+    localStorage.setItem('iqhub_rail_pos', railPos);
+  }, [collapsedRail, railPos]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -67,8 +95,12 @@ export default function AppShell() {
   // both announced themselves as the Dashboard in the breadcrumb and the tab title.
   // Now that Dashboard is a nav item of its own, that mislabel would point at a
   // real, visible page.
+  // Through navEntryFor, so the crumb and the rail can never disagree about
+  // which page you are on. They did: both took the first path segment, so every
+  // Credit Control sub-page announced itself as the Dashboard.
+  const matched = navEntryFor(loc.pathname === '/' ? '/' + seg : loc.pathname);
   let group = 'Home', label = titleFromSegment(seg);
-  NAV.forEach((g) => g.items.forEach((it) => { if (it.path === '/' + seg) { group = g.g; label = it.l; } }));
+  if (matched) { group = matched.group; label = matched.item.l; }
 
   // #main is the scroller now (position:fixed with its own overflow-y, see
   // components.css), not the window — window.scrollTo alone left a page
@@ -86,8 +118,8 @@ export default function AppShell() {
     <div id="app">
       <Sidebar collapsed={{ toggle: () => setCollapsedRail((v) => !v) }} mobileOpen={mobileOpen} onNavigate={() => setMobileOpen(false)} />
       <Topbar
-        crumb={{ group, label }} theme={theme}
-        onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+        crumb={{ group, label }} theme={theme} onPickTheme={setTheme}
+        railPos={railPos} onPickRailPos={setRailPos}
         onBurger={() => setMobileOpen((v) => !v)}
         onOpenPalette={() => setPaletteOpen(true)}
       />

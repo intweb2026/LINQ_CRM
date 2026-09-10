@@ -1,7 +1,7 @@
 // React equivalents of the legacy html-string badge/avatar helpers in 01-data.js.
 import { avc, ini } from '../lib/helpers';
 import {
-  STATUS_TONE, ATT_TONE, EV_TONE, TK_STATUS, TK_PRIORITY, ROLE_TONE, ROLE_FULL, WH_STATUS, GSYNC_STATUS_TONE,
+  STATUS_TONE, ATT_TONE, EV_TONE, TK_STATUS, TK_PRIORITY, WH_STATUS, GSYNC_STATUS_TONE,
 } from '../lib/constants';
 
 export function Dot({ tone = 'neutral', children }) {
@@ -27,7 +27,6 @@ export const TkBadge = ({ value }) => {
 };
 export const PriBadge = ({ value }) =>
   !value ? <span className="dim">—</span> : <span className={'tg bg-' + (TK_PRIORITY[value] || 'neutral')}>{value}</span>;
-export const RoleBadge = ({ value }) => <span className={'tg bg-' + (ROLE_TONE[value] || 'neutral')}>{ROLE_FULL[value] || value}</span>;
 export const WhBadge = ({ value }) => <Dot tone={WH_STATUS[value] || 'neutral'}>{value}</Dot>;
 export const GsBadge = ({ value }) => (
   <Dot tone={GSYNC_STATUS_TONE[value] || 'neutral'}>{value === 'partial_success' ? 'Partial' : value.charAt(0).toUpperCase() + value.slice(1)}</Dot>

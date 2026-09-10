@@ -19,16 +19,16 @@
  * means the same dates tomorrow, and the dates in the chip are the dates in the
  * query.
  *
- * A PICKED DATE IS ZONE-FREE; A ROW'S DAY IS IST
+ * A PICKED DATE IS ZONE-FREE; A ROW'S DAY IS PACIFIC
  * A picked date is a plain calendar date with no hour in it, so the calendar
  * arithmetic below stays in UTC — that is a representation choice for a value
  * that has no instant, not a timezone claim. Reducing a row's TIMESTAMP to a day
- * is the part that needs a zone, and it is IST, matching what lib/helpers.js
+ * is the part that needs a zone, and it is Pacific, matching what lib/helpers.js
  * renders into the cell. It is emphatically NOT browser-local, which would land a
  * row on a different day per viewer; that is the drift the DateRangeFilter
  * component refuses to reintroduce by recomputing the server's window locally.
  */
-import { IST_OFFSET_MS } from './helpers';
+import { zoneView } from './helpers';
 
 // ── Operators ────────────────────────────────────────────────────────────────
 // Order is the order they are offered in. `Is` first because it is what most
@@ -89,14 +89,19 @@ function u(y, m, d) {
 export function iso(d) { return d.toISOString().slice(0, 10); }
 
 /**
- * The IST calendar day an INSTANT falls on, as 'YYYY-MM-DD'.
+ * The Pacific calendar day an INSTANT falls on, as 'YYYY-MM-DD'.
  *
  * Only for values that are instants — a DateTimeField's timestamp. A picked
  * calendar date is zone-free and goes through iso()/u() above unshifted, which is
- * why the calendar grid, todayISO() and parseISO() are deliberately left in UTC:
- * shifting a date that has no time in it would move it for no reason.
+ * why the calendar grid and parseISO() are deliberately left in UTC: shifting a
+ * date that has no time in it would move it for no reason.
+ *
+ * zoneView is imported rather than restated so the day a row is FILTERED into
+ * and the day it is PRINTED as cannot come apart; see the note on it in
+ * lib/helpers.js for why the zone is looked up per instant instead of added as
+ * a constant.
  */
-export function istISO(d) { return iso(new Date(d.getTime() + IST_OFFSET_MS)); }
+export function zoneISO(d) { return iso(zoneView(d)); }
 
 /**
  * The earliest year a picked date may carry.
@@ -153,10 +158,17 @@ export const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday',
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-/** Today as 'YYYY-MM-DD'. Used ONLY to highlight the day and to jump the view. */
+/**
+ * Today as 'YYYY-MM-DD', in the app's zone.
+ *
+ * NOT merely cosmetic, which is why it is not left in UTC beside the rest of the
+ * calendar arithmetic: presetWindow() below resolves "Today", "This Month" and
+ * "This Year" from it, so a UTC reading gave "Today" the wrong day for the last
+ * eight hours of every Pacific day — the table said one date and the preset
+ * fetched another. It also highlights the day in the picker and jumps the view.
+ */
 export function todayISO() {
-  const n = new Date();
-  return iso(u(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()));
+  return iso(zoneView(new Date()));
 }
 
 /** The month a date belongs to, or this month when there is no date yet. */
@@ -273,7 +285,7 @@ export function dateCondWindow(cond) {
 }
 
 /**
- * The window a relative preset names, as of `today` (IST, like every other
+ * The window a relative preset names, as of `today` (Pacific, like every other
  * day boundary in this module). Inclusive both ends.
  */
 export function presetWindow(op, today = todayISO()) {
@@ -324,15 +336,15 @@ export function dateCondActive(cond) {
  * whereas `new Date('2026-08-24T18:30:00')` would be read as browser LOCAL time
  * by the language spec and could land the row on the wrong day.
  *
- * WHICH DAY A TIMESTAMP BELONGS TO IS AN IST QUESTION
- * Parsing is UTC, as above; the DAY it is then reduced to is IST. Those are two
- * different steps and only the second one moved. The cell is rendered in IST
- * (lib/helpers.js fdate/ftime), so reducing the instant to its UTC day made this
- * browser-side pass disagree with the text on screen for everything between 00:00
- * and 05:30 IST — a row reading 28 Aug was excluded by "is 28 Aug" and matched
- * "is 27 Aug". The shift is IST_OFFSET_MS, imported rather than restated so the
- * cell and its filter cannot drift apart; see the note there for why a fixed
- * offset is exact for this zone.
+ * WHICH DAY A TIMESTAMP BELONGS TO IS A PACIFIC QUESTION
+ * Parsing is UTC, as above; the DAY it is then reduced to is Pacific. Those are
+ * two different steps and only the second one carries a zone. The cell is
+ * rendered in Pacific (lib/helpers.js fdate/ftime), so reducing the instant to
+ * its UTC day would make this browser-side pass disagree with the text on
+ * screen for everything after 16:00 or 17:00 local — a row reading 28 Aug
+ * excluded by "is 28 Aug" and matched by "is 29 Aug". The conversion is
+ * zoneView, imported rather than restated so the cell and its filter cannot
+ * drift apart.
  *
  * A DateField keeps its date untouched. 'YYYY-MM-DD' is a zone-free calendar date
  * that never had an instant to convert, which is what the `if (!m[2])` early
@@ -340,18 +352,18 @@ export function dateCondActive(cond) {
  */
 export function rowDateISO(v) {
   if (v == null) return null;
-  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : istISO(v);
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : zoneISO(v);
   const s = String(v).trim();
   if (!s || s === '—') return null;
   const m = /^(\d{4}-\d{2}-\d{2})(?:[T ](.+))?$/.exec(s);
   if (!m) {
     const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? null : istISO(d);
+    return Number.isNaN(d.getTime()) ? null : zoneISO(d);
   }
   if (!m[2]) return m[1];
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(s);
   const d = new Date(hasZone ? s.replace(' ', 'T') : `${m[1]}T${m[2]}Z`);
-  return Number.isNaN(d.getTime()) ? m[1] : istISO(d);
+  return Number.isNaN(d.getTime()) ? m[1] : zoneISO(d);
 }
 
 /**

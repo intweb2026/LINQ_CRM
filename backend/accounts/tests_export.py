@@ -31,6 +31,7 @@ from decimal import Decimal
 from urllib.parse import quote
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone as django_timezone
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -166,12 +167,18 @@ class AdminExportTests(TestCase):
             self._spec([{"field": "event_code", "op": "is", "value": KEPT}]))
         self.assertEqual({r["Discount"] for r in rows}, {20.0})
 
-    def test_timestamps_are_real_date_cells_read_in_ist(self):
+    def test_timestamps_are_real_date_cells_read_in_the_app_timezone(self):
         """
         Not "2026-08-25T20:26:32.336950Z" in a text cell. The table renders
-        every timestamp at +05:30 (frontend/src/lib/helpers.js), and a workbook
-        holding the UTC instant would date anything logged after 18:30 to the
-        previous day, against a screen saying otherwise.
+        every timestamp in settings.TIME_ZONE — Pacific (frontend/src/lib/
+        helpers.js) — and a workbook holding the UTC instant would date anything
+        logged after 16:00 or 17:00 local to the NEXT day, against a screen
+        saying otherwise.
+
+        Asserted through django.utils.timezone.localtime rather than against a
+        literal offset, because Pacific is -08:00 for part of the year and
+        -07:00 for the rest; a constant here would pass in one season and fail
+        in the other.
         """
         _, rows = self._sheet(
             self._spec([{"field": "event_code", "op": "is", "value": KEPT}]))
@@ -180,20 +187,31 @@ class AdminExportTests(TestCase):
         self.assertIsNone(cell.tzinfo, "Excel has no offsets; openpyxl refuses aware")
 
         row = BookDelegate.objects.get(email=rows[0]["Delegate Email"])
-        ist = row.created_at.astimezone(timezone(timedelta(hours=5, minutes=30)))
-        self.assertEqual(cell, ist.replace(tzinfo=None, microsecond=0))
+        local = django_timezone.localtime(row.created_at)
+        self.assertEqual(cell, local.replace(tzinfo=None, microsecond=0))
+        # And it is genuinely a CONVERSION, not the UTC instant relabelled.
+        self.assertNotEqual(
+            cell, row.created_at.replace(tzinfo=None, microsecond=0),
+            "the cell still holds the UTC wall clock")
 
     def test_a_plain_date_is_not_shifted(self):
         """
-        A DateField is a calendar day with no instant behind it. Moving it five
-        and a half hours would invent a timezone for a value that has none, and
-        would move every date booked before 05:30 to the day before.
+        A DateField is a calendar day with no instant behind it. Shifting it
+        would invent a timezone for a value that has none — and westward, which
+        Pacific is, it would move every such date to the day before.
         """
         _, rows = self._sheet(
             self._spec([{"field": "event_code", "op": "is", "value": KEPT}]))
         cell = rows[0]["Request Date"]
+        # Against the value the ROW holds, not against any flavour of "today":
+        # "not shifted" means the cell is the stored calendar date, and a test
+        # that recomputed today from a clock would be asserting the fixture
+        # instead of the export.
+        # request_date lives on the INVOICE; the delegate row is the join.
+        row = BookDelegate.objects.get(email=rows[0]["Delegate Email"])
         self.assertEqual(
-            cell.date() if isinstance(cell, datetime) else cell, date.today())
+            cell.date() if isinstance(cell, datetime) else cell,
+            row.invoice.request_date)
 
     # ── The rows ─────────────────────────────────────────────────────────────
 

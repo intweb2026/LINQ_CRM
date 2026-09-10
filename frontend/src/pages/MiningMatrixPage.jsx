@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 import DataTable from '../components/DataTable';
 import { Tabs } from '../components/UI';
 import { Icon } from '../lib/icons';
-import { fdate, nf } from '../lib/helpers';
+import { nf, rel } from '../lib/helpers';
 import * as matrixApi from '../api/miningMatrix';
+import { apiErrorMessage } from '../api/client';
 import { useFetch } from '../hooks/useFetch';
 import { useLiveData } from '../hooks/useLiveData';
 import { useSession } from '../context/SessionContext';
+import { useToast } from '../context/ToastContext';
 import NoAccessPage from './NoAccessPage';
 
 /**
@@ -50,6 +52,53 @@ const TAB_LABELS = {
   [matrixApi.VIEWS.ALL]: 'All events',
   [matrixApi.VIEWS.UNLINKED]: 'Unlinked codes',
 };
+
+/**
+ * An event's dates, as short as they can be said without losing anything.
+ *
+ *   16-17 Sep, 2026        one month, one year, the common case
+ *   28 Sep - 2 Oct, 2026   across a month boundary
+ *   28 Dec, 2026 - 2 Jan, 2027   across a year, where both years must show
+ *   16 Sep, 2026           a single day
+ *
+ * The month and year are said ONCE wherever they are shared, which is what
+ * makes the frozen column narrow enough to keep beside the codes. Built from
+ * the plain date strings the API sends rather than from Date objects, because a
+ * DateField carries no instant and parsing one into local time is how a 16th
+ * becomes a 15th.
+ */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function daterange(start, end) {
+  const parse = (v) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+    return m ? { y: m[1], m: +m[2] - 1, d: +m[3] } : null;
+  };
+  const a = parse(start);
+  if (!a) return '';
+  const one = `${a.d} ${MONTHS[a.m]}, ${a.y}`;
+  const b = parse(end);
+  if (!b || (b.y === a.y && b.m === a.m && b.d === a.d)) return one;
+  if (a.y === b.y && a.m === b.m) return `${a.d}-${b.d} ${MONTHS[a.m]}, ${a.y}`;
+  if (a.y === b.y) return `${a.d} ${MONTHS[a.m]} - ${b.d} ${MONTHS[b.m]}, ${a.y}`;
+  return `${one} - ${b.d} ${MONTHS[b.m]}, ${b.y}`;
+}
+
+/**
+ * How long until an instant, as something a person reads.
+ *
+ * `rel` in lib/helpers answers the past ("4h ago") and returns the literal
+ * "scheduled" for anything ahead of now, which is true and useless beside a
+ * figure whose whole question is when it moves next.
+ */
+function untilText(iso) {
+  const mins = Math.round((new Date(iso) - Date.now()) / 60000);
+  if (mins <= 0) return 'due now';
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `in ${hours}h` : `in ${Math.round(hours / 24)}d`;
+}
 
 const dim = () => <span className="dim">—</span>;
 const zero = () => <span className="dim">0</span>;
@@ -159,10 +208,39 @@ function buildCols(splits, splitColumns) {
       group: 'dt',
       pin: true,
       w: 190,
-      cell: (v, r) => {
-        if (!v) return dim();
-        if (!r.end_date || r.end_date === v) return fdate(v);
-        return `${fdate(v)} – ${fdate(r.end_date)}`;
+      cell: (v, r) => (v ? daterange(v, r.end_date) : dim()),
+    },
+    {
+      /**
+       * MAILABLE CONTACTS, frozen beside the dates.
+       *
+       * It is the other thing somebody planning a push needs before they read a
+       * single mining number: an event with no mailable audience is not a
+       * capacity problem, it is a list problem, and the two have different
+       * answers. Pinned for the same reason the dates are, so it stays in view
+       * when the reader has scrolled into the split blocks.
+       *
+       * Counted in HubSpot as contacts whose `contact_purpose` is this row's
+       * canonical code AND whose `mailable` property is set at all. Served from
+       * the cache table, never live, so the page cannot hang on HubSpot; the
+       * figure is filled by `sync_mailable_counts` on cron.
+       *
+       * NULL AND ZERO ARE DIFFERENT and must not render the same. Null is
+       * "nobody has counted this code yet", which is what a fresh install and
+       * an unreachable HubSpot both look like; zero is a real, countable
+       * absence of audience.
+       */
+      key: 'mailable',
+      label: 'Mailable',
+      group: 'dt',
+      type: 'number',
+      num: true,
+      pin: true,
+      w: 104,
+      cls: 'mm-mail',
+      cell: (v) => {
+        if (v === null || v === undefined) return <span className="dim">—</span>;
+        return v ? <b style={{ color: 'var(--text)' }}>{nf(v)}</b> : zero();
       },
     },
     { key: 'location', label: 'Location', group: 'ev', cell: (v) => v || dim() },
@@ -238,8 +316,10 @@ function toRows(payload) {
 
 export default function MiningMatrixPage() {
   const { canView } = useSession();
+  const toast = useToast();
   const [view, setView] = useState(matrixApi.VIEWS.UPCOMING);
   const [includeZero, setIncludeZero] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const fetchMatrix = useCallback(
     () => matrixApi.list(view, includeZero), [view, includeZero],
@@ -269,6 +349,49 @@ export default function MiningMatrixPage() {
 
   const counts = payload.view_counts || {};
   const totals = payload.totals || {};
+
+  /**
+   * Mailable summed over DISTINCT canonical codes, for the same reason the
+   * server totals the mining figures that way: in the `all` view three editions
+   * of one event share a code and carry identical counts, so adding the column
+   * up would treble a single audience.
+   */
+  /* A plain reduce, not useMemo: this sits after the access guard's early
+     return, so a hook here would break the rule that every render calls the
+     same hooks in the same order. It is one pass over a few hundred rows. */
+  const mailableTotal = (() => {
+    const seen = new Map();
+    (payload.rows || []).forEach((r) => {
+      if (r.canonical_code && r.mailable != null) seen.set(r.canonical_code, r.mailable);
+    });
+    return [...seen.values()].reduce((a, b) => a + b, 0);
+  })();
+
+  /* A plain function, not useCallback: this sits after the access guard's
+     early return, so a hook here would break the rule that every render calls
+     the same hooks in the same order, and it is only ever a button's onClick
+     so there is nothing to memoise for. */
+  const onSyncMailable = async () => {
+    setSyncing(true);
+    try {
+      const result = await matrixApi.syncMailable();
+      // Just the first line: the command prints several and a toast is not a
+      // log. The rest is in the server log if anybody needs it.
+      const [summary] = String(result.output || '').split('\n');
+      toast(summary || 'Mailable counts refreshed.', 'ok');
+      refetchQuiet();
+    } catch (err) {
+      toast(apiErrorMessage(err, 'The mailable sync did not run.'), 'er');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /* Average estimate behind each unmined link, which is what makes an events
+     count and a data count comparable across rows of very different sizes. */
+  const perLink = totals.unmined_links
+    ? Math.round((totals.unmined_data || 0) / totals.unmined_links)
+    : 0;
   const isUnlinked = view === matrixApi.VIEWS.UNLINKED;
   const TABS = Object.entries(TAB_LABELS).map(([id, label]) => ({
     id, label, count: counts[id],
@@ -303,15 +426,55 @@ export default function MiningMatrixPage() {
           Each split run sums to Data on its own: ticket type and priority are two
           cuts of the same money, not two halves of it. */}
       <div className="kbar">
+        {/* EACH FIGURE ITS OWN BOX, with its own accent rail, because these are
+            four different measures and a single run of numbers read as one.
+            Mailable is here as well as in the column: it is the denominator for
+            everything to its right, since unmined data against no reachable
+            audience is a different problem from unmined data against forty
+            thousand contacts. */}
         <div className="kbar-lead">
-          <span className="kbar-fig">
-            <b>{nf(totals.unmined_links || 0)}</b><em>Unmined links</em>
+          <span className="kbar-box" style={{ '--ac': 'var(--t-500)' }}>
+            <b>{nf(totals.rows || 0)}</b>
+            <em>{isUnlinked ? 'Codes' : 'Events'}</em>
           </span>
-          <span className="kbar-fig">
-            <b>{nf(totals.unmined_data || 0)}</b><em>Unmined data</em>
+          <span className="kbar-box" style={{ '--ac': 'var(--blue)' }}>
+            <b>{nf(totals.unmined_links || 0)}</b>
+            <em>Unmined links</em>
           </span>
-          <span className="kbar-fig">
-            <b>{nf(totals.rows || 0)}</b><em>{isUnlinked ? 'Codes' : 'Events'}</em>
+          <span className="kbar-box" style={{ '--ac': 'var(--red)' }}>
+            <b>{nf(totals.unmined_data || 0)}</b>
+            <em>Unmined data</em>
+          </span>
+          {/* The one figure on this page that comes from outside the CRM, so
+              how old it is is part of reading it. The timestamp is the OLDEST
+              fetch across the cached codes, because the column is only as
+              current as its stalest cell. */}
+          <span className="kbar-box kbar-box-mail" style={{ '--ac': 'var(--amber)' }}>
+            <b>{nf(mailableTotal)}</b>
+            <em>Mailable contacts</em>
+            <span className="kbar-sync">
+              <span className="kbar-sync-at">
+                {payload.mailable_synced_at
+                  ? `synced ${rel(payload.mailable_synced_at)}`
+                  : 'never synced'}
+                {payload.mailable_next_sync
+                  ? ` · next ${untilText(payload.mailable_next_sync)}`
+                  : ''}
+              </span>
+              <button
+                type="button"
+                className="kbar-sync-go"
+                disabled={syncing}
+                title="Refresh the Mailable column from HubSpot now"
+                onClick={onSyncMailable}
+              >
+                {syncing ? 'Syncing…' : 'Sync'}
+              </button>
+            </span>
+          </span>
+          <span className="kbar-box" style={{ '--ac': 'var(--violet)' }}>
+            <b>{perLink}</b>
+            <em>Data per link</em>
           </span>
         </div>
         {splits.map((dim) => (
@@ -344,6 +507,27 @@ export default function MiningMatrixPage() {
         </div>
       ) : null}
 
+      {payload.withdrawn && payload.withdrawn.links ? (
+        /* Work sitting against editions the Performance Matrix has withdrawn.
+           Excluded from every view, and stated here for the same reason as
+           `no_purpose` above: a page whose job is to surface outstanding work
+           must not hide any of it silently. It is also actionable on its own —
+           unmined tickets against a postponed edition are tickets somebody
+           should stop working. */
+        <div className="lnk-filter">
+          <Icon name="warn" size={14} />
+          <span>
+            <b>{nf(payload.withdrawn.links)}</b> unmined{' '}
+            {payload.withdrawn.links === 1 ? 'ticket sits' : 'tickets sit'} against{' '}
+            <b>{nf(payload.withdrawn.codes)}</b>{' '}
+            {payload.withdrawn.codes === 1 ? 'code' : 'codes'} whose editions are
+            all Postponed, TBP or Cancelled, so they are excluded from every view
+            here. That is <b>{nf(payload.withdrawn.estimate)}</b> of estimate
+            nobody should be mining.
+          </span>
+        </div>
+      ) : null}
+
       <DataTable
         /**
          * ONE TABLE ID AND ONE MOUNT PER VIEW, both deliberate.
@@ -369,6 +553,24 @@ export default function MiningMatrixPage() {
          */
         key={view}
         tableId={`mining_matrix.v1.${view}`}
+        /*
+         * A row of column totals under the header, frozen with it, so a reader
+         * scrolled halfway down the catalogue still has the totals in view.
+         * DataTable sums every `num` column over the rows currently shown,
+         * AFTER search and filters, which is the number somebody filtering to
+         * one region actually wants.
+         *
+         * The page's own summary bar above totals over DISTINCT canonical codes
+         * instead, because in the `all` view three editions of one event carry
+         * identical figures and adding the column up would treble them. The two
+         * answer different questions and are labelled accordingly.
+         */
+        sumRow
+        /* Two editions of one event share a Ticket Central purpose code and
+           carry identical figures, so the totals row de-duplicates on it. Left
+           as a plain sum it double-counted four codes and disagreed with the
+           KPI strip above by 145,005 mailable contacts. */
+        sumBy="canonical_code"
         rows={rows}
         cols={cols}
         noun={isUnlinked ? 'codes' : 'events'}

@@ -109,10 +109,11 @@ export const TK_TYPES = ['LinkedIn - LX', 'Comp.-CX', 'White - WH', 'Blue - BX',
 export const TK_TICKET_TYPES = ['Simple', 'Complex'];
 export const TK_RELATIONSHIPS = ['Direct', 'Indirect'];
 export const WH_STATUS = { received: 'blue', processing: 'amber', success: 'green', failed: 'red', duplicate: 'slate' };
-export const TEAM_ROLES = ['admin', 'sales', 'market_research', 'data_mining', 'telemarketing', 'speaker_sales', 'spex', 'operations'];
-export const ROLE_LABEL = { admin: 'Admin', sales: 'Sales', market_research: 'MR', data_mining: 'DMD', telemarketing: 'Tele', speaker_sales: 'Spkr Sales', spex: 'SpEx', operations: 'Ops' };
+// ROLE_FULL survives because the DASHBOARD reads it for a TEAM's type, which is
+// the same vocabulary from the other end. The per-person maps that went with it
+// (TEAM_ROLES, ROLE_LABEL, ROLE_TONE) had no readers once the Users screen, the
+// user form and the teams board all showed the team instead.
 export const ROLE_FULL = { admin: 'Administrator', sales: 'Sales', market_research: 'Market Research', data_mining: 'Data Mining', telemarketing: 'Telemarketing', speaker_sales: 'Speaker Sales', spex: 'SpEx', operations: 'Operations' };
-export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue', data_mining: 'amber', telemarketing: 'violet', speaker_sales: 'green', spex: 'cyan', operations: 'neutral' };
 // MUST hold every key in CRM_MODULES in backend/accounts/models.py, in the same
 // order. This is the permission grid, and savePermissions sends the WHOLE grid to
 // an endpoint that deletes the team's rows and rebuilds them from the payload —
@@ -140,7 +141,7 @@ export const ROLE_TONE = { admin: 'slate', sales: 'teal', market_research: 'blue
 // every other module rather than offering a tick that saves fine and changes
 // nothing, which is the worse failure: an administrator would read it as
 // "shared" and never find out otherwise.
-export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance Matrix', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }, { k: 'mining_matrix', l: 'Mining Matrix' }, { k: 'pre_event_docs', l: 'Pre-Event Docs' }];
+export const CRM_MODULES = [{ k: 'bookings', l: 'Bookings', scoped: true }, { k: 'ticket_central', l: 'Ticket Central' }, { k: 'events', l: 'Events', scoped: true }, { k: 'users', l: 'Users' }, { k: 'teams', l: 'Teams' }, { k: 'performance', l: 'Performance Matrix', adminOnly: true }, { k: 'webhooks', l: 'Webhooks' }, { k: 'roles', l: 'Permissions' }, { k: 'google_sync', l: 'Google Sync' }, { k: 'paper_review', l: 'Paper Review', scoped: true }, { k: 'proposal_submission', l: 'Proposal Submission', scoped: true }, { k: 'mining_matrix', l: 'Mining Matrix' }, { k: 'pre_event_docs', l: 'Pre-Event Docs' }, { k: 'credit_control', l: 'Credit Control', scoped: true }];
 // 'all' is the odd one and is deliberately last. The first four answer "does
 // this module open"; 'all' answers "whose rows are in it" — own rows, or every
 // row. It rides in the same list because every matrix helper, every delta and
@@ -325,3 +326,63 @@ export const PAPER_SESSION_OPTIONS = [
 export const PAID_OR_FREE = ['Paid', 'Free'];
 export const PAID_OR_FREE_LABEL = { Paid: 'Payable' };
 export const paidOrFreeLabel = (v) => PAID_OR_FREE_LABEL[v] ?? v;
+
+/**
+ * The themes the app ships, in the order the picker offers them.
+ *
+ * A theme is a TOKEN BLOCK in styles/base.css and nothing else — see
+ * [named_themes] there — so this list is the only other place that has to know
+ * one exists. `id` is the value written to html[data-theme]; the CSS selector
+ * is html[data-theme=<id>], so the two cannot drift without the theme simply
+ * having no effect.
+ *
+ * `dot` is the swatch the picker paints, and it is the theme's ACCENT rather
+ * than its ground: the ground of three of these is a near-white that would
+ * read as an empty circle in a menu, while the accent is what actually
+ * distinguishes them. It is duplicated from the CSS on purpose — a swatch has
+ * to be readable before the theme is applied, and there is no way to read a
+ * token off a rule that is not in effect yet.
+ */
+export const THEMES = [
+  { id: 'light',      label: 'Light',      note: 'iQ Hub, as shipped',  dot: '#00819D' },
+  { id: 'bastion',    label: 'Bastion',    note: 'iQ Hub, inverted',    dot: '#8FD6E4' },
+  { id: 'provenance', label: 'Provenance', note: 'Bone paper, serif',   dot: '#2F5D4A' },
+  { id: 'atrium',     label: 'Atrium',     note: 'Bottle green, floats', dot: '#0C5138' },
+  { id: 'folio',      label: 'Folio',      note: 'Porcelain, squared',  dot: '#24408F' },
+];
+
+/**
+ * 'dark' IS NOT OFFERED, AND ITS CSS IS STILL THERE ON PURPOSE.
+ *
+ * Bastion is the dark theme now — the same graphite job done on the brand ramp
+ * — so 'dark' came off this list rather than out of the stylesheet. What is
+ * left under html[data-theme=dark] is the DARK-GROUND implementation: the
+ * inverted neutral ramp, the lifted band palette for the Mining Matrix, and a
+ * dozen component fixes (the bulk bar, the tooltip, .btn-p:hover, the login
+ * wordmark) that exist because a light-ground rule is wrong on a dark one.
+ * Every one of those selectors now carries an html[data-theme=bastion] twin,
+ * which is what Bastion is actually built on; deleting the dark half would
+ * mean rewriting all of it under a new name for no behaviour change.
+ *
+ * Anyone still holding 'dark' in localStorage falls through isTheme() to
+ * 'light' rather than to an unstyled app. The same guard now catches
+ * 'cardinal', which was removed outright: its block and its eleven dark-rail
+ * overrides are gone from base.css, so unlike 'dark' there is nothing left for
+ * a stored value to land on. Atrium took its slot in this list.
+ */
+
+/** Is this a theme the CSS actually defines? Guards a stale stored value. */
+export const isTheme = (v) => THEMES.some((t) => t.id === v);
+
+/**
+ * Where the side rail may sit. 'left' is the default and the arrangement the
+ * bulk of base.css describes; the other two turn it into a horizontal bar. See
+ * [rail_placement] in styles/base.css — each value maps to body classes, so an
+ * unrecognised one would leave the rail half-arranged.
+ */
+export const RAIL_POSITIONS = [
+  { id: 'left',   label: 'Left' },
+  { id: 'top',    label: 'Top' },
+  { id: 'bottom', label: 'Bottom' },
+];
+export const isRailPos = (v) => RAIL_POSITIONS.some((r) => r.id === v);

@@ -1,3 +1,7 @@
+# Credit Control's invoice-type classifier and handover briefs. Pulls
+# pydantic and httpx2 with it, which is where the typed structured
+# output in credit_control/classifier.py comes from.
+anthropic==1.4.0
 asgiref==3.11.1
 cachetools==5.5.2
 certifi==2026.4.22

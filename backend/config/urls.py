@@ -68,6 +68,9 @@ urlpatterns = [
     # Pre-Event Docs. One aggregate response per event rather than a paginated
     # list, so it is its own include and not a router entry above.
     path("api/pre-event-docs/", include("pre_event_docs.urls")),
+    # Credit Control. A queue plus one aggregate response, so an include
+    # rather than a router entry above; the leads router lives inside it.
+    path("api/credit-control/", include("credit_control.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),
     # GROUP BY aggregates for the Dashboard. Replaces ~350 sequential

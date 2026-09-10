@@ -1,9 +1,8 @@
 import Drawer from '../../components/Drawer';
 import { Icon } from '../../lib/icons';
-import { Av, ReportsTo, RoleBadge, StatusPill } from '../../components/Badge';
+import { Av, ReportsTo, StatusPill } from '../../components/Badge';
 import { reportingManagerOf } from '../../lib/reporting';
 import { rel } from '../../lib/helpers';
-import { ROLE_FULL } from '../../lib/constants';
 import { useSession } from '../../context/SessionContext';
 import { useToast } from '../../context/ToastContext';
 import { useFetch } from '../../hooks/useFetch';
@@ -48,7 +47,7 @@ export default function UserDrawer({ user: u, users, onClose, onChanged, onEdit,
   return (
     <Drawer
       onClose={onClose}
-      head={<div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><Av name={u.name} size="xl" /><div style={{ minWidth: 0 }}><h2>{u.name}</h2><p>@{u.username} · {ROLE_FULL[u.role]}</p></div></div>}
+      head={<div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><Av name={u.name} size="xl" /><div style={{ minWidth: 0 }}><h2>{u.name}</h2><p>{team ? team.name : 'No team'} · {u.email}</p></div></div>}
       foot={<>
         <button className="btn btn-s" onClick={onClose}>Close</button>
         {can('update', 'users') ? <>
@@ -60,7 +59,6 @@ export default function UserDrawer({ user: u, users, onClose, onChanged, onEdit,
     >
       <div className="sl">Access</div>
       <div className="ro">
-        <div className="ro-c"><div className="ro-l">Role</div><div className="ro-v"><RoleBadge value={u.role} /></div></div>
         <div className="ro-c"><div className="ro-l">Team</div><div className="ro-v">{team ? (team.is_all_access ? team.name + ' · full access' : team.name) : <span className="dim">None — no module access</span>}</div></div>
         <div className="ro-c"><div className="ro-l">Team lead</div><div className="ro-v">{u.is_lead ? 'Yes' : 'No'}</div></div>
         {/* Separate row from Team lead on purpose: one is who they report to,
@@ -68,7 +66,6 @@ export default function UserDrawer({ user: u, users, onClose, onChanged, onEdit,
         <div className="ro-c"><div className="ro-l">Manages</div><div className="ro-v">{u.managed_team_name || <span className="dim">No team</span>}</div></div>
         <div className="ro-c f"><div className="ro-l">Reporting manager</div><div className="ro-v"><ReportsTo value={reportsTo} /></div></div>
         <div className="ro-c"><div className="ro-l">Status</div><div className="ro-v"><StatusPill value={u.status} /></div></div>
-        <div className="ro-c f"><div className="ro-l">Email</div><div className="ro-v" style={{ fontWeight: 500 }}>{u.email}</div></div>
         <div className="ro-c f"><div className="ro-l">Last active</div><div className="ro-v">{rel(u.last_login)}</div></div>
       </div>
       <div className="sl">Module access</div>

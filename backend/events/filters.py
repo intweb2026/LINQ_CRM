@@ -22,7 +22,7 @@ class EventFilter(django_filters.FilterSet):
         fields = ["status", "event_date_from", "event_date_to", "city", "event_code", "base_code", "year", "name", "official_name", "accepting_web_bookings", "sales_executive", "team_leader"]
 
     def filter_status(self, queryset, name, value):
-        today = timezone.now().date()
+        today = timezone.localdate()
         val_lower = value.lower()
         if val_lower == "completed":
             return queryset.filter(event_date__lt=today)

@@ -64,7 +64,33 @@ import { HP_USERNAME } from './constants';
  */
 export const DASH_MODULES = ['bookings', 'ticket_central', 'events', 'webhooks'];
 
+/**
+ * The rail, in the order it is read.
+ *
+ * MANAGEMENT FIRST, ADMIN LAST — the order is by how often a section is opened
+ * and by who opens it, not by how the modules are grouped in the backend.
+ * Management carries the three read-only surfaces a lead lands on to decide
+ * where to push; Pipeline is the work itself; Credit Control is a shift's worth
+ * of calling; Catalogue is consulted; Admin is opened when something needs
+ * changing, which is rarely.
+ *
+ * `g` is the section heading as it renders. 'Management' was 'Insights' — the
+ * pages under it are what a manager runs the week from, and "insights" named
+ * the format rather than the job.
+ */
 export const NAV = [
+  { g: 'Management', items: [
+    { id: 'dashboard', l: 'Dashboard', ic: 'grid', needsAny: DASH_MODULES, path: '/dashboard' },
+    // `adminOnly` — the `mod` alongside it is decorative, kept only so an entry
+    // never sits here with no module at all, and the Permissions grid shows the
+    // Performance row as locked for the same reason (see CRM_MODULES).
+    { id: 'performance_matrix', l: 'Performance Matrix', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance-matrix' },
+    // Its own module, not a corner of ticket_central: the matrix aggregates
+    // tickets but it is a capacity-planning surface, and ticket_central's grant
+    // carries create/update/delete over the live queue. See CRM_MODULES in
+    // backend/accounts/models.py and migration 0029.
+    { id: 'mining_matrix', l: 'Mining Matrix', ic: 'chart', mod: 'mining_matrix', path: '/mining-matrix' },
+  ] },
   { g: 'Pipeline', items: [
     { id: 'bookings', l: 'Bookings', ic: 'receipt', mod: 'bookings', path: '/bookings', hasBadge: true },
     { id: 'tickets', l: 'Ticket Central', ic: 'ticket', mod: 'ticket_central', path: '/tickets', hasBadge: true },
@@ -76,20 +102,35 @@ export const NAV = [
     // See CRM_MODULES in backend/accounts/models.py and migration 0032.
     { id: 'pre_event_docs', l: 'Pre-Event Docs', ic: 'note', mod: 'pre_event_docs', path: '/pre-event-docs' },
   ] },
+  // ── Credit Control ────────────────────────────────────────────────────────
+  // A SECTION rather than one entry, because it is five surfaces with five
+  // audiences: a manager reads the Dashboard, a caller works Payment
+  // Collection all shift, and the other three are registers somebody consults.
+  // Folding them into one nav item hid four of them behind a tab strip.
+  //
+  // Every entry gates on the same `credit_control` module, which is row-scoped,
+  // so an exec sees their own queue inside Payment Collection. See CRM_MODULES
+  // and SCOPED_MODULES in backend/accounts/models.py and migration 0033.
+  { g: 'Credit Control', items: [
+    { id: 'cc_dashboard', l: 'Dashboard', ic: 'gauge', mod: 'credit_control', path: '/credit-control' },
+    // "Payment Collection", not "Queue". The team collects payment; a queue is
+    // how the work happens to be arranged, and naming a module after its data
+    // structure is how software ends up sounding like its own database.
+    { id: 'cc_collection', l: 'Payment Collection', ic: 'phone', mod: 'credit_control', path: '/credit-control/collection' },
+    // ADMIN ONLY, both of these. Not Invoiced is a registry of bookings
+    // waiting on an invoice number and Sponsors is another team's work, so
+    // neither belongs in a caller's rail. The server refuses the buckets too
+    // (credit_control/views.py ADMIN_ONLY_BUCKETS); this only stops a caller
+    // being shown a door that will not open.
+    { id: 'cc_not_invoiced', l: 'Not Invoiced', ic: 'warn', mod: 'credit_control', adminOnly: true, path: '/credit-control/not-invoiced' },
+    // "Sponsors", not "SpEx & Speaker Table". Same rows, the name people say.
+    { id: 'cc_sponsors', l: 'Sponsors', ic: 'star', mod: 'credit_control', adminOnly: true, path: '/credit-control/sponsors' },
+    // "Resolved", not "Done". It says the debt was settled rather than that we
+    // stopped looking at it.
+    { id: 'cc_resolved', l: 'Resolved', ic: 'check', mod: 'credit_control', path: '/credit-control/resolved' },
+  ] },
   { g: 'Catalogue', items: [
     { id: 'events', l: 'Events', ic: 'calendar', mod: 'events', path: '/events', hasBadge: true },
-  ] },
-  { g: 'Insights', items: [
-    { id: 'dashboard', l: 'Dashboard', ic: 'grid', needsAny: DASH_MODULES, path: '/dashboard' },
-    // `adminOnly` — the `mod` alongside it is decorative, kept only so an entry
-    // never sits here with no module at all, and the Permissions grid shows the
-    // Performance row as locked for the same reason (see CRM_MODULES).
-    { id: 'performance_matrix', l: 'Performance Matrix', ic: 'gauge', mod: 'performance', adminOnly: true, path: '/performance-matrix' },
-    // Its own module, not a corner of ticket_central: the matrix aggregates
-    // tickets but it is a capacity-planning surface, and ticket_central's grant
-    // carries create/update/delete over the live queue. See CRM_MODULES in
-    // backend/accounts/models.py and migration 0029.
-    { id: 'mining_matrix', l: 'Mining Matrix', ic: 'chart', mod: 'mining_matrix', path: '/mining-matrix' },
   ] },
   { g: 'Admin', items: [
     { id: 'users', l: 'Users', ic: 'users', mod: 'users', path: '/users', hasBadge: true },
@@ -119,6 +160,36 @@ export const NAV = [
 ];
 
 export const NAV_FLAT = NAV.flatMap((g) => g.items);
+
+/**
+ * Which nav entry a URL belongs to, by LONGEST matching path.
+ *
+ * Both the rail's highlight and the breadcrumb used to take the first path
+ * segment and look for an entry whose path was exactly that. That worked while
+ * every section had one entry per segment, and broke the moment Credit Control
+ * arrived with five entries under `/credit-control`: every one of them resolved
+ * to the first, so opening Payment Collection highlighted Dashboard in the rail
+ * and announced "Credit Control › Dashboard" in the breadcrumb while the page
+ * itself said Payment Collection.
+ *
+ * Longest-match handles both shapes. `/bookings/invoices` still resolves to
+ * `/bookings`, because that is the only entry that prefixes it, while
+ * `/credit-control/collection` resolves to itself rather than to its parent.
+ *
+ * MATCHED ON A SEGMENT BOUNDARY, so `/credit-control` cannot claim a future
+ * `/credit-controls`; a plain startsWith would.
+ */
+export function navEntryFor(pathname) {
+  const path = (pathname || '/').replace(/[/]+$/, '') || '/';
+  let best = null;
+  NAV.forEach((group) => group.items.forEach((item) => {
+    if (path !== item.path && !path.startsWith(item.path + '/')) return;
+    if (!best || item.path.length > best.item.path.length) {
+      best = { group: group.g, item };
+    }
+  }));
+  return best;
+}
 
 /**
  * The one answer to "may this role reach this page", for both gate shapes.

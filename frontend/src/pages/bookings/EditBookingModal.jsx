@@ -12,6 +12,7 @@ import { useSession } from '../../context/SessionContext';
 import DelegateTable, { blankDelegate, delegateProblem } from './DelegateTable';
 import * as bookingsApi from '../../api/bookings';
 import { apiErrorMessage } from '../../api/client';
+import { todayISO } from '../../lib/dateFilter';
 
 /**
  * ONE CHIP PER PERSON. `owner` is either a plain name or an ownerOf() result, and
@@ -58,7 +59,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
   const confirm = useConfirm();
   const { can } = useSession();
   const first = delegateRows[0];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();   // the Pacific day, not the UTC one
   const { data: events } = useFetch(eventsApi.list, [], { initialData: [] });
 
   const [invoiceNumber, setInvoiceNumber] = useState(first.invoice_number);

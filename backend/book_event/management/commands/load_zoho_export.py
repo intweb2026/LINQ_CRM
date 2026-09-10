@@ -58,6 +58,8 @@ from collections import Counter, defaultdict
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from credit_control.signals import suspend_routing
+
 from accounts.import_common import (
     as_text,
     build_header_mapper,
@@ -173,54 +175,60 @@ class Command(BaseCommand):
 
     # ── entry ────────────────────────────────────────────────────────────────
     def handle(self, *args, **options):
-        self.dry_run = options["dry_run"]
-        self.fail_after = options["fail_after"]
-        self._operator = options["operator"]
-        self.create_missing_events = options["create_missing_events"]
-        self.batch_id = uuid.UUID(options["batch_id"]) if options["batch_id"] else uuid.uuid4()
+        # LIVE ROUTING OFF FOR THE RUN. Credit Control routes an invoice as it
+        # is saved (credit_control/signals.py), which is right for one booking
+        # and wrong for an import: this writes thousands, and routing each
+        # individually would be thousands of small transactions to reach the
+        # state one pass reaches in a second. The hourly pass picks the batch up.
+        with suspend_routing():
+            self.dry_run = options["dry_run"]
+            self.fail_after = options["fail_after"]
+            self._operator = options["operator"]
+            self.create_missing_events = options["create_missing_events"]
+            self.batch_id = uuid.UUID(options["batch_id"]) if options["batch_id"] else uuid.uuid4()
 
-        rows = self._read(options["export_file"], options["limit"])
-        if not rows:
-            raise CommandError("The export contains no rows.")
+            rows = self._read(options["export_file"], options["limit"])
+            if not rows:
+                raise CommandError("The export contains no rows.")
 
-        # Columns from the UNION of every row, not just the first. A JSON export
-        # is a list of objects with no schema, and Zoho omits keys whose value is
-        # blank — so a column absent from row 1 but present on row 900 would
-        # otherwise never be mapped, and would be silently dropped for the whole
-        # file. Found by a synthetic row carrying an `edition` column that row 1
-        # did not have: the bad edition sailed through unvalidated.
-        # dict.fromkeys preserves first-seen order, so the report lists
-        # unrecognised columns in file order rather than an arbitrary set order.
-        columns = list(dict.fromkeys(key for record in rows for key in record))
-        mapping, unrecognised = build_header_mapper(ZOHO_HEADERS, MODEL_FIELDS)(
-            columns)
-        if not mapping:
-            raise CommandError(
-                "No recognisable columns. Got: " + ", ".join(map(str, rows[0].keys())))
+            # Columns from the UNION of every row, not just the first. A JSON export
+            # is a list of objects with no schema, and Zoho omits keys whose value is
+            # blank — so a column absent from row 1 but present on row 900 would
+            # otherwise never be mapped, and would be silently dropped for the whole
+            # file. Found by a synthetic row carrying an `edition` column that row 1
+            # did not have: the bad edition sailed through unvalidated.
+            # dict.fromkeys preserves first-seen order, so the report lists
+            # unrecognised columns in file order rather than an arbitrary set order.
+            columns = list(dict.fromkeys(key for record in rows for key in record))
+            mapping, unrecognised = build_header_mapper(ZOHO_HEADERS, MODEL_FIELDS)(
+                columns)
+            if not mapping:
+                raise CommandError(
+                    "No recognisable columns. Got: " + ", ".join(map(str, rows[0].keys())))
 
-        self.stats = Counter()
-        self.rejections = []          # [{row, stage, field, problem, value}]
-        self._rejected_keys = set()   # (row, field, problem) — see _reject
-        # Keyed by row index, not a list: _invoice_number is called once by the
-        # invoice stage and again by the delegate stage, and appending on both
-        # would report twice as many generated numbers as rows.
-        self.generated_invoices = {}  # row index -> invoice_number
-        self.unrecognised = unrecognised
+            self.stats = Counter()
+            self.rejections = []          # [{row, stage, field, problem, value}]
+            self._rejected_keys = set()   # (row, field, problem) — see _reject
+            # Keyed by row index, not a list: _invoice_number is called once by the
+            # invoice stage and again by the delegate stage, and appending on both
+            # would report twice as many generated numbers as rows.
+            self.generated_invoices = {}  # row index -> invoice_number
+            self.unrecognised = unrecognised
 
-        normalised = [normalise_row(r, mapping) for r in rows]
+            normalised = [normalise_row(r, mapping) for r in rows]
 
-        # Requirement 2: ONE transaction for the entire load. A failure anywhere —
-        # including the deliberate --fail-after — rolls back every stage, not just
-        # the one that raised. --dry-run additionally rolls back unconditionally,
-        # so even a coding error in a _write_ path cannot leave rows behind.
-        try:
-            with transaction.atomic():
-                result = self.run(normalised)
-                if self.dry_run:
-                    raise _DryRun(result)
-        except _DryRun as done:
-            result = done.result
-        return self._report(result)
+            # Requirement 2: ONE transaction for the entire load. A failure anywhere —
+            # including the deliberate --fail-after — rolls back every stage, not just
+            # the one that raised. --dry-run additionally rolls back unconditionally,
+            # so even a coding error in a _write_ path cannot leave rows behind.
+            try:
+                with transaction.atomic():
+                    result = self.run(normalised)
+                    if self.dry_run:
+                        raise _DryRun(result)
+            except _DryRun as done:
+                result = done.result
+            return self._report(result)
 
     # ── file reading ─────────────────────────────────────────────────────────
     def _read(self, path, limit):

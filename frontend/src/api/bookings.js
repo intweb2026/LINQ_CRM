@@ -20,6 +20,7 @@ import {
   http, fetchAllPages, fetchPage, assertIdArray, chunk, mapLimit,
   bulkUpdate as bulkUpdateOn, fetchBulkUpdateSchema,
 } from './client';
+import { todayISO } from '../lib/dateFilter';
 
 // The DRF resource these rows come from. Shared by the mass-update and
 // filter_spec surfaces so the path is declared once.
@@ -462,7 +463,7 @@ export function update(id, patch) {
 }
 
 export function markPaid(id) {
-  return update(id, { payment_status: 'Paid', payment_date: new Date().toISOString().slice(0, 10) });
+  return update(id, { payment_status: 'Paid', payment_date: todayISO() });
 }
 /**
  * There is no batch "mark paid" endpoint, so this is one PATCH per delegate.

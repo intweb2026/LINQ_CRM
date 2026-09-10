@@ -960,22 +960,34 @@ class MRQueryLeakTests(_Base):
 
 
 class BusinessTimezoneTests(_Base):
-    """G3 — the create-path default resolves in IST while storage stays UTC."""
+    """
+    G3 — the create-path default resolves in the app's zone while storage stays
+    UTC.
 
-    def test_frozen_utc_instant_inside_the_window_yields_the_ist_date(self):
-        # 2026-08-10 20:00 UTC == 2026-08-11 01:30 IST. UTC says the 10th; the
-        # team is already on the 11th, and 11 is the answer.
-        frozen = datetime(2026, 8, 10, 20, 0, tzinfo=dt_timezone.utc)
+    The zone WAS a hardcoded Asia/Kolkata local to this serializer, because
+    settings.TIME_ZONE was UTC and the team was not. It is now Pacific,
+    project-wide, and business_today() is a one-line delegation to
+    timezone.localdate(). The behaviour under test is unchanged — a submission
+    is stamped with the day the team is having — so the tests stay; only the
+    zone, and therefore the direction of the disagreement, has moved. Pacific is
+    BEHIND UTC, so it is late-evening UTC that lands on the previous local day,
+    where IST put early-morning UTC on the next one.
+    """
+
+    def test_frozen_utc_instant_inside_the_window_yields_the_local_date(self):
+        # 2026-08-10 04:00 UTC == 2026-08-09 21:00 PDT. UTC says the 10th; the
+        # team is still on the 9th, and 9 is the answer.
+        frozen = datetime(2026, 8, 10, 4, 0, tzinfo=dt_timezone.utc)
         with patch("proposal_submission.serializers.timezone.now",
                    return_value=frozen):
-            self.assertEqual(business_today(), date(2026, 8, 11))
+            self.assertEqual(business_today(), date(2026, 8, 9))
 
             self.client.force_authenticate(user=self.user)
-            body = {"event_code": "AFS - JS", "speaker_name": "Early Bird",
-                    "email": "early@x.com"}
+            body = {"event_code": "AFS - JS", "speaker_name": "Night Owl",
+                    "email": "late@x.com"}
             r = self.client.post(self.LIST, body, format="json")
             self.assertEqual(r.status_code, 201, r.content)
-            self.assertEqual(str(r.data["submission_date"]), "2026-08-11")
+            self.assertEqual(str(r.data["submission_date"]), "2026-08-09")
 
     def test_midday_utc_is_the_same_day_in_both_zones(self):
         frozen = datetime(2026, 8, 10, 9, 0, tzinfo=dt_timezone.utc)
@@ -983,7 +995,24 @@ class BusinessTimezoneTests(_Base):
                    return_value=frozen):
             self.assertEqual(business_today(), date(2026, 8, 10))
 
-    def test_settings_were_not_changed(self):
+    def test_the_offset_is_looked_up_per_instant_and_not_fixed(self):
+        # 07:30 UTC is the 15th in PST (-08:00, winter) and would be the 15th
+        # under a fixed -07:00 too; 07:30 UTC in JULY is 00:30 PDT, still the
+        # 15th. The pair that separates them is 07:30 on a winter morning
+        # against the same clock time in summer, one hour apart in local terms.
+        winter = datetime(2026, 1, 15, 7, 30, tzinfo=dt_timezone.utc)
+        summer = datetime(2026, 7, 15, 6, 30, tzinfo=dt_timezone.utc)
+        with patch("proposal_submission.serializers.timezone.now",
+                   return_value=winter):
+            self.assertEqual(business_today(), date(2026, 1, 14))   # 23:30 PST
+        with patch("proposal_submission.serializers.timezone.now",
+                   return_value=summer):
+            self.assertEqual(business_today(), date(2026, 7, 14))   # 23:30 PDT
+
+    def test_the_project_timezone_is_pacific_and_storage_is_still_utc(self):
         from django.conf import settings
-        self.assertEqual(settings.TIME_ZONE, "UTC")
+        self.assertEqual(settings.TIME_ZONE, "America/Los_Angeles")
+        # USE_TZ is what keeps every DateTimeField stored as UTC. TIME_ZONE only
+        # decides how that instant is READ back; if this ever goes False the
+        # zone above stops being a render choice and starts being storage.
         self.assertTrue(settings.USE_TZ)
