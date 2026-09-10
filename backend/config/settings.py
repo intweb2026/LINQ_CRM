@@ -156,6 +156,15 @@ INSTALLED_APPS = [
     # networking draw. Reads book_delegate and events, owns two tables of its
     # own, so it sits AFTER book_delegate.
     "pre_event_docs",
+    # QR Attendance. The on-site door: one arrival row per person, sourced from
+    # the Pre-Event Docs check-in sheet. Reads book_delegate, events and
+    # pre_event_docs, owns one table of its own, so it sits after all three.
+    "attendance",
+    # OAuth authorization server for the MCP endpoint. Owns only its own four
+    # tables and reuses accounts for identity; it authenticates nobody itself,
+    # it asks Google and then matches the email to an existing CRM user exactly
+    # as GoogleTokenLoginView does. Sits after accounts for that FK.
+    "mcp_auth",
     # HubSpot. A SHARED client and cache, not a corner of one module: Credit
     # Control wants phones, call counts and email evidence, and Ticket Central
     # wants mailable contact counts per event code. Owns two cache tables and

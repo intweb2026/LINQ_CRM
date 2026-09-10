@@ -114,6 +114,55 @@ export const WH_STATUS = { received: 'blue', processing: 'amber', success: 'gree
 // (TEAM_ROLES, ROLE_LABEL, ROLE_TONE) had no readers once the Users screen, the
 // user form and the teams board all showed the team instead.
 export const ROLE_FULL = { admin: 'Administrator', sales: 'Sales', market_research: 'Market Research', data_mining: 'Data Mining', telemarketing: 'Telemarketing', speaker_sales: 'Speaker Sales', spex: 'SpEx', operations: 'Operations' };
+/**
+ * A BOOKING CODE'S COLOUR. One tone per pass type, for the whole CRM.
+ *
+ * THE KEY IS THE FAMILY, NOT THE SPELLING, and that is the design. Half of
+ * BOOKING_CODES is compounds of the other half — "Speaker / SLV SpEx" is a
+ * speaker AND a silver sponsor, "Upgraded to SLV SpEx" is a silver sponsor who
+ * used to be something else — so a map with a row per spelling would need a new
+ * row every time sales invents a combination, and the day it was missed a code
+ * would silently change colour by going uncoloured. bookingCodeTone resolves any
+ * spelling to one of these families, so every silver pass is the same colour
+ * wherever it is rendered, which is the rule this map exists to keep.
+ *
+ * PRECEDENCE IS PART OF THE ANSWER. A sponsor who also speaks is coloured as the
+ * sponsor, so "Speaker / SLV SpEx" is green rather than yellow. That mirrors
+ * services.role_of, which prints the whole sponsorship code for the same reason:
+ * the sponsorship is the rarer fact and the one nobody can work out from a name.
+ *
+ * ALL FOUR TIERS ARE ONE GREEN. An earlier version gave gold, silver, platinum
+ * and patron a colour each; the requested mapping is Speaker yellow and SpEx
+ * green, so the tier is no longer what the colour reports and the resolver no
+ * longer reads it out. The tier is still on the sheet, in the text of the cell.
+ *
+ * Tones are the shared .bg-* set, so they follow the theme like every other
+ * badge, and RED IS NOT USED. Red means a problem across this CRM — a failed
+ * webhook, a cancellation, money still to collect — and no pass type is a
+ * problem.
+ */
+export const BOOKING_CODE_TONE = {
+  speaker: 'amber',       // Speaker, SPP, Speaker Table
+  spex: 'green',          // every sponsorship tier: GLD, SLV, PLT, PTN
+  group: 'teal',          // Group Pass, and its combinations
+  comp: 'green',          // Complimentary, Advisory Board Member
+  media: 'cyan',          // Media
+  delegate: 'neutral',    // Delegate, Add-Ons, and anything unrecognised
+};
+
+/**
+ * Which family a booking code belongs to. Order is precedence, see above:
+ * sponsorship tier first, then the passes, then the plain delegate.
+ */
+export function bookingCodeTone(code) {
+  const v = String(code || '');
+  if (/spex/i.test(v)) return BOOKING_CODE_TONE.spex;
+  if (/group pass/i.test(v)) return BOOKING_CODE_TONE.group;
+  if (/complimentary|advisory/i.test(v)) return BOOKING_CODE_TONE.comp;
+  if (/media/i.test(v)) return BOOKING_CODE_TONE.media;
+  if (/speaker|spp/i.test(v)) return BOOKING_CODE_TONE.speaker;
+  return BOOKING_CODE_TONE.delegate;
+}
 // MUST hold every key in CRM_MODULES in backend/accounts/models.py, in the same
 // order. This is the permission grid, and savePermissions sends the WHOLE grid to
 // an endpoint that deletes the team's rows and rebuilds them from the payload —

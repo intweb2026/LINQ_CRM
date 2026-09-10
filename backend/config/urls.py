@@ -74,6 +74,10 @@ urlpatterns = [
     # Pre-Event Docs. One aggregate response per event rather than a paginated
     # list, so it is its own include and not a router entry above.
     path("api/pre-event-docs/", include("pre_event_docs.urls")),
+    # QR Attendance. Its own include for the same reason Pre-Event Docs is one:
+    # the log is a plain paginated list but everything else here is a per-event
+    # aggregate or a scan, not a router resource.
+    path("api/attendance/", include("attendance.urls")),
     # Credit Control. A queue plus one aggregate response, so an include
     # rather than a router entry above; the leads router lives inside it.
     path("api/credit-control/", include("credit_control.urls")),

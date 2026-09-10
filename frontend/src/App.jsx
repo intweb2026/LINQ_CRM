@@ -33,6 +33,7 @@ const EventsPage = lazy(() => import('./pages/EventsPage'));
 const PerformanceMatrixPage = lazy(() => import('./pages/PerformanceMatrixPage'));
 const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
 const PreEventDocsPage = lazy(() => import('./pages/PreEventDocsPage'));
+const AttendancePage = lazy(() => import('./pages/AttendancePage'));
 const CreditControlPage = lazy(() => import('./pages/CreditControlPage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
