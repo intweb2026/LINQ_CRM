@@ -17,10 +17,14 @@ The MCP SDK already implements every HTTP endpoint, metadata, /authorize,
 provider protocol. Four small tables answer that. Bridging a full OAuth library
 into the same protocol would be more code, not less, plus a dependency.
 
-SECRETS ARE STORED HASHED, following dataapi.DataApiKey. A leaked database row
-must not be replayable against the endpoint, so every credential here is kept
-as a SHA-256 digest and the raw value exists only in the response that issues
-it. Lookups hash the presented value and match on the digest column.
+USER CREDENTIALS ARE STORED HASHED, following dataapi.DataApiKey. Authorization
+codes, access tokens and refresh tokens are kept as SHA-256 digests, the raw
+value exists only in the response that issues it, and lookups hash the
+presented value and match on the digest column. A leaked database row cannot be
+replayed against the endpoint.
+
+THE ONE EXCEPTION IS OAuthClient.client_secret, which the SDK compares
+directly and so must be stored as issued. That field carries the reasoning.
 """
 import hashlib
 import secrets
@@ -51,19 +55,31 @@ class OAuthClient(models.Model):
     /authorize, so a client cannot later divert a code somewhere else.
     """
     client_id = models.CharField(max_length=64, unique=True, db_index=True)
-    # Null for public clients. claude.ai uses PKCE, so a secret is optional and
-    # its absence is not a weakness; the code challenge is what binds the
-    # exchange to the browser that started it.
-    client_secret_hash = models.CharField(max_length=64, blank=True, default="")
+    # STORED AS ISSUED, NOT HASHED, and that is deliberate.
+    #
+    # The SDK compares the presented secret against this value directly, so a
+    # digest cannot be used; hashing it meant get_client() had to return None,
+    # the SDK judged the client misconfigured, and every token exchange failed
+    # the instant the browser came back from Google. That is what happened in
+    # production.
+    #
+    # It cannot be avoided by registering public clients either: the SDK's
+    # /register defaults a missing token_endpoint_auth_method to
+    # client_secret_post and mints a secret, and its metadata never advertises
+    # "none", so a client following the metadata always ends up confidential.
+    #
+    # The exposure is small and worth being explicit about. This secret
+    # authenticates a CLIENT APPLICATION, not a person. On its own it grants
+    # nothing: every grant still needs someone to sign in with Google and
+    # consent, and the resulting token carries only that person's CRM
+    # permissions. DRF's own authtoken table in this same database stores its
+    # keys in the clear, and those are far more powerful.
+    client_secret = models.CharField(max_length=128, blank=True, default="")
     client_name = models.CharField(max_length=255, blank=True, default="")
     # How the client proves itself at /token. STORED, not defaulted at read
-    # time: leaving it off meant get_client() handed the SDK a None, which its
-    # client-auth middleware does not recognise, and every token exchange died
-    # with "Unsupported auth method: None". The flow tests missed it because
-    # they call the provider directly and never cross that middleware.
-    #
-    # "none" is a public client proving itself with PKCE instead of a secret,
-    # which is what MCP clients use and what claude.ai registers as.
+    # time: omitting it meant get_client() handed the SDK a Python None, which
+    # its client-auth middleware does not recognise, and every token exchange
+    # died with "Unsupported auth method: None".
     token_endpoint_auth_method = models.CharField(max_length=32, default="none")
     redirect_uris = models.JSONField(default=list)
     grant_types = models.JSONField(default=list)

@@ -65,18 +65,11 @@ def _resource(requested):
 def _client_to_sdk(row: OAuthClient) -> OAuthClientInformationFull:
     return OAuthClientInformationFull(
         client_id=row.client_id,
-        # Only a digest is stored, and the SDK compares the presented secret
-        # against this field directly, so the plaintext cannot be handed back.
-        # For a public client that is exactly right, there is no secret and
-        # PKCE does the binding instead.
-        #
-        # A client that registered for client_secret_post or _basic therefore
-        # cannot authenticate here, and the SDK refuses it as misconfigured
-        # rather than letting it through unverified. That is the safe failure,
-        # and it is why register_client logs a warning when one appears.
-        # Supporting them would mean storing recoverable secrets, which is not
-        # worth doing for a client type MCP does not use.
-        client_secret=None,
+        # Returned as issued. The SDK compares the presented secret against
+        # this value directly, so anything derived from it refuses every
+        # confidential client, which is what the SDK's own /register creates by
+        # default. See the model field for why storing it is acceptable.
+        client_secret=row.client_secret or None,
         client_name=row.client_name,
         # Carried through rather than defaulted. See the model field.
         token_endpoint_auth_method=row.token_endpoint_auth_method or "none",
@@ -101,28 +94,23 @@ class DjangoOAuthProvider:
         return await lookup()
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # The SDK's /register defaults a missing token_endpoint_auth_method to
+        # client_secret_post and mints a secret, and its metadata never
+        # advertises "none", so a client following the metadata always ends up
+        # confidential whether it wanted to or not. Both shapes work.
         method = client_info.token_endpoint_auth_method or "none"
-        if method != "none":
-            # Not refused outright, because refusing would be a 500 from the
-            # registration handler rather than a useful message. It will fail
-            # cleanly at /token instead, and this line says why.
-            logger.warning(
-                "MCP client %r registered with token_endpoint_auth_method=%r. "
-                "Only 'none' (public client with PKCE) can authenticate here, "
-                "because client secrets are stored hashed and cannot be "
-                "compared by the SDK. Token exchange will refuse this client.",
-                client_info.client_name or client_info.client_id, method,
-            )
+        logger.info(
+            "MCP client registered, %r, auth method %r, secret issued %s",
+            client_info.client_name or client_info.client_id, method,
+            bool(client_info.client_secret),
+        )
 
         @sync_to_async
         def store():
             OAuthClient.objects.update_or_create(
                 client_id=client_info.client_id,
                 defaults={
-                    "client_secret_hash": (
-                        hash_secret(client_info.client_secret)
-                        if client_info.client_secret else ""
-                    ),
+                    "client_secret": client_info.client_secret or "",
                     "client_name": client_info.client_name or "",
                     "token_endpoint_auth_method": method,
                     "redirect_uris": [str(u) for u in client_info.redirect_uris],
