@@ -31,11 +31,17 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 # registry up. Importing the other order raises AppRegistryNotReady.
 django_application = get_asgi_application()
 
-from mcp_server import mcp  # noqa: E402
+from mcp_server import TRANSPORT_SECURITY, mcp  # noqa: E402
 
 # streamable_http_path must match the prefix tested below, otherwise the inner
 # Starlette app answers 404 to everything we hand it.
-mcp_application = mcp.streamable_http_app(streamable_http_path="/mcp")
+#
+# transport_security is passed explicitly. Left out, the SDK's DNS rebinding
+# protection allows only the loopback host it defaults to, and every request
+# carrying a real Host header answers 421. See mcp_server._transport_security.
+mcp_application = mcp.streamable_http_app(
+    streamable_http_path="/mcp", transport_security=TRANSPORT_SECURITY,
+)
 
 # Taken from the app rather than written out, because it is more than /mcp and
 # getting the list wrong is silent. The SDK also serves

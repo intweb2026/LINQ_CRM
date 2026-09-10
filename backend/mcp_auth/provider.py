@@ -18,6 +18,7 @@ import logging
 from datetime import timedelta
 
 from asgiref.sync import sync_to_async
+from django.conf import settings
 from django.utils import timezone
 
 from mcp.server.auth.provider import (
@@ -40,21 +41,35 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _resource(requested):
+    """
+    The audience to stamp on a grant, defaulting to this server.
+
+    THIS SERVER SERVES EXACTLY ONE RESOURCE, and AuthSettings sets
+    validate_token_resource, so the bearer middleware refuses any token whose
+    resource is not resource_server_url. Its comparison parses the value as a
+    URL, and an absent one parses as the empty string, which raises and counts
+    as a mismatch. See mcp/server/auth/middleware/bearer_auth.py.
+
+    RFC 8707's resource indicator is OPTIONAL and claude.ai does not send it.
+    So without this default every token the server issued was refused the
+    first time it was used, which surfaced as "Authorization with iQ hub App
+    failed" and nothing in the flow before that looking wrong at all.
+
+    Defaulting rather than disabling the check keeps it meaningful: a token
+    minted elsewhere, for some other audience, is still rejected.
+    """
+    return requested or f"{settings.MCP_PUBLIC_URL}/mcp"
+
+
 def _client_to_sdk(row: OAuthClient) -> OAuthClientInformationFull:
     return OAuthClientInformationFull(
         client_id=row.client_id,
-        # Only a digest is stored, and the SDK compares the presented secret
-        # against this field directly, so the plaintext cannot be handed back.
-        # For a public client that is exactly right, there is no secret and
-        # PKCE does the binding instead.
-        #
-        # A client that registered for client_secret_post or _basic therefore
-        # cannot authenticate here, and the SDK refuses it as misconfigured
-        # rather than letting it through unverified. That is the safe failure,
-        # and it is why register_client logs a warning when one appears.
-        # Supporting them would mean storing recoverable secrets, which is not
-        # worth doing for a client type MCP does not use.
-        client_secret=None,
+        # Returned as issued. The SDK compares the presented secret against
+        # this value directly, so anything derived from it refuses every
+        # confidential client, which is what the SDK's own /register creates by
+        # default. See the model field for why storing it is acceptable.
+        client_secret=row.client_secret or None,
         client_name=row.client_name,
         # Carried through rather than defaulted. See the model field.
         token_endpoint_auth_method=row.token_endpoint_auth_method or "none",
@@ -79,28 +94,23 @@ class DjangoOAuthProvider:
         return await lookup()
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # The SDK's /register defaults a missing token_endpoint_auth_method to
+        # client_secret_post and mints a secret, and its metadata never
+        # advertises "none", so a client following the metadata always ends up
+        # confidential whether it wanted to or not. Both shapes work.
         method = client_info.token_endpoint_auth_method or "none"
-        if method != "none":
-            # Not refused outright, because refusing would be a 500 from the
-            # registration handler rather than a useful message. It will fail
-            # cleanly at /token instead, and this line says why.
-            logger.warning(
-                "MCP client %r registered with token_endpoint_auth_method=%r. "
-                "Only 'none' (public client with PKCE) can authenticate here, "
-                "because client secrets are stored hashed and cannot be "
-                "compared by the SDK. Token exchange will refuse this client.",
-                client_info.client_name or client_info.client_id, method,
-            )
+        logger.info(
+            "MCP client registered, %r, auth method %r, secret issued %s",
+            client_info.client_name or client_info.client_id, method,
+            bool(client_info.client_secret),
+        )
 
         @sync_to_async
         def store():
             OAuthClient.objects.update_or_create(
                 client_id=client_info.client_id,
                 defaults={
-                    "client_secret_hash": (
-                        hash_secret(client_info.client_secret)
-                        if client_info.client_secret else ""
-                    ),
+                    "client_secret": client_info.client_secret or "",
                     "client_name": client_info.client_name or "",
                     "token_endpoint_auth_method": method,
                     "redirect_uris": [str(u) for u in client_info.redirect_uris],
@@ -138,7 +148,7 @@ class DjangoOAuthProvider:
                 code_challenge=params.code_challenge,
                 state=params.state or "",
                 scopes=list(params.scopes or []),
-                resource=params.resource or "",
+                resource=_resource(params.resource),
                 expires_at=timezone.now() + timedelta(
                     seconds=PendingAuthorization.LIFETIME_SECONDS),
             )
@@ -166,7 +176,7 @@ class DjangoOAuthProvider:
                 code_challenge=row.code_challenge,
                 redirect_uri=row.redirect_uri,
                 redirect_uri_provided_explicitly=row.redirect_uri_provided_explicitly,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=row.user.username,
             )
 
@@ -239,7 +249,7 @@ class DjangoOAuthProvider:
                 client_id=row.client.client_id,
                 scopes=row.scopes,
                 expires_at=int(row.expires_at.timestamp()) if row.expires_at else None,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=user.username,
             )
 
@@ -262,7 +272,7 @@ class DjangoOAuthProvider:
                 client_id=client.client_id,
                 scopes=row.scopes,
                 expires_at=int(row.expires_at.timestamp()) if row.expires_at else None,
-                resource=row.resource or None,
+                resource=_resource(row.resource),
                 subject=row.user.username,
             )
 
