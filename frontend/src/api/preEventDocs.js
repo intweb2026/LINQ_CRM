@@ -17,7 +17,7 @@
 // was written here once and removed: it bypassed that validation and gave the
 // CRM two ways to record the same fact. The Check-in tab shows the tick and
 // leaves writing it to the code that owns it.
-import { http } from './client';
+import { downloadFile, http } from './client';
 
 export const TABS = {
   REGISTERED: '',
@@ -113,6 +113,64 @@ export const draw = (eventCode, edition, tables, rounds, perTable) =>
     .then((r) => r.data);
 
 /** The label an event reads as in the picker and on a printout. */
+/**
+ * THE EVENT SOMEBODY WAS LAST WORKING ON.
+ *
+ * Leaving the page unmounts it, so the picked event went with it and coming back
+ * reopened on whichever event happened to have the most delegates. That is a
+ * reasonable FIRST guess and a poor second one: by the second visit the user has
+ * already told us which event they are on.
+ *
+ * AN IDENTIFIER IS STORED, NEVER THE EVENT. What goes in is the (event_code,
+ * edition) pair, and recall resolves it against the live list, so the object the
+ * page holds always comes from this session's fetch. Storing the row itself
+ * would be a second copy of server state going stale in the background —
+ * a delegate count that no longer matches, or an event that has since lost every
+ * booking and is no longer in the list at all. An identifier that resolves to
+ * nothing simply falls back, which is the correct behaviour for both.
+ *
+ * localStorage, in the CRM's own idiom: a namespaced key, and every access in a
+ * try/catch because storage throws outright in a locked-down browser rather than
+ * returning null. Same convention as the theme in AppShell and the per-table
+ * preferences in DataTable.
+ */
+const LAST_EVENT = 'iqhub_ped_event';
+
+export function rememberEvent(ev) {
+  if (!ev) return;
+  try {
+    window.localStorage.setItem(LAST_EVENT, JSON.stringify({
+      event_code: ev.event_code, edition: ev.edition ?? null,
+    }));
+  } catch { /* storage unavailable; the page just opens on the default */ }
+}
+
+/** The stored event, resolved against `list`, or null if it is not in it. */
+export function recallEvent(list) {
+  try {
+    const p = JSON.parse(window.localStorage.getItem(LAST_EVENT) || 'null');
+    if (!p) return null;
+    return (list || []).find(
+      (e) => e.event_code === p.event_code && (e.edition ?? null) === p.edition,
+    ) || null;
+  } catch {
+    return null;
+  }
+}
+
 export const eventLabel = (e) =>
   !e ? '' : [e.event_code, e.edition].filter(Boolean).join(' ') +
     (e.event_name ? ` — ${e.event_name}` : '');
+
+/**
+ * Every confirmed person's badge, one PDF each, in one ZIP.
+ *
+ * Replaces a JSON list of PNG data URIs that the page laid out as a printable
+ * sheet. The server renders and zips, so nothing is assembled in the browser
+ * and no grid is rendered before the export starts. Exporting twice produces
+ * byte-identical codes; minting is deterministic (backend/attendance/qr.py).
+ */
+export const downloadQrCodes = (eventCode, edition) =>
+  downloadFile('pre-event-docs/qr-codes/', {
+    params: { event_code: eventCode, ...(edition ? { edition } : {}) },
+  });

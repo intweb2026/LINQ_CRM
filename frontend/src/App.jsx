@@ -33,6 +33,7 @@ const EventsPage = lazy(() => import('./pages/EventsPage'));
 const PerformanceMatrixPage = lazy(() => import('./pages/PerformanceMatrixPage'));
 const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
 const PreEventDocsPage = lazy(() => import('./pages/PreEventDocsPage'));
+const AttendancePage = lazy(() => import('./pages/AttendancePage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
@@ -128,6 +129,12 @@ export default function App() {
                     badge run or a check-in sheet is a shareable link. */}
                 <Route path="pre-event-docs" element={<PreEventDocsPage />} />
                 <Route path="pre-event-docs/:tab" element={<PreEventDocsPage />} />
+                {/* NO tab in the URL here, unlike Pre-Event Docs above, and
+                    deliberately: one of this page's tabs turns on a camera, and
+                    a link that opens it would turn the camera on for whoever
+                    followed the link. The tab is component state and the page
+                    always opens on Attendance. See pages/AttendancePage.jsx. */}
+                <Route path="attendance" element={<AttendancePage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />
                 <Route path="teams" element={<TeamsManagementPage />} />

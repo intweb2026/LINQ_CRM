@@ -161,6 +161,10 @@ INSTALLED_APPS = [
     # it asks Google and then matches the email to an existing CRM user exactly
     # as GoogleTokenLoginView does. Sits after accounts for that FK.
     "mcp_auth",
+    # QR Attendance. The on-site door: one arrival row per person, sourced from
+    # the Pre-Event Docs check-in sheet. Reads book_delegate, events and
+    # pre_event_docs, owns one table of its own, so it sits after all three.
+    "attendance",
 ]
 
 MIDDLEWARE = [

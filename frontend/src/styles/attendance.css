@@ -1,0 +1,242 @@
+/* QR Attendance.
+ *
+ * ONE STYLESHEET, every selector prefixed .att-, and TOKENS ONLY — no hex
+ * anywhere below. The tokens in base.css are redefined wholesale for dark mode,
+ * so a literal colour here would be a control that works in one theme and
+ * disappears in the other.
+ *
+ * MOBILE FIRST, because this page is worked on a phone at a turnstile. Every
+ * pressable thing is at least 44px on its short edge; anything smaller is a
+ * mis-tap in a queue.
+ *
+ * The event picker's own styles are NOT here. It is Pre-Event Docs' component,
+ * so it keeps its .ped- classes and its stylesheet; duplicating them under an
+ * .att- prefix would be two copies of one control's appearance.
+ */
+
+.att-page { display: flex; flex-direction: column; gap: 14px; }
+
+/* The picker and the tabs stay put while a long roster scrolls under them. */
+.att-sticky {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 10px 0 6px;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--border);
+}
+
+.att-counts {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; color: var(--text-3);
+}
+.att-counts span {
+  padding: 5px 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-full);
+}
+.att-counts b { color: var(--text); font-size: 13px; }
+
+.att-quiet { padding: 22px 4px; color: var(--text-3); font-size: 13px; }
+
+/* ── the camera ──────────────────────────────────────────────────────────── */
+
+.att-scan { display: flex; flex-direction: column; gap: 12px; }
+
+/* THE PREVIEW IS NEVER CROPPED, and this used to be the bug.
+ *
+ * It was `object-fit: cover` on a box as wide as the page. cover scales the
+ * frame until it FILLS the box and throws away whatever hangs over the edge, so
+ * a 4:3 camera in a 1600px-wide panel had almost all of its height cut away and
+ * the preview read as an extreme zoom with no room around the badge.
+ *
+ * `height: auto` with `width: 100%` is the fix, and it means the element takes
+ * its own intrinsic aspect ratio: the whole sensor frame is shown, at its own
+ * shape, with no crop and no letterbox to align the reticle against. contain
+ * and the max-height only come into play for an unusually tall portrait stream,
+ * where showing all of it matters more than filling the box.
+ *
+ * max-width keeps it from spanning a desktop monitor, which is the other half
+ * of why it looked so magnified; a phone is narrower than this and still gets
+ * the full width. */
+.att-camera { position: relative; margin-inline: auto; width: 100%;
+  max-width: 560px; border-radius: var(--r-lg); overflow: hidden;
+  background: var(--n-900); line-height: 0; }
+.att-video { display: block; width: 100%; height: auto; max-height: 72vh;
+  object-fit: contain; }
+
+/* The frame handed to the JS decoder. Never displayed, and display:none would
+   stop the browser painting into it at all. */
+.att-frame-buffer { position: absolute; width: 1px; height: 1px;
+  opacity: 0; pointer-events: none; }
+
+/* Sized off the PREVIEW, not the viewport. It was `min(62vw, 260px)`, which
+ * stopped matching the picture the moment the preview stopped being as wide as
+ * the window. 62% of the box keeps the same generous margin around a badge at
+ * every width, and the aim target stays where the frame actually is. */
+.att-reticle {
+  position: absolute; inset: 50% auto auto 50%;
+  width: 62%; max-width: 300px; aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border: 3px solid var(--t-300); border-radius: var(--r-lg);
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 35%);
+}
+
+.att-camera-hint {
+  position: absolute; inset: auto 0 0 0;
+  margin: 0; padding: 8px 12px;
+  text-align: center; font-size: 12px; line-height: 1.4;
+  color: var(--n-0); background: rgb(0 0 0 / 45%);
+}
+
+/* The Scan tab with the camera released. Deliberately says so in as many words:
+   an operator has to be able to tell "off" from "broken" at a glance. */
+.att-camera-off {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 34px 18px; text-align: center;
+  color: var(--text-3);
+  background: var(--surface);
+  border: 1px dashed var(--border-s); border-radius: var(--r-lg);
+}
+.att-camera-off h4 { margin: 0; font-size: 15px; color: var(--text); }
+.att-camera-off p { margin: 0; max-width: 32em; font-size: 13px; }
+.att-camera-off .btn { min-height: 44px; min-width: 160px; margin-top: 4px; }
+
+.att-stop { align-self: center; min-height: 44px; min-width: 160px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+.att-camera-error {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 28px 18px; text-align: center;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+}
+.att-camera-error h4 { margin: 0; font-size: 15px; color: var(--text); }
+.att-camera-error p { margin: 0; max-width: 34em; font-size: 13px; }
+.att-camera-error .btn { min-height: 44px; margin-top: 4px; }
+
+/* ── the outcome card ────────────────────────────────────────────────────── */
+
+.att-result {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 5px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+/* Colour is never the only signal — each card carries its own icon and verdict
+   word as well. See ScanResult.jsx. */
+.att-ok   { border-left-color: var(--green); background: var(--green-bg); }
+.att-warn { border-left-color: var(--amber); background: var(--amber-bg); }
+.att-bad  { border-left-color: var(--red);   background: var(--red-bg); }
+.att-ok   .att-result-head { color: var(--green-tx); }
+.att-warn .att-result-head { color: var(--amber-tx); }
+.att-bad  .att-result-head { color: var(--red-tx); }
+
+.att-result-head { display: flex; align-items: center; gap: 9px; }
+.att-result-head strong { font-size: 17px; }
+.att-result-x {
+  min-width: 44px; min-height: 44px; margin-left: auto;
+  display: grid; place-items: center;
+  color: inherit; background: none; border: 0; cursor: pointer;
+}
+.att-result-who { display: flex; flex-direction: column; margin-top: 8px; }
+.att-result-who b { font-size: 15px; color: var(--text); }
+.att-result-who span { font-size: 12px; color: var(--text-3); }
+.att-result-body { margin: 8px 0 0; font-size: 13px; color: var(--text-2); }
+
+/* ── the roster and the manual search ───────────────────────────────────── */
+
+.att-roster, .att-manual { display: flex; flex-direction: column; gap: 12px; }
+
+.att-search {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  color: var(--text-4);
+}
+.att-search .in { flex: 1; min-height: 42px; border: 0; background: none; }
+.att-search-x { min-width: 44px; min-height: 44px; display: grid;
+  place-items: center; color: var(--text-4); background: none; border: 0;
+  cursor: pointer; }
+
+.att-list { display: flex; flex-direction: column; gap: 6px;
+  margin: 0; padding: 0; list-style: none; }
+
+.att-row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 56px; padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.att-row.att-in { background: var(--green-bg); border-color: var(--green); }
+.att-row-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.att-row-who b { font-size: 14px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-row-who span { font-size: 12px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-row-btn { min-height: 44px; min-width: 88px; }
+.att-row-in { display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; color: var(--green-tx); }
+
+.att-tag {
+  padding: 3px 8px; border-radius: var(--r-full);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.att-tag-delegate { color: var(--slate-tx); background: var(--slate-bg); }
+.att-tag-speaker  { color: var(--violet-tx); background: var(--violet-bg); }
+.att-tag-in       { color: var(--green-tx); background: var(--green-bg); }
+
+.att-manual-form { display: flex; flex-direction: column; gap: 10px; }
+.att-manual-form label { display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: var(--text-2); }
+.att-manual-form label i { color: var(--text-4); font-style: normal; }
+.att-manual-form .in { min-height: 44px; }
+.att-manual-form .btn { min-height: 44px; }
+
+.att-fallback { border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); }
+.att-fallback > summary { min-height: 44px; display: flex; align-items: center;
+  padding: 0 12px; font-size: 13px; font-weight: 600; color: var(--text-2);
+  cursor: pointer; }
+.att-fallback[open] > summary { border-bottom: 1px solid var(--border); }
+.att-fallback > .att-manual { padding: 12px; }
+
+.att-panel { padding: 14px;
+  background: var(--surface); border: 1px solid var(--border-s);
+  border-radius: var(--r-lg); box-shadow: var(--sh-sm); }
+.att-panel h4 { margin: 0 0 10px; font-size: 15px; color: var(--text); }
+.att-panel-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px;
+  margin: 0 0 14px; font-size: 13px; }
+.att-panel-dl dt { color: var(--text-3); }
+.att-panel-dl dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.att-panel-act { display: flex; gap: 8px; }
+.att-panel-act .btn { flex: 1; min-height: 44px; }
+
+/* ── the arrival log ─────────────────────────────────────────────────────── */
+
+.att-log { display: flex; flex-direction: column; gap: 10px; }
+
+/* The table scrolls inside its own box, so the page body never scrolls
+   sideways on a phone. */
+.att-tablewrap { overflow-x: auto; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-md); }
+.att-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.att-table th, .att-table td { padding: 9px 12px; text-align: left;
+  white-space: nowrap; border-bottom: 1px solid var(--border); }
+.att-table th { font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--text-3); background: var(--surface-2); }
+.att-table tbody tr:last-child td { border-bottom: 0; }
+.att-table td b { display: block; color: var(--text); }
+.att-sub { font-size: 11px; color: var(--text-4); }
+
+.att-pager { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 12px; color: var(--text-3); }
+.att-pager .btn { min-height: 44px; display: inline-flex; align-items: center;
+  gap: 4px; }
+
+@media (min-width: 720px) {
+  .att-manual-form { flex-direction: row; align-items: flex-end; }
+  .att-manual-form label { flex: 1; }
+}

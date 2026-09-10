@@ -70,11 +70,10 @@ export const NAV = [
     { id: 'tickets', l: 'Ticket Central', ic: 'ticket', mod: 'ticket_central', path: '/tickets', hasBadge: true },
     { id: 'paper_review', l: 'Paper Review', ic: 'sheet', mod: 'paper_review', path: '/paper-review' },
     { id: 'proposal_submission', l: 'Proposal Submission', ic: 'upload', mod: 'proposal_submission', path: '/proposal-submission' },
-    // Pre-Event Docs. Its own module, not a corner of `bookings`: the audience
-    // is whoever runs the badge table and the check-in desk, and the bookings
-    // grant carries create/update/delete over every delegate row in the CRM.
-    // See CRM_MODULES in backend/accounts/models.py and migration 0032.
+  ] },
+  { g: 'On-Site Support', items: [
     { id: 'pre_event_docs', l: 'Pre-Event Docs', ic: 'note', mod: 'pre_event_docs', path: '/pre-event-docs' },
+    { id: 'attendance', l: 'QR Attendance', ic: 'qr', mod: 'attendance', path: '/attendance' },
   ] },
   { g: 'Catalogue', items: [
     { id: 'events', l: 'Events', ic: 'calendar', mod: 'events', path: '/events', hasBadge: true },

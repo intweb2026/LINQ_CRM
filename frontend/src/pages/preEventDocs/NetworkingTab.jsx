@@ -129,7 +129,7 @@ export default function NetworkingTab({
             <Icon name="download" size={15} />Excel
           </button>
           <button className="btn btn-s" onClick={() => printElement(
-            printRef.current, fileName(label, 'networking'),
+            printRef.current, fileName(label, 'networking'), { landscape: true },
           )}>
             <Icon name="sheet" size={15} />PDF
           </button>
@@ -196,6 +196,10 @@ export default function NetworkingTab({
         ]}
       />
 
+      {/* The draw sits in the same .ped-report card the badge lists use, so
+          this tab reads as one more report on the page rather than a table
+          loose on the canvas. */}
+      <div className="ped-report">
       {look === 'cards' ? (
         <table className="ped-tbl wide">
           <thead>
@@ -240,6 +244,7 @@ export default function NetworkingTab({
           ))}
         </div>
       )}
+      </div>
 
       {/* Print target, carrying both views, because whoever prints wants the
           cards and the room layout on the same trip to the printer. */}
@@ -252,7 +257,10 @@ export default function NetworkingTab({
           <thead>
             <tr>
               <th>Name</th><th>Company</th>
-              {Array.from({ length: plan.rounds }, (_, i) => <th key={i}>R{i + 1}</th>)}
+              {/* Spelled out, as on screen. It was abbreviated to save width on
+                  paper, but the sheet has width to spare and the two headings
+                  had no reason to disagree. */}
+              {Array.from({ length: plan.rounds }, (_, i) => <th key={i}>Round {i + 1}</th>)}
             </tr>
           </thead>
           <tbody>

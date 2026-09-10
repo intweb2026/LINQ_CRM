@@ -78,10 +78,12 @@ export default function RunHistory({ runs, label, mayUndo, onUndo }) {
             <tr>
               <th />
               <th>Frozen</th>
-              <th>Badges</th>
+              {/* .num and .ta-r on the HEADER too, or the figures and the button
+                  sit right while their headings sit left. */}
+              <th className="num">Badges</th>
               <th>Changed since</th>
               <th>By</th>
-              <th />
+              <th className="ta-r" />
             </tr>
           </thead>
           <tbody>

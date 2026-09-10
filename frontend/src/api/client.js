@@ -413,14 +413,42 @@ export async function fetchAllIds(resource, { filterSpec, search, params } = {})
  * a navigation cannot carry, so the browser would arrive unauthenticated and be
  * bounced to the login page instead of downloading anything.
  */
-export async function downloadExport(resource, { filterSpec, search, params, filename } = {}) {
+export function downloadExport(resource, { filterSpec, search, params, filename } = {}) {
   const query = { ...(params || {}) };
   if (filterSpec) query.filter_spec = filterSpec;
   if (search) query.search = search;
+  return downloadFile(`${resource}/export/`, {
+    params: query,
+    filename: filename || `${String(resource).replace(/\//g, '-')}.xlsx`,
+  });
+}
 
+/**
+ * GET any endpoint that answers with a file, and save it.
+ *
+ * The generic half of downloadExport above, split out when a SECOND endpoint
+ * needed it: Pre-Event Docs exports its QR badges as a ZIP from
+ * `pre-event-docs/qr-codes/`, which is not a `{resource}/export/` path and has
+ * no filter spec. Everything below was worth having exactly once rather than
+ * twice -- three details in it are each a bug that has already shipped:
+ *
+ * NOT a plain <a href> or window.open, tempting as that is for a download. Auth
+ * here is an `Authorization: Token …` header (see the interceptor above), which
+ * a navigation cannot carry, so the browser would arrive unauthenticated and be
+ * bounced to the login page instead of downloading anything.
+ *
+ * The error BODY of a responseType:'blob' request is itself a Blob, so DRF's
+ * {"detail": "…"} reaches apiErrorMessage as an unreadable object and the user
+ * is told "Something went wrong" instead of the reason. It is read back into
+ * place before rethrowing.
+ *
+ * The object URL is revoked on the NEXT TICK, not immediately: Safari cancels a
+ * download whose URL is released in the same frame as the click.
+ */
+export async function downloadFile(path, { params, filename } = {}) {
   let res;
   try {
-    res = await http.get(`${resource}/export/`, { params: query, responseType: 'blob' });
+    res = await http.get(path, { params: params || {}, responseType: 'blob' });
   } catch (err) {
     // With responseType 'blob' the error BODY is a Blob too, so DRF's
     // {"detail": "Admin role required."} reaches apiErrorMessage as an unreadable
@@ -438,7 +466,7 @@ export async function downloadExport(resource, { filterSpec, search, params, fil
   // one place rather than guessed at each call site.
   const disposition = res.headers?.['content-disposition'] || '';
   const named = /filename="?([^";]+)"?/i.exec(disposition);
-  const name = named ? named[1] : (filename || `${String(resource).replace(/\//g, '-')}.xlsx`);
+  const name = named ? named[1] : (filename || 'download');
 
   const url = URL.createObjectURL(res.data);
   const a = document.createElement('a');
@@ -450,7 +478,7 @@ export async function downloadExport(resource, { filterSpec, search, params, fil
   // Revoked on the next tick, not immediately: Safari cancels a download whose
   // object URL is released in the same frame as the click.
   setTimeout(() => URL.revokeObjectURL(url), 0);
-  return name;
+  return { name, size: res.data?.size ?? 0, headers: res.headers || {} };
 }
 
 /**

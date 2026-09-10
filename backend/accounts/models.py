@@ -543,6 +543,20 @@ CRM_MODULES = [
     # bookings would be useless, because whoever works the desk works the whole
     # event.
     "pre_event_docs",
+    # QR Attendance. The on-site door, and its own module rather than a corner
+    # of pre_event_docs for one reason: the people holding a phone at a
+    # turnstile need exactly this and nothing else, and the Pre-Event Docs grant
+    # carries the badge log and the networking draw with it. Two cells of this
+    # one module are the whole role model here -- `view` reads the arrival log,
+    # `create` records an arrival -- so a supervisor can watch the door without
+    # being able to work it. Backfilled all-False by migration 0033, so nothing
+    # is visible until it is granted.
+    #
+    # NOT in SCOPED_MODULES, for the same reason pre_event_docs is not: the row
+    # scope here is per EVENT, not per owner, and attendance/access.py applies
+    # it from User.visible_event_codes() on every request regardless of the
+    # "All records" cell.
+    "attendance",
 ]
 
 # "all" is not a verb like the other four. The first four say whether a module

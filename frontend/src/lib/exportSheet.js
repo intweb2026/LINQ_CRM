@@ -126,20 +126,62 @@ export function toExcel(rows, cols, filename, sheetName = 'Sheet1', opts = {}) {
  * synchronous in some browsers and deferred in others, and removing it too early
  * prints a blank page in the deferred ones.
  */
-export function printElement(el, title) {
+/**
+ * `landscape` is per SHEET, not per module, and the split is on how many columns
+ * the sheet has rather than on taste.
+ *
+ * The Check-In Sheet has six columns, three of them boxes somebody writes into
+ * at the door, and Speed Networking has two text columns plus one per round. On
+ * portrait A4 the long values in those wrap, and a wrapped cell makes its row
+ * taller than the rest, which is what breaks the look of the printed page. The
+ * extra 87mm of a turned page absorbs the ones that occur in practice.
+ *
+ * IT REDUCES WRAPPING, IT DOES NOT ABOLISH IT. A long enough company name wraps
+ * at any width. The only way to guarantee equal rows is one line per cell, which
+ * means truncating, and a desk that cannot read the whole company name is worse
+ * off than a desk with one tall row. So this buys the common case and leaves the
+ * rare one alone, on purpose.
+ *
+ * Name Badges and Additional Name Badges stay portrait. Two and three narrow
+ * columns would leave half a turned page empty and cost a sheet of paper for it.
+ *
+ * @page cannot be scoped by a class, so the rule is injected for the duration of
+ * the print and taken out again by the cleanup that is already running.
+ */
+export function printElement(el, title, { landscape = false } = {}) {
   if (!el) return;
   const previousTitle = document.title;
+  // PAPER IS LIGHT. The theme tokens have a dark half, and the theme does not
+  // change just because a page is being printed, so a dark-mode user printed
+  // near-black column rules, a near-black header strip and colour-filled cells
+  // as dark blocks. Every one of those is a token doing exactly what it is told
+  // in the wrong medium. Forcing the light palette for the duration of the print
+  // fixes all of them at once, and is more honest than re-stating each colour as
+  // a literal inside the print stylesheet.
+  const previousTheme = document.documentElement.getAttribute('data-theme');
+  document.documentElement.setAttribute('data-theme', 'light');
   // The document title is what the browser puts in the PDF's filename and in
   // the page header, so this is the difference between a useful file name and
   // "LINQ CRM".
   if (title) document.title = title;
   el.classList.add('printing-now');
   document.body.classList.add('printing');
+  let page = null;
+  if (landscape) {
+    page = document.createElement('style');
+    // Margin narrows with the turn: the width is the reason for turning the
+    // page, so spending it back on the margin would be self-defeating.
+    page.textContent = '@page{size:A4 landscape;margin:12mm}';
+    document.head.appendChild(page);
+  }
 
   const cleanup = () => {
     el.classList.remove('printing-now');
     document.body.classList.remove('printing');
     document.title = previousTitle;
+    if (previousTheme === null) document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', previousTheme);
+    if (page) { page.remove(); page = null; }
     window.removeEventListener('afterprint', cleanup);
   };
   window.addEventListener('afterprint', cleanup);

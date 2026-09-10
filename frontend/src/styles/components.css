@@ -174,7 +174,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .pill-flat{background:var(--n-50);color:var(--text-4)}
 
 /* ═══ TABS ═══  [tabs] */
-.tabs{display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border);margin-bottom:15px}
+.tabs{display:flex;align-items:center;justify-content:space-between;gap:12px 18px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:15px}
 .tabs-list{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 .tabs-list::-webkit-scrollbar{display:none}
 .tab{padding:8px 13px;font-size:12.5px;font-weight:650;color:var(--text-3);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .13s;display:flex;align-items:center;gap:6px;letter-spacing:-.01em;background:none;border-left:none;border-right:none;border-top:none}
@@ -182,7 +182,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .tab.on{color:var(--t-600);border-bottom-color:var(--t-500)}
 .tab .c{font-size:10px;font-weight:700;padding:1.5px 6px;background:var(--n-75);border-radius:var(--r-full);color:var(--text-3);line-height:1.3}
 .tab.on .c{background:var(--t-50);color:var(--t-600)}
-.tabs-act{display:flex;align-items:center;gap:10px;padding-bottom:8px;flex-shrink:0}
+.tabs-act{display:flex;align-items:center;gap:10px;padding-bottom:8px;flex-shrink:0;margin-left:auto}
 .tabs-upd{font-size:11.5px;color:var(--text-4);white-space:nowrap}
 
 /* ═══ BADGES ═══  [badges_pills]
@@ -1030,8 +1030,10 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
 .ped-changes{display:flex;flex-direction:column;gap:30px}
 .ped-sec-h{display:flex;align-items:flex-start;justify-content:space-between;
   gap:16px;padding-bottom:9px;border-bottom:1px solid var(--border)}
-.ped-sec-h h3{margin:0 0 3px;font-size:13.5px;font-weight:650;color:var(--text)}
-.ped-sec-h p{margin:0;font-size:11.5px;color:var(--text-4);max-width:62ch}
+.ped-sec-h h3{margin:0 0 3px;font-size:13.5px;font-weight:650;color:var(--text);
+  letter-spacing:-.005em}
+.ped-sec-h p{margin:0;font-size:11.5px;line-height:1.5;color:var(--text-4);
+  max-width:62ch}
 
 /* ═══ Pre-Event Docs, badge run modal ═══  [pre_event_docs_badge_run]
    The consequence of the button is stated above it, because this modal is the
@@ -1057,12 +1059,19 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    .ped-quality is one sentence about the draw rather than a row of stat tiles.
    The only figures that change a decision are whether the draw is the best
    available and, when it is not, what would fix it. */
+/* Padded to --ped-pad, the same inset .ped-report gives its first column, so
+   the field labels here, the banner text below, and the Name column in the draw
+   all start on ONE vertical edge down the tab. They were at 14px against the
+   table's 18px, which is close enough to read as a mistake rather than a
+   margin. */
 .ped-draw-bar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;
-  margin-bottom:16px}
-.ped-draw-bar .fd.inline{gap:4px}
-.ped-draw-bar .fd.inline .in{width:82px}
-.ped-quality{display:flex;gap:10px;padding:11px 13px;margin-bottom:16px;
-  border-radius:var(--r-md);border:1px solid var(--border);background:var(--n-50);
+  margin-bottom:12px;padding:12px 18px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--sh-xs)}
+.ped-draw-bar .fd.inline{gap:5px}
+.ped-draw-bar .fd.inline .in{width:88px}
+.ped-quality{display:flex;gap:10px;padding:12px 18px;margin-bottom:12px;
+  border-radius:var(--r-lg);border:1px solid var(--border);background:var(--surface);
   font-size:12px;line-height:1.55;color:var(--text-2)}
 .ped-quality svg{flex-shrink:0;margin-top:2px}
 .ped-quality b{color:var(--text);font-weight:650}
@@ -1075,10 +1084,11 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
 .lnk-btn{background:none;border:none;padding:0;font:inherit;color:var(--t-600);
   text-decoration:underline;cursor:pointer}
 .lnk-btn:disabled{opacity:.5;cursor:default}
-.ped-net .seg{margin-bottom:14px}
-.ped-rooms{display:flex;flex-direction:column;gap:26px}
-.ped-rooms h4{margin:0 0 10px;font-size:12px;font-weight:700;
-  text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+.ped-net .seg{margin-bottom:12px}
+.ped-rooms{display:flex;flex-direction:column;gap:24px}
+.ped-rooms h4{margin:0 0 12px;padding-bottom:8px;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);
+  border-bottom:1px solid var(--border)}
 /* auto-fill, not auto-fit: a round with three tables should show three cards at
    their real width, not three stretched across the whole row. */
 .ped-room-grid{display:grid;
@@ -1110,8 +1120,35 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
   /* Everything outside the marked element goes, including the rail and the
      topbar, which are position:fixed and would otherwise print on every page. */
   body.printing .rail,body.printing .top,body.printing .tabs,
+  body.printing .ped-head,
   body.printing .modal-scrim,body.printing .tw,
-  body.printing .bulk{display:none!important}
+  body.printing .bulk,
+  /* The accessibility skip link. It hides at top:-60px rather than with
+     display:none, so a keyboard can still reach it, and it is position:fixed, so
+     the printer laid it onto the page the way it lays out any fixed element:
+     clamped into view, once per page, in the middle of the table. Off-screen is
+     not the same as absent, and print is the medium that finds out. */
+  body.printing .skip,
+  /* EVERY FIXED OVERLAY IS SCREEN FURNITURE. These were being added one at a
+     time as each was spotted on a printout, which is how the toast reached a
+     PDF: it had simply never been named. The list is now the complete set of
+     position:fixed roots in this stylesheet — the toast stack, the scrim, the
+     drawer, the command palette and the event picker — minus the only two that
+     may not go, #main, which is the scroll container, and .mw, which the badge
+     run modal prints its sheet through and which is made static just below.
+     Anything new that pins itself to the viewport belongs on this line. */
+  body.printing .tst,body.printing .scrim,body.printing .dr,
+  body.printing .plw,body.printing .ped-ev-pop{display:none!important}
+  /* THE DRAW PRINTS ONCE. Speed Networking is the one tab whose print target is
+     a SEPARATE block, .ped-print, because paper wants the table cards and the
+     room layout on the same trip and the room layout cannot go as a grid of 29
+     cards. The report tabs print the element they already show, so hiding the
+     chrome was enough for them; here the screen copy sat beside the print copy
+     and both went to the printer. Everything in the tab that is not the print
+     target stands down: the draw controls, the quality banner, the view toggle
+     and the on-screen card. Written against .printing-now rather than listing
+     the four of them, so a block added to this tab later is covered too. */
+  body.printing .ped-net > *:not(.printing-now){display:none!important}
   body.printing #main{margin:0!important;padding:0!important;
     overflow:visible!important}
   body.printing .mw,body.printing .md{position:static!important;inset:auto!important;
@@ -1121,15 +1158,49 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
   body.printing .ped-run-warn{display:none!important}
   .printing-now{display:block!important;overflow:visible!important;
     max-height:none!important;border:none!important;background:#fff!important;
-    padding:0!important;color:#000!important}
+    padding:0!important;color:#000!important;
+    /* WITHOUT THIS THE BADGES PRINT AS BARE WORDS. Browsers drop background
+       colours from print by default, to save the toner nobody asked them to
+       spend, so the booking-code blocks and the payment pill lost their fill
+       and the sheet on paper stopped matching the sheet on screen. The colour
+       IS the information here: it is how the desk picks a sponsor out of a
+       column of speakers at a glance. */
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .printing-now .ped-report{padding:0;border:none;box-shadow:none;
+    background:none;overflow:visible}
+  .printing-now .ped-report>.ped-sheet-h{display:block;margin:0;padding:0 0 8px}
+  .printing-now .ped-report .ped-tbl th:first-child,
+  .printing-now .ped-report .ped-tbl td:first-child{padding-left:0}
+  .printing-now .ped-report .ped-tbl th:last-child,
+  .printing-now .ped-report .ped-tbl td:last-child{padding-right:0}
+  /* The tinted strip prints too, so the sheet reads the way the screen does.
+     A literal grey rather than --surface-2, which is near-black under the dark
+     theme, and the theme does not switch just because the page is printing. */
+  .printing-now .ped-report .ped-tbl thead th{background:#F2F4F7;
+    padding:4px 12px}
+  .printing-now .ped-report .ped-tbl td{padding:5px 12px}
+  .printing-now .ped-runs,.printing-now .ped-cancel{padding-top:14px}
+  .printing-now .ped-runs>.ped-sec-h,
+  .printing-now .ped-cancel>.ped-sec-h{padding-left:0;padding-right:0}
   .printing-now .ped-tbl th{color:#000;border-bottom:1px solid #000}
-  .printing-now .ped-tbl td{color:#000;border-bottom:1px solid #ccc}
+  .printing-now .ped-tbl td:not(.ped-fill){color:#000}
+  .printing-now .ped-tbl td{border-bottom:1px solid #ccc}
+  /* --n-75 is a dark hex under the dark theme, and the theme does not change
+     because the page is being printed, so the grid is set in ink here. */
+  .printing-now .ped-report .ped-tbl th:not(:last-child),
+  .printing-now .ped-report .ped-tbl td:not(:last-child){
+    border-right:1px solid #ddd}
   /* A row split across a page break is a badge somebody misreads. */
   .printing-now tr{break-inside:avoid}
   .printing-now thead{display:table-header-group}
   .printing-now .ped-sheet-h h3{font-size:15px}
   .ped-print-room{break-inside:avoid;margin-top:14px}
   .ped-print-room p{margin:0 0 5px;font-size:11px;line-height:1.5}
+  /* A QR badge split down the middle by a page break is a badge that will not
+     scan, so the whole card is kept together. Fixed 4 across rather than the
+     screen's auto-fill: a print column count derived from a viewport width is
+     whatever the window happened to be, and these have to come out at a
+     predictable size to be cut up. */
   @page{margin:14mm}
 }
 
@@ -1145,23 +1216,127 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
   font-weight:600}
 
 /* ═══ Pre-Event Docs, report density ═══  [pre_event_docs_density]
-   COMPACT ON PURPOSE. These are reports somebody reads down a column of, on
-   screen and on paper, so vertical rhythm matters more than breathing room:
-   row padding is 5px rather than the 8px the shared table uses, the header sits
-   tight to the first row, and the page header above the table is one line and a
-   subtitle instead of a block. A denser sheet also means fewer printed pages,
-   which is the actual deliverable. */
-.ped-report{display:flex;flex-direction:column;gap:10px}
-.ped-report .ped-sheet-h h3{margin:0;font-size:13px;font-weight:650;
+   ONE CARD PER REPORT, AND THE SAME CARD ON ALL FOUR TABS. Every report used to
+   sit as a bare table on the grey canvas with its own ad-hoc header size, so
+   the four tabs read as four layouts, and the zebra rows, being near-white on a
+   grey ground, had nothing to be lighter than. The card IS the module: a white
+   surface, a header strip full bleed to its edges, and every block below it set
+   off by a rule at the same inset. NetworkingTab wraps its draw in the same
+   class, which is what makes Speed Networking belong to the page.
+
+   STILL COMPACT ON PURPOSE. These are reports somebody reads down a column of,
+   on screen and on paper, so vertical rhythm matters more than breathing room,
+   and a denser sheet means fewer printed pages, which is the deliverable. */
+.ped-report{--ped-pad:18px;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);box-shadow:var(--sh-xs);padding:0;overflow:hidden}
+/* THE CARD HAS NO HORIZONTAL PADDING and the CELLS carry the inset instead, so
+   the header strip and every row rule run edge to edge while their text still
+   lines up on one left margin. Padding on the card cannot do both: it stops the
+   rules a gutter short of the border, which is what made the old sheet read as a
+   table floating inside a box rather than a table that IS the box. overflow
+   clips the tinted strip into the card's top corners. */
+.ped-report .ped-tbl th:first-child,
+.ped-report .ped-tbl td:first-child{padding-left:var(--ped-pad)}
+.ped-report .ped-tbl th:last-child,
+.ped-report .ped-tbl td:last-child{padding-right:var(--ped-pad)}
+/* The column headers are a tinted strip, which is what separates them from the
+   rows. It also replaces the zebra: banded rows and a plain header were doing
+   the same job twice and neither was doing it well on a grey canvas. */
+/* THE HEADING OUTRANKS THE ROW. The shared table sets column headings at 10px
+   against 12.5px content, which is the usual listing-table proportion: there the
+   heading is a label you read once and the rows are the subject. A report is
+   read the other way round. Somebody works down these sheets a column at a time
+   and needs to know which column they are in from across a desk, so the heading
+   is the larger of the two here.
+
+   11.5px, and the number is a judgement about CAPS rather than about points.
+   These headings are uppercase, so their cap height fills the line where the
+   12.5px content only reaches x-height; at a literally larger 13px they read a
+   size and a half above the rows and took over the sheet. Just under the content
+   size, set in caps, lands slightly above it to the eye, which is the proportion
+   asked for. Family, weight, colour and tracking are untouched. */
+.ped-report .ped-tbl thead th{padding:6px 12px;font-size:11.5px;
+  letter-spacing:.04em;background:var(--surface-2);
+  border-bottom:1px solid var(--border);color:var(--text-3)}
+/* MIDDLE, NOT TOP, and this is the alignment fault that showed on every tab at
+   once. The shared table aligns cells to the top, which is right for a cell that
+   wraps to several lines and wrong for these reports, where a row mixes plain
+   text with a .tg tag. A tag is an inline-block with its own padding, so against
+   top-aligned text it sits a couple of pixels high, and every row carrying one
+   read as slightly out of line: Remarks on Additional Name Badges, Reason on
+   Cancellations, Payment Status on the Check-In Sheet, Changed since on the
+   frozen runs. Middle puts the text and the tag on one line through all of
+   them. */
+.ped-report .ped-tbl td{padding:5px 12px;vertical-align:middle}
+/* A LIGHT GRID. Vertical rules in --n-75, which is one step lighter than the
+   --border the rows already use, so the columns read as separated while the row
+   remains the stronger line; a grid of equal weight in both directions turns a
+   170-row sheet into a wall. The last column has no rule because the card's own
+   border closes it. This replaces the hand-placed border-left rules the Check-In
+   Sheet carried on its write-in columns, which drew a grid on part of one table
+   and nothing anywhere else. */
+.ped-report .ped-tbl th:not(:last-child),
+.ped-report .ped-tbl td:not(:last-child){border-right:1px solid var(--n-75)}
+/* A filled cell carries the tint from its .bg-* tone class; this only adds the
+   weight, and stops the row hover repainting a cell that is making a point with
+   its colour. */
+.ped-report .ped-tbl td.ped-fill{font-weight:650}
+.ped-report .ped-tbl tbody tr:hover td.ped-fill{background:inherit}
+.ped-report .ped-tbl tbody tr:hover{background:var(--surface-2)}
+/* The name is what somebody is looking for and the company is how the list is
+   ordered, so the first column carries the weight and the second recedes. */
+.ped-report .ped-tbl tbody td:first-child{font-weight:600;color:var(--text)}
+.ped-report .ped-tbl tbody td:nth-child(2){color:var(--text-2)}
+/* .num and .ta-r are COLUMN classes, carried by the th as well as the td, so a
+   right-aligned column gets a right-aligned heading. Marking only the cells left
+   every figure sitting under a heading flush to the other edge. */
+.ped-report .ped-tbl .num,.ped-report .ped-tbl .ta-r{text-align:right}
+.ped-report .ped-tbl .num{font-variant-numeric:tabular-nums}
+.ped-report>.ped-tbl.wide{margin-top:0}
+/* A CLEAN HALF EACH for the two-column reports. Left to itself the browser
+   gives Full Name only the width of its longest name and hands every spare
+   pixel to Company, so the two columns of the same list came out at roughly a
+   third and two thirds. Rows stay one line at this width, which is what keeps
+   their heights identical. */
+.ped-split th{width:50%}
+.ped-report>.ped-none{padding:14px var(--ped-pad)}
+.ped-report>.ped-rooms{padding:14px var(--ped-pad)}
+/* THE SHEET HEADER IS PAPER ONLY NOW. The page header above the tabs states the
+   event and the report on screen, so leaving this visible printed the same two
+   facts twice, one under the other. The printed sheet still needs its own title
+   band, because nothing else goes on the page with it. */
+.ped-report>.ped-sheet-h{display:none}
+.ped-report .ped-sheet-h h3{margin:0;font-size:13.5px;font-weight:650;
   color:var(--text);letter-spacing:-.005em}
-.ped-report .ped-sheet-h p{margin:2px 0 0;font-size:11px;color:var(--text-4)}
-.ped-report .ped-tbl td{padding:5px 12px 5px 0}
-.ped-report .ped-tbl th{padding:0 12px 5px 0}
-.ped-report .ped-none{padding:12px 0}
-/* Zebra, because a two-column report of 75 rows is otherwise hard to track
-   across; it costs no vertical space, which extra padding would. */
-.ped-report .ped-tbl tbody tr:nth-child(even){background:var(--surface-2)}
-.ped-runs{margin-top:16px;padding-top:4px}
+.ped-report .ped-sheet-h p{margin:3px 0 0;font-size:11.5px;color:var(--text-4)}
+/* Whatever follows the report is a section of the same card: cancellations
+   under the badge list, the frozen runs under the change list. The section pads
+   its own header and empty state; its table keeps the card's cell inset, so the
+   rules stay edge to edge like the report's above it. */
+.ped-runs,.ped-cancel{margin:0;padding:15px 0 0;
+  border-top:1px solid var(--border)}
+.ped-runs>.ped-sec-h,.ped-cancel>.ped-sec-h{padding:0 var(--ped-pad) 10px}
+.ped-runs>.ped-none,.ped-cancel>.ped-none{padding:2px var(--ped-pad) 14px}
+/* The tinted strip under it does the separating. */
+.ped-report .ped-sec-h{border-bottom:none}
+/* A wide report scrolls sideways where it genuinely cannot fit. */
+@media (max-width:900px){.ped-report{overflow-x:auto}}
+
+/* ═══ Pre-Event Docs, page header ═══  [pre_event_docs_head]
+   THE EVENT IS NAMED ONCE, ABOVE THE TABS, with the report and its count on the
+   line under it and the actions on the same baseline as the title. Before this
+   the event picker and four buttons rode in the tab strip's action slot while
+   the event NAME sat inside the card below, so the heaviest control on the page
+   was crammed beside the tabs and the title it belonged to was somewhere else.
+   Hidden in print by the body.printing block; the sheet carries its own. */
+.ped-head{display:flex;align-items:flex-start;justify-content:space-between;
+  gap:12px 20px;flex-wrap:wrap;margin-bottom:14px}
+.ped-head h2{margin:0;font-size:19px;font-weight:700;letter-spacing:-.025em;
+  color:var(--text);line-height:1.2}
+.ped-head p{margin:5px 0 0;font-size:12px;color:var(--text-4)}
+.ped-head .ph-act{margin-left:auto;padding:0;flex-wrap:wrap;
+  justify-content:flex-end}
 
 /* ═══ Pre-Event Docs, Check-In Sheet ═══  [pre_event_docs_checkin]
    THE TWO-ROW HEADER. Upcoming Events spans the three event columns and their
@@ -1169,14 +1344,50 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    them are empty by design: the desk marks which upcoming event a delegate
    wants, so they are boxes to write in rather than data. Same for IN?, which is
    deliberately unwired. */
-.ped-checkin th{vertical-align:bottom}
-.ped-checkin .ped-grp{text-align:center;border-bottom:1px solid var(--border);
-  padding-bottom:4px;color:var(--text-3)}
-.ped-checkin .ped-sub{text-align:center;font-size:9.5px;padding-top:4px;
+/* THE FIVE PLAIN HEADINGS CENTRE THEMSELVES ACROSS BOTH ROWS. They span the
+   header with rowSpan=2, and sitting them on the bottom edge left Full Name
+   through Payment Status lined up with the event codes UNDER Upcoming Events
+   rather than with Upcoming Events itself, so the header read as one row of
+   labels with a stray band floating above it. Centred, every heading sits on the
+   same axis as the group it stands beside, which is what makes the two rows read
+   as one header. Upcoming Events keeps its own centring over the three columns
+   it covers. */
+.ped-checkin th{vertical-align:middle}
+/* THE TWO TEXT COLUMNS ARE SIZED, THE REST SHARE WHAT IS LEFT. This sheet has
+   six columns and three of them are blank by design, IN?, Payment Status for a
+   paid delegate, and the write-in boxes, so there is always width to give away.
+   Left to itself the browser gave all of it to Company; at 50% each the two
+   text columns simply held the gap between themselves instead. Holding them to
+   a fifth apiece puts Full Name and Company side by side, where the sheet reads,
+   and lets Booking Code, Payment Status and Upcoming Events spread into the rest,
+   which is the proportion the reference sheets show.
+
+   NOT table-layout:fixed. That hard-codes a shape the content does not have, so
+   short company names leave the same gap and long booking codes wrap for no
+   reason.
+
+   Set on the FIRST header row only. Row two is the event codes under the
+   Upcoming Events group and its cells are nth-child 1 and 2 of their own row,
+   so an unscoped nth-child sizes the sheet off the wrong cells. */
+.ped-checkin thead tr:first-child th:nth-child(1){width:18%}
+.ped-checkin thead tr:first-child th:nth-child(2){width:20%}
+.ped-checkin thead tr:first-child th:nth-child(4){width:14%}
+.ped-checkin thead tr:first-child th:nth-child(5){width:16%}
+.ped-checkin thead .ped-grp{padding:8px 12px 3px;text-align:center;
+  border-bottom:1px solid var(--border);color:var(--text-3)}
+/* The placeholder wraps inside its column instead of setting the column's
+   width. It is a note about the Events module, not a heading to lay a sheet
+   out around. */
+.ped-checkin thead .ped-sub{padding:0 12px 8px;text-align:center;font-size:10px;
   color:var(--text-4);font-weight:650;letter-spacing:.04em;
-  border-left:1px solid var(--border)}
-.ped-checkin .w-in,.ped-checkin .ped-up{width:44px;text-align:center;
-  border-left:1px solid var(--border)}
+  white-space:normal;line-height:1.35}
+.ped-checkin .w-in,.ped-checkin .ped-up{width:52px;text-align:center}
+/* A NATIVE CHECKBOX, coloured with accent-color. It carries its own tick, its
+   own focus ring and its own high-contrast rendering, and it prints as a square
+   box on every browser, which a styled <span> does not. --green rather than the
+   teal accent because a tick here means arrived, not selected. */
+.ped-in{width:15px;height:15px;margin:0;accent-color:var(--green);
+  pointer-events:none}
 /* An empty cell has to LOOK writable on paper, or the desk cannot tell a box
    from a gap. On screen it stays quiet. */
 .ped-checkin tbody .w-in,.ped-checkin tbody .ped-up{background:var(--n-50)}
@@ -1186,8 +1397,10 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    a code, a name, a place and a date to be identified, which is four facts a
    one-line <option> cannot carry. The trigger shows the current event in full
    and opens a searchable overlay of cards. */
+/* 34px, the height of .btn, because the picker sits in the same action row and
+   a taller trigger tilted the whole tab bar off the buttons beside it. */
 .ped-ev-trigger{display:flex;align-items:center;gap:10px;min-width:0;
-  max-width:420px;padding:5px 10px;background:var(--surface-2);
+  height:34px;max-width:420px;padding:0 10px;background:var(--surface-2);
   border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer;
   text-align:left;color:var(--text)}
 .ped-ev-trigger:hover{border-color:var(--t-600);background:var(--n-50)}
@@ -1197,10 +1410,10 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
   border-radius:var(--r-sm);background:var(--t-100,var(--n-50));
   color:var(--t-700,var(--text));white-space:nowrap}
 .ped-ev-meta{display:flex;flex-direction:column;gap:1px;min-width:0}
-.ped-ev-meta b{font-size:12px;font-weight:600;overflow:hidden;
+.ped-ev-meta b{font-size:12px;font-weight:600;line-height:1.25;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
-.ped-ev-meta span{font-size:10.5px;color:var(--text-4);overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
+.ped-ev-meta span{font-size:10.5px;line-height:1.25;color:var(--text-4);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* z-index 110, the level .mw uses for a modal. It was 60, BELOW .modal-scrim at
    90, so the scrim covered the overlay, blurred it through its backdrop-filter
@@ -1239,14 +1452,31 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    draw it was 510 redundant words competing with the number somebody is
    actually reading off the sheet. The number is what matters, so it is larger
    and tabular. */
-.ped-round{font-size:15px;font-weight:650;color:var(--text);
-  font-variant-numeric:tabular-nums;text-align:center;width:66px}
+.ped-round{font-size:15px;font-weight:650;color:var(--t-600);
+  font-variant-numeric:tabular-nums;text-align:center}
+/* EVERY COLUMN TAKES A SHARE. The rounds were pinned at 66px each, which left
+   the whole surplus to the two text columns and pooled it as a gap before Round
+   1. Name, Company and a round apiece now divide the row, in the proportion the
+   reference draw shows: the company is the longest string on the line, so it
+   takes the most, and the rounds are equal to each other because they hold the
+   same kind of value. Three rounds fill the row exactly; more of them scale
+   down together, which is the right way for that to give. The draw has one
+   header row, so this needs no first-row scoping. */
+.ped-net .ped-tbl th:nth-child(1){width:24%}
+.ped-net .ped-tbl th:nth-child(2){width:34%}
+.ped-net .ped-tbl th:nth-child(n+3){width:14%}
+/* Heading and number on the same axis, centred. What made this table look
+   untidy was never the axis itself, it was the two disagreeing: centred numbers
+   under left-aligned headings read as two columns slightly out of step. Name and
+   Company are the first two, so everything from the third on is a round. */
+.ped-net .ped-tbl th:nth-child(n+3),
+.ped-net .ped-tbl td:nth-child(n+3){text-align:center}
 @media print{
   .ped-round{font-size:14px;font-weight:700;color:#000}
   .ped-checkin tbody .w-in,.ped-checkin tbody .ped-up{background:none;
     border:1px solid #bbb}
+  .printing-now .ped-in{display:none}
   .ped-checkin .ped-grp,.ped-checkin .ped-sub{color:#000}
-  .ped-report .ped-tbl tbody tr:nth-child(even){background:none}
 }
 
 /* ═══ Pre-Event Docs, frozen runs ═══  [pre_event_docs_frozen_runs]
@@ -1271,8 +1501,8 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
 .ped-run-bar span{font-size:11px;color:var(--text-4)}
 /* The nested header is quieter than the outer one, so the eye reads the run row
    as the parent and these as its contents. */
-.ped-run-d .ped-tbl th{font-size:9.5px;color:var(--text-4)}
-.ped-run-d .ped-tbl td{padding:4px 12px 4px 0;font-size:12px}
+.ped-run-d .ped-tbl th{font-size:10.5px;color:var(--text-4)}
+.ped-run-d .ped-tbl td{padding:4px 12px;font-size:12px}
 @media print{
   /* A frozen snapshot prints as the plain comparison it is. */
   .ped-run-t,.ped-run-x{display:none}
@@ -1286,5 +1516,5 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
    TABLE: somebody walks along it pulling cards off. A rule above it separates
    the two lists without a card, which would read as a different kind of object
    on a page whose every other block is a plain table. */
-.ped-cancel{margin-top:22px;padding-top:4px;border-top:2px solid var(--border)}
+.ped-cancel .ped-sec-h{border-bottom-color:var(--border)}
 .ped-cancel .ped-sec-h h3{color:var(--red)}
