@@ -2,6 +2,7 @@
 @import './styles/components.css';
 @import './styles/overlays.css';
 @import './styles/entrygrid.css';
+@import './styles/attendance.css';
 
 /* ═════════════════════════════════════════════════════════════════════════════
    CSS MAP — where to find the rule you want to change

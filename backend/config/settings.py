@@ -319,6 +319,13 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
+        # MCP access tokens, presented as "Authorization: Bearer <token>". It
+        # resolves to a real User, so RBAC, scoping and audit all behave as
+        # though that person made the request; that is why it belongs here and
+        # dataapi's key emphatically does not. LAST ON PURPOSE, DRF takes the
+        # WWW-Authenticate header from the first entry, so appending leaves the
+        # existing 401s answering "Token" exactly as before.
+        "mcp_auth.authentication.McpTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -594,6 +601,16 @@ GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
 MCP_PUBLIC_URL = config(
     "LINQ_MCP_PUBLIC_URL", default="https://www.app.iq-hub.com",
 ).rstrip("/")
+# Where the MCP tools reach the CRM's own API from inside the process. Left
+# empty they call back to this container on PORT, which is what the platform
+# already sets, 3000 on Coolify and 8000 for runserver. Set it only to point
+# the tools somewhere other than the app they are running in.
+#
+# LOOPBACK RATHER THAN MCP_PUBLIC_URL ON PURPOSE. Defaulting to the public
+# address would mean a developer running this locally drives production without
+# noticing.
+MCP_INTERNAL_API_URL = config("LINQ_API_URL", default="")
+MCP_INTERNAL_PORT = config("PORT", default="8000")
 # Only these email domains may sign in. Emptying the list disables the check.
 GOOGLE_OAUTH_ALLOWED_DOMAINS = [
     d.strip().lower()

@@ -3,9 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Tabs, EmptyState } from '../components/UI';
 import { useFetch } from '../hooks/useFetch';
 import { useSession } from '../context/SessionContext';
+import { apiErrorMessage } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
 import { Icon } from '../lib/icons';
+import { bookingCodeTone } from '../lib/constants';
 import { toExcel, printElement, fileName, sheetTitle } from '../lib/exportSheet';
 import * as pedApi from '../api/preEventDocs';
 import BadgeRunModal from './preEventDocs/BadgeRunModal';
@@ -67,6 +69,9 @@ export default function PreEventDocsPage() {
 
   const [ev, setEv] = useState(null);
   const [runMode, setRunMode] = useState(null);
+  // A download, not a mode: the printable sheet it used to open is gone, so
+  // there is no view to lay out. Its own flag so it cannot disable logRun.
+  const [qrBusy, setQrBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const printRef = useRef(null);
 
@@ -75,13 +80,24 @@ export default function PreEventDocsPage() {
 
   const events = useFetch(pedApi.events, []);
 
-  // Opens on the event with the most delegates, which is the one somebody
-  // arriving here is almost always working on. Once only, and only until the
-  // user picks for themselves.
+  // Opens on the event this user last worked on, and on the one with the most
+  // delegates only when there is no such event — a first visit, or a stored
+  // event that has since dropped off the list. Once only, and only until the
+  // user picks for themselves. `ev` stays the single source of truth; storage
+  // holds an identifier for it, never a copy. See api/preEventDocs.js.
   useEffect(() => {
     if (ev || !events.data?.length) return;
-    setEv(events.data.reduce((a, b) => (b.delegates > a.delegates ? b : a)));
+    setEv(pedApi.recallEvent(events.data)
+      || events.data.reduce((a, b) => (b.delegates > a.delegates ? b : a)));
   }, [events.data, ev]);
+
+  // Every pick is a statement about what this user is working on, so it is the
+  // one place that writes. The tabs all read the same `ev`, so the choice
+  // follows across them without any of them knowing about storage.
+  function pickEvent(next) {
+    setEv(next);
+    pedApi.rememberEvent(next);
+  }
 
   const docs = useFetch(
     () => (ev ? pedApi.docs(ev.event_code, ev.edition) : Promise.resolve(null)),
@@ -130,6 +146,22 @@ export default function PreEventDocsPage() {
     };
   }, [d, tab]);
 
+  // WHAT THE REPORT IS, in one line: its name, how many rows, and the one note
+  // that changes what somebody does next. Rendered twice on purpose, in the page
+  // header for the screen and inside the card for the printed sheet, which
+  // carries no page header of its own.
+  const meta = tab === 'networking' ? networkingMeta(d?.networking) : !report ? null : (
+    <>
+      {report.title}
+      {' · '}
+      {report.rows.length}
+      {tab === 'additional' && !d.runs?.length ? ' · nothing frozen yet' : null}
+      {tab === 'additional' && d.runs?.length && d.change_deadline
+        ? ` · action by ${new Date(d.change_deadline).toLocaleDateString()}, ${d.change_window_days} days before the event`
+        : null}
+    </>
+  );
+
   function exportList(kind) {
     if (!report?.rows?.length) return;
     const name = fileName(label, report.title);
@@ -140,7 +172,25 @@ export default function PreEventDocsPage() {
         title: sheetTitle(label, report.title),
         section: report.section,
       });
-    } else printElement(printRef.current, name);
+      // Six columns, three of them written into by hand. The two badge lists
+      // beside it are two and three narrow columns and stay portrait.
+    } else printElement(printRef.current, name, { landscape: tab === 'check-in' });
+  }
+
+  // The count comes from the response header, not d.check_in: somebody may have
+  // been paid or cancelled since the page loaded, and the number reported has to
+  // be the number of PDFs actually in the file.
+  async function exportQrCodes() {
+    setQrBusy(true);
+    try {
+      const res = await pedApi.downloadQrCodes(ev.event_code, ev.edition);
+      const n = Number(res.headers['x-badge-count']) || 0;
+      toast(`${n} ${n === 1 ? 'badge' : 'badges'} exported to ${res.name}`, 'ok');
+    } catch (e) {
+      toast(apiErrorMessage(e, 'Could not build the QR codes.'), 'err');
+    } finally {
+      setQrBusy(false);
+    }
   }
 
   async function logRun(rows) {
@@ -189,37 +239,53 @@ export default function PreEventDocsPage() {
 
   return (
     <>
+      {/* The event is named once, here, with the report under it and the
+          controls on its baseline. The tab strip carried these in its action
+          slot before, which put the page's heaviest control beside the tabs and
+          left the event name to the card below. */}
+      <div className="ped-head">
+        <div>
+          <h2>{label}</h2>
+          <p>{meta}</p>
+        </div>
+        <div className="ph-act">
+          <EventPicker events={events.data} value={ev} onPick={pickEvent} />
+          {printable ? (
+            <>
+              <button className="btn btn-s" onClick={() => exportList('excel')}>
+                <Icon name="download" size={15} />Excel
+              </button>
+              <button className="btn btn-s" onClick={() => exportList('print')}>
+                <Icon name="sheet" size={15} />PDF
+              </button>
+            </>
+          ) : null}
+          {tab === 'check-in' && d?.check_in?.length ? (
+            <button className="btn btn-p" onClick={exportQrCodes} disabled={qrBusy}
+              title="One PDF per confirmed person, in a single ZIP. Regenerating produces the same codes.">
+              <Icon name="qr" size={15} />
+              {qrBusy ? 'Building ZIP…' : 'Generate QR Codes'}
+            </button>
+          ) : null}
+          {tab === '' && mayRun && d?.name_badges?.length ? (
+            <button className="btn btn-p" onClick={() => setRunMode('full')} title="Exports the list and freezes it as sent, so later changes show as corrections">
+              <Icon name="send" size={15} />Freeze &amp; print
+            </button>
+          ) : null}
+          {/* `Remove` was a remark once, and this used to exclude it. It is a
+              cancellation now, so every row on this tab is a badge to run. */}
+          {tab === 'additional' && mayRun && d?.additional?.length ? (
+              <button className="btn btn-p" onClick={() => setRunMode('additional')} title="Exports the corrections and freezes them as sent">
+                <Icon name="send" size={15} />Freeze &amp; print
+              </button>
+            ) : null}
+        </div>
+      </div>
+
       <Tabs
         list={TABS(d)}
         active={tab}
         onPick={(id) => nav('/pre-event-docs' + (id ? '/' + id : ''))}
-        actions={
-          <div className="ph-act">
-            <EventPicker events={events.data} value={ev} onPick={setEv} />
-            {printable ? (
-              <>
-                <button className="btn btn-s" onClick={() => exportList('excel')}>
-                  <Icon name="download" size={15} />Excel
-                </button>
-                <button className="btn btn-s" onClick={() => exportList('print')}>
-                  <Icon name="sheet" size={15} />PDF
-                </button>
-              </>
-            ) : null}
-            {tab === '' && mayRun && d?.name_badges?.length ? (
-              <button className="btn btn-p" onClick={() => setRunMode('full')} title="Exports the list and freezes it as sent, so later changes show as corrections">
-                <Icon name="send" size={15} />Freeze &amp; print
-              </button>
-            ) : null}
-            {/* `Remove` was a remark once, and this used to exclude it. It is a
-                cancellation now, so every row on this tab is a badge to run. */}
-            {tab === 'additional' && mayRun && d?.additional?.length ? (
-                <button className="btn btn-p" onClick={() => setRunMode('additional')} title="Exports the corrections and freezes them as sent">
-                  <Icon name="send" size={15} />Freeze &amp; print
-                </button>
-              ) : null}
-          </div>
-        }
       />
 
       {tab === 'networking' ? (
@@ -236,17 +302,7 @@ export default function PreEventDocsPage() {
         <div className="ped-report" ref={printRef}>
           <div className="ped-sheet-h">
             <h3>{label}</h3>
-            <p>
-              {report.title}
-              {' · '}
-              {report.rows.length}
-              {tab === 'additional' && !d.runs?.length
-                ? ' · nothing frozen yet'
-                : null}
-              {tab === 'additional' && d.runs?.length && d.change_deadline
-                ? ` · action by ${new Date(d.change_deadline).toLocaleDateString()}, ${d.change_window_days} days before the event`
-                : null}
-            </p>
+            <p>{meta}</p>
           </div>
 
           {tab === 'check-in'
@@ -284,6 +340,30 @@ export default function PreEventDocsPage() {
 }
 
 /**
+ * Speed Networking has no row count to report, so its subtitle reports the draw:
+ * the head count, the room, and how many rounds. Before a draw exists there is
+ * nothing to say but the name of the tab.
+ */
+function networkingMeta(plan) {
+  if (!plan) return 'Speed Networking';
+  return `Speed Networking · ${plan.attendees} people · ${plan.tables} tables · ${plan.rounds} rounds`;
+}
+
+/**
+ * A name, or the note that there is not one yet. One cell for every list on the
+ * page, so the placeholder reads the same on all of them.
+ *
+ * NO INITIALS DISC. One was tried here and taken out: on a report somebody reads
+ * a page of names down, a coloured circle per row is decoration competing with
+ * the text beside it, which is the same conclusion components/Badge.jsx reached
+ * for the listing tables.
+ */
+function NameCell({ name }) {
+  if (!name) return <span className="dim">— write at the desk —</span>;
+  return name;
+}
+
+/**
  * Name Badges and Additional Name Badges. Two or three columns, by company.
  *
  * `frozen` separates the two things an empty Additional report can mean, which
@@ -307,8 +387,13 @@ function ReportTable({ rows, cols, tab, frozen }) {
       </p>
     );
   }
+  // Two columns means Name Badges, and two columns split evenly. Three means
+  // Additional Name Badges or Cancellations, where the third column is a tag and
+  // an even split would starve it, so those keep the browser's own sizing. The
+  // class says which of the two this table is rather than the stylesheet trying
+  // to count columns.
   return (
-    <table className="ped-tbl">
+    <table className={'ped-tbl' + (cols.length === 2 ? ' ped-split' : '')}>
       <thead>
         <tr>{cols.map(([k, l]) => <th key={k}>{l}</th>)}</tr>
       </thead>
@@ -319,8 +404,8 @@ function ReportTable({ rows, cols, tab, frozen }) {
               <td key={k}>
                 {k === 'remark'
                   ? <span className={'tg bg-' + (REMARK_TONE[r[k]] || 'neutral')}>{r[k]}</span>
-                  : k === 'name' && !r[k]
-                    ? <span className="dim">— write at the desk —</span>
+                  : k === 'name'
+                    ? <NameCell name={r[k]} />
                     : r[k]}
               </td>
             ))}
@@ -383,9 +468,16 @@ function Cancellations({ rows }) {
  * they are for the desk to mark which upcoming event a delegate is interested
  * in, which is what that block is for on the paper sheet.
  *
- * IN? is empty and NOT WIRED, on instruction. The tick has its own function
- * being built elsewhere, and a control here would be a second way to record one
- * fact; see the note in api/preEventDocs.js.
+ * IN? SHOWS THE TICK AND DOES NOT WRITE IT. The box is checked from the row's
+ * own `checked_in`, which services.py sets from delegate.attendance, so the desk
+ * can see who has already arrived. It is readOnly and takes no clicks: ticking
+ * somebody in belongs to PATCH /api/delegates/{id}/update_attendance/, which
+ * validates against the Attendance choices. A writable control here would be a
+ * second way to record one fact; see the note in api/preEventDocs.js.
+ *
+ * On paper the box is EMPTY whatever the state, because a printed sheet is
+ * ticked by hand at the door; the print rules hide the input and draw the cell
+ * as a box to write in.
  */
 function CheckInTable({ rows, upcoming }) {
   if (!rows.length) {
@@ -412,14 +504,29 @@ function CheckInTable({ rows, upcoming }) {
       <tbody>
         {rows.map((r) => (
           <tr key={r.delegate_id}>
-            <td>{r.name || <span className="dim">— write at the desk —</span>}</td>
+            <td><NameCell name={r.name} /></td>
             <td>{r.company}</td>
-            <td className="w-in" />
-            <td>{r.booking_code_label}</td>
-            <td>
-              {r.payment_status_label
-                ? <span className="tg bg-red">{r.payment_status_label}</span>
-                : ''}
+            <td className="w-in">
+              <input type="checkbox" className="ped-in" checked={!!r.checked_in}
+                readOnly tabIndex={-1}
+                aria-label={r.checked_in ? 'Checked in' : 'Not checked in'} />
+            </td>
+            {/* THE CELL IS THE BLOCK. The tone class goes on the <td>, not on a
+                <span> inside it, so the fill runs the full width of the column
+                and the rows read as bands rather than as a column of small
+                badges floating in white. .bg-* sets a tint and the matching text
+                colour and nothing else, so it does this without a rule of its
+                own; ped-fill only adds the weight. An empty cell stays empty and
+                takes no class, because a tint with no word in it is noise. */}
+            <td className={r.booking_code_label
+              ? 'ped-fill bg-' + bookingCodeTone(r.booking_code_label) : undefined}>
+              {r.booking_code_label}
+            </td>
+            <td className={r.payment_status_label ? 'ped-fill bg-red' : undefined}>
+              {/* Red, and the only red on the sheet. It reads "Payment to
+                  collect on-site" and nothing else, see services.py; the desk
+                  has to take money off this person before they go in. */}
+              {r.payment_status_label}
             </td>
             {Array.from({ length: span }, (_, i) => <td key={i} className="ped-up" />)}
           </tr>

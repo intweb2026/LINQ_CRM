@@ -46,6 +46,10 @@ export const IC = {
   eye: 'M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
   link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7L12 5M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19',
   zap: 'M13 2 4 14h6l-1 8 9-12h-6l1-8Z',
+  // A QR code, drawn as three finder squares and a scatter of modules. Stroked
+  // like every other icon here rather than filled, so it inherits currentColor
+  // and the shared stroke width instead of needing its own rules.
+  qr: 'M4 4h5v5H4zM15 4h5v5h-5zM4 15h5v5H4zM15 15h2v2h-2zM19 19h1M12 4v3M12 11h3M12 15v2M15 11h5M4 12h4M19 12h1',
 };
 
 export function Icon({ name, size = 15, style, className }) {

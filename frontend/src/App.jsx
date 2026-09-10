@@ -135,6 +135,12 @@ export default function App() {
                 <Route path="credit-control/:view" element={<CreditControlPage />} />
                 <Route path="pre-event-docs" element={<PreEventDocsPage />} />
                 <Route path="pre-event-docs/:tab" element={<PreEventDocsPage />} />
+                {/* NO tab in the URL here, unlike Pre-Event Docs above, and
+                    deliberately: one of this page's tabs turns on a camera, and
+                    a link that opens it would turn the camera on for whoever
+                    followed the link. The tab is component state and the page
+                    always opens on Attendance. See pages/AttendancePage.jsx. */}
+                <Route path="attendance" element={<AttendancePage />} />
                 <Route path="users" element={<UsersPage />} />
                 <Route path="roles" element={<TeamPermissionsPage />} />
                 <Route path="teams" element={<TeamsManagementPage />} />
