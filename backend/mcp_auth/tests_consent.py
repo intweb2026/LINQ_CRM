@@ -67,6 +67,28 @@ class ConsentTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Claude")
 
+    def test_the_page_allows_the_google_popup_to_talk_back(self):
+        """
+        Django's default COOP breaks Google Sign-In, silently.
+
+        SecurityMiddleware sets Cross-Origin-Opener-Policy: same-origin, which
+        severs window.opener for cross-origin popups. Google Identity Services
+        returns the credential by posting a message to the window that opened
+        it, so under same-origin the popup finishes, goes blank, and nothing
+        happens, with no error anywhere. It reached production exactly like
+        that. same-origin-allow-popups restores only this page's reference to
+        popups it opened itself.
+        """
+        response = self.client.get(reverse("mcp-auth-consent"), {"tx": TX})
+        self.assertEqual(response["Cross-Origin-Opener-Policy"],
+                         "same-origin-allow-popups")
+
+    def test_the_rest_of_the_crm_keeps_the_stricter_policy(self):
+        # The relaxation is for this one page. If it ever leaks into the
+        # project settings, this fails.
+        response = self.client.get("/api/users/my-permissions/")
+        self.assertEqual(response.get("Cross-Origin-Opener-Policy"), "same-origin")
+
     def test_expired_handle_shows_a_message_rather_than_a_sign_in_button(self):
         self.pending.expires_at = timezone.now() - timedelta(seconds=1)
         self.pending.save(update_fields=["expires_at"])

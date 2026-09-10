@@ -72,12 +72,34 @@ def consent(request):
     the ten minute window.
     """
     pending = _pending(request.GET.get("tx"))
-    return render(request, "mcp_auth/consent.html", {
+    response = render(request, "mcp_auth/consent.html", {
         "tx": request.GET.get("tx", ""),
         "pending": pending,
         "client_name": pending.client.client_name if pending else "",
         "google_client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
     })
+    # WITHOUT THIS, GOOGLE SIGN-IN SILENTLY HANGS.
+    #
+    # SecurityMiddleware stamps every Django response with
+    # Cross-Origin-Opener-Policy: same-origin, which severs window.opener for
+    # cross-origin popups. Google Identity Services opens accounts.google.com
+    # in a popup and hands the credential back by posting a message to the
+    # window that opened it; under same-origin that link does not exist, so the
+    # popup completes, goes blank on /gsi/transform, and nothing further
+    # happens. No error is raised anywhere, which is what makes it hard to see.
+    #
+    # The CRM's own login never hit this because the React build is served by
+    # the Node frontend, which sets no COOP header at all. This page is served
+    # by Django, so it inherits one.
+    #
+    # same-origin-allow-popups is the documented value for a page that opens an
+    # OAuth popup. It keeps the protection that matters, other origins still
+    # cannot get a handle on this window, and only restores this page's
+    # reference to popups it opened itself. Set here rather than in settings so
+    # the relaxation applies to this one page and not the whole CRM;
+    # SecurityMiddleware leaves the header alone when a view has already set it.
+    response["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    return response
 
 
 @require_POST
