@@ -1,55 +1,114 @@
 // Ported 1:1 from legacy-vanilla-js/js/01-data.js (helpers + seeded RNG section).
 export const nf = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
 export const pc = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+/**
+ * "arthur.pina" -> "Arthur Pina". An email address loses its domain first.
+ *
+ * A MIRROR of humanize_username in backend/accounts/models.py, and it exists on
+ * this side for one reason: the signed-in user is CACHED. `auth_user` is written
+ * once at login and read back on every reload, so a session that predates the
+ * server sending `full_name` would keep rendering its own login handle in the
+ * top bar until the day somebody signed out. Deriving it here instead heals
+ * those sessions on their next page load, with no round trip and nothing for
+ * anyone to do.
+ *
+ * IDEMPOTENT ON A REAL NAME, which is what makes it safe to run over a cached
+ * value that may already be one: "Ada Lovelace" goes in and comes out unchanged.
+ *
+ * accounts/tests_wire_probe.py runs both implementations over the same inputs
+ * and fails on any disagreement, because two copies of a rule drift.
+ */
+export function humanName(username) {
+  const stem = String(username || '').split('@')[0].replace(/[._\s]+/g, ' ').trim();
+  // A hyphen SEPARATES but does not disappear, so "o-neill" is "O-Neill". Only a
+  // lowercase letter is raised, so a deliberate "McB" survives.
+  return stem.replace(/(^|[ -])([a-z])/g, (m, sep, ch) => sep + ch.toUpperCase());
+}
+
 export const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// ── IST rendering ───────────────────────────────────────────────────────
+// ── Pacific rendering ───────────────────────────────────
 /**
  * Timestamps are STORED as UTC and that does not change; see settings.TIME_ZONE
- * in backend/config/settings.py. An instant carries no timezone of its own, so
- * the zone belongs to the RENDER, and this is where the render happens.
+ * in backend/config/settings.py, which is now America/Los_Angeles. An instant
+ * carries no timezone of its own, so the zone belongs to the RENDER, and this is
+ * where the render happens.
  *
  * THE BUG THIS FIXES
- * These three read the value back through getDate()/getMonth()/getHours(), which
- * are the VIEWER'S machine timezone rather than the team's. On an IST laptop that
- * looked right by accident. Anywhere else the same row read as a different day,
- * and a plain 'YYYY-MM-DD' was the worst case: '2026-08-21' parses as UTC
- * midnight, so every viewer west of Greenwich saw 20 Aug for a date nobody had
- * disputed. Modified Time on Bookings made it visible, because that column is now
- * also the table's default sort and a timestamp that renders in one zone while it
- * sorts in another has no consistent reading at all.
+ * fdate/fmy/ftime once read the value back through getDate()/getMonth()/
+ * getHours(), which are the VIEWER'S machine timezone rather than the team's, so
+ * the same row read as a different day per viewer. That part has not changed:
+ * the zone is pinned here, not taken from the browser.
  *
- * WHY A FIXED OFFSET AND NOT Intl.DateTimeFormat
- * The offset is exact here rather than an approximation: India has run a single
- * +05:30 nationwide with no DST since 1945, so shifting the instant and then
- * reading its UTC fields yields the IST calendar fields for every date this CRM
- * will ever hold. It also keeps ONE convention in the codebase, because
- * lib/dateFilter.js rowDateISO() reckons a row's day by the same shift; a filter
- * that disagreed with the cell beside it by 5h30m every night is exactly the
- * drift this is meant to close.
+ * WHY THIS IS A LOOKUP AND NOT A FIXED OFFSET
+ * It used to be `+05:30` added to the instant, and for India that was exact:
+ * a single offset nationwide, no DST since 1945. Pacific is not that zone. It
+ * runs -08:00 in winter and -07:00 in summer, so a constant would be right for
+ * roughly half the year and an hour out for the rest — which, on a boundary,
+ * is a whole calendar day wrong for one hour either side of midnight, twice a
+ * year, silently. Intl.DateTimeFormat carries the transition rules; nothing
+ * here has to know the March and November dates.
+ *
+ * The formatter is built ONCE. Constructing an Intl.DateTimeFormat per cell is
+ * the expensive part of this API, and these run per row on tables holding six
+ * figures of them.
  */
-export const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+export const APP_TZ = 'America/Los_Angeles';
 
-/** The instant shifted so that its UTC fields read as IST fields, or null. */
-function istView(d) {
-  if (!d) return null;
+const TZ_PARTS = new Intl.DateTimeFormat('en-US', {
+  timeZone: APP_TZ,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit',
+  // hourCycle, not hour12:false — the latter renders midnight as "24" on some
+  // engines, which would put every 00:xx timestamp on the previous day.
+  hourCycle: 'h23',
+});
+
+/** A DateField's value: a calendar day with no instant, and no zone. */
+const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The instant shifted so that its UTC fields read as Pacific fields, or null.
+ *
+ * Exported because lib/dateFilter.js reduces a row to its day through the very
+ * same function: a filter that disagreed with the cell beside it is exactly the
+ * drift this is here to close.
+ *
+ * A ZONE-FREE DATE IS NOT CONVERTED, AND THIS IS LOAD-BEARING NOW
+ * '2026-08-21' is a DateField: a calendar day that never had an instant behind
+ * it, so there is nothing to convert and converting it anyway moves it. The old
+ * IST code got away with shifting these, because +05:30 landed UTC midnight at
+ * 05:30 the SAME morning. Pacific runs the other way. Shifted, every date
+ * column in the CRM — event_date, invoice_date, request_date — would render one
+ * day early, which is the precise bug this module was written to kill, arriving
+ * from the opposite direction. So a plain date is parsed and returned as-is,
+ * matching what dateFilter.rowDateISO already does with the same shape.
+ */
+export function zoneView(d) {
+  if (d == null || d === '') return null;
+  if (typeof d === 'string' && PLAIN_DATE.test(d.trim())) {
+    const plain = new Date(d.trim() + 'T00:00:00Z');
+    return isNaN(plain) ? null : plain;
+  }
   const x = new Date(d);
   if (isNaN(x)) return null;
-  return new Date(x.getTime() + IST_OFFSET_MS);
+  const p = {};
+  for (const { type, value } of TZ_PARTS.formatToParts(x)) p[type] = value;
+  return new Date(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute));
 }
 
 export function fdate(d) {
-  const x = istView(d);
+  const x = zoneView(d);
   if (!x) return '—';
   return String(x.getUTCDate()).padStart(2, '0') + ' ' + MON[x.getUTCMonth()] + ' ' + x.getUTCFullYear();
 }
 export function fmy(d) {
-  const x = istView(d);
+  const x = zoneView(d);
   if (!x) return '—';
   return MON[x.getUTCMonth()] + ' ' + x.getUTCFullYear();
 }
 export function ftime(d) {
-  const x = istView(d);
+  const x = zoneView(d);
   if (!x) return '—';
   return String(x.getUTCHours()).padStart(2, '0') + ':' + String(x.getUTCMinutes()).padStart(2, '0');
 }

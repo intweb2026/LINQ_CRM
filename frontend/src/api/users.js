@@ -126,7 +126,7 @@ export function resetPassword(id, password) {
 // TODO(developer): the backend has no self-service "invite by email" flow —
 // admins create accounts directly via POST /api/users/ (the Add user form).
 // Left as a no-op rather than pretending an email went out.
-export function inviteByEmail(emails, role, teamId) {
+export function inviteByEmail(emails, teamId) {
   return Promise.resolve(false);
 }
 

@@ -17,6 +17,9 @@ NOT A ModelViewSet, for the same reason performance_matrix is not — there is n
 model here to serialise. The rows are built in services.py and pass straight
 through DRF's renderer.
 """
+import logging
+
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
@@ -24,6 +27,9 @@ from rest_framework.viewsets import ViewSet
 from accounts.crm_permissions import crm_permission
 
 from . import services
+
+
+logger = logging.getLogger(__name__)
 
 
 def _flag(request, name, default=False):
@@ -56,6 +62,44 @@ class MiningMatrixViewSet(ViewSet):
             view=request.query_params.get("view") or services.VIEW_UPCOMING,
             include_zero=_flag(request, "include_zero"),
         ))
+
+    @action(detail=False, methods=["post"], url_path="sync-mailable")
+    def sync_mailable(self, request):
+        """
+        Refresh the Mailable column from HubSpot, now.
+
+        HERE RATHER THAN IN CREDIT CONTROL, which is where this job first got
+        its button only because that is where the HubSpot client is exercised
+        from. Nothing in Credit Control reads this figure. A job belongs on the
+        page whose data it feeds, or nobody can find the button when the number
+        looks wrong.
+
+        Cron owns the cadence (07:00 IST). This is for after somebody has just
+        reworked a list in HubSpot and wants the column to agree. Two requests
+        per event code and only the stale ones are fetched, so a press right
+        after a scheduled run costs almost nothing; `force` refetches every
+        code regardless.
+
+        Runs INLINE and answers when it finishes. A few hundred codes is a
+        minute or two, which is acceptable for a button an admin presses
+        deliberately and would not be on anybody's read path.
+        """
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        args = ["--force"] if _flag(request, "force") else []
+        try:
+            call_command("sync_mailable_counts", *args, stdout=out, stderr=out)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("mining_matrix: manual mailable sync failed")
+            return Response(
+                {"ok": False, "output": f"{type(exc).__name__}: {exc}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        logger.info("mining_matrix: manual mailable sync by %s", request.user)
+        return Response({"ok": True, "output": out.getvalue().strip()})
 
     # There is deliberately no `summary` action. The tab counts ride in the list
     # payload as `view_counts`, because every view shares one aggregate and one

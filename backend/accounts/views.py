@@ -144,6 +144,9 @@ class GoogleTokenLoginView(APIView):
             "user_id":  user.pk,
             "email":    user.email,
             "username": user.username,
+            # The name the shell greets them by. Without it the client had only
+            # the login handle to fall back on and the top bar read "arthur.pina".
+            "full_name": user.get_full_name(),
             "role":     user.role,
         })
 
@@ -172,6 +175,7 @@ class CustomAuthToken(ObtainAuthToken):
             'user_id':  user.pk,
             'email':    user.email,
             'username': user.username,
+            'full_name': user.get_full_name(),
             'role':     user.role,
         })
 

@@ -90,7 +90,7 @@ const patchClientImport = (s) =>
 const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMod;
 // lib/filterSpec.js imports lib/dateFilter.js — the date vocabulary the
 // Advanced Filter's date columns speak — and lib/dateFilter.js in turn imports
-// IST_OFFSET_MS from lib/helpers.js, the shift that decides which DAY a
+// zoneView from lib/helpers.js, the conversion that decides which DAY a
 // timestamp belongs to. All three are loaded in dependency order and their
 // paths substituted in, the same redirection lib/liveData.js gets above,
 // because everything here is flattened into one temp directory and a bare
@@ -98,8 +98,8 @@ const { serializeParams, bulkUpdate, assertIdArray, apiErrorMessage } = clientMo
 //
 // THE CHAIN IS THE POINT, not an inconvenience. helpers.js is where a RENDERED
 // cell's day comes from and dateFilter.js is where a FILTERED row's day comes
-// from; they have to be the same number, which is why dateFilter.js imports the
-// offset rather than restating it. This probe is what would notice if that
+// from; they have to be the same day, which is why dateFilter.js imports the
+// conversion rather than restating it. This probe is what would notice if that
 // import were quietly dropped to keep the harness simpler.
 const helpersMod = await load("lib/helpers.js");
 const helpersPath = join(dir, "lib_helpers.mjs").replace(/\\/g, "/");
@@ -109,7 +109,13 @@ const dateFilterPath = join(dir, "lib_dateFilter.mjs").replace(/\\/g, "/");
 const spec = await load("lib/filterSpec.js", (s) =>
   s.replace(/from ['"]\.\/dateFilter['"]/g, `from "file://${dateFilterPath}"`));
 const { specToJson, partitionConds, toCriterion } = spec;
-const bookings = await load("api/bookings.js", patchClientImport);
+// api/bookings.js reaches for todayISO too: markPaid() stamps payment_date
+// with the day, and "the day" is a question with a timezone in it. Same
+// flattening problem, same redirect.
+const patchBookingsImports = (s) =>
+  patchClientImport(s)
+    .replace(/from ['"]\.\.\/lib\/dateFilter['"]/g, `from "file://${dateFilterPath}"`);
+const bookings = await load("api/bookings.js", patchBookingsImports);
 const tickets = await load("api/tickets.js", patchClientImport);
 const webhooks = await load("api/webhooks.js", patchClientImport);
 
@@ -1003,6 +1009,32 @@ check("matching ignores case and surrounding space",
   roleFromTeamName("  MARKET RESEARCH  "));
 check("an admin-named team implies the admin role",
   roleFromTeamName("Admin Team") === "admin", roleFromTeamName("Admin Team"));
+
+// ── the display name a cached session re-derives ───────────────────────────
+// SessionContext repairs `auth_user.name` on every load with lib/helpers
+// humanName, because the cached blob predates the server sending full_name. That
+// repair has to produce the same string the server would have sent, or the top
+// bar and every payload naming the same person disagree. Handed to
+// tests_wire_probe.py, which puts the SAME inputs through
+// accounts.models.humanize_username.
+const { humanName } = helpersMod;
+check("export exists: helpers.humanName", typeof humanName === "function", typeof humanName);
+
+const USERNAMES = [
+  "arthur.pina", "harrison_peck", "ada", "arthur.pina@iq-hub.com",
+  "maria.o-neill", "  spaced  out  ", "a.b.c", "McB.smith", "Ada Lovelace",
+  "zoho_linq-corporate", "", "   ",
+];
+results.literals.human_name_map = Object.fromEntries(
+  USERNAMES.map((n) => [n, humanName(n)]),
+);
+
+check("a dotted handle becomes two capitalised words",
+  humanName("arthur.pina") === "Arthur Pina", humanName("arthur.pina"));
+check("a real name is unchanged, so re-deriving a cached one is safe",
+  humanName("Ada Lovelace") === "Ada Lovelace", humanName("Ada Lovelace"));
+check("running it twice changes nothing",
+  humanName(humanName("arthur.pina")) === "Arthur Pina", humanName(humanName("arthur.pina")));
 
 results.pass = results.checks.every((c) => c.pass);
 process.stdout.write(JSON.stringify(results, null, 2));

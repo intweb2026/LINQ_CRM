@@ -94,7 +94,7 @@ class HistoricalEditionDataService:
         # Activity windows: relative to the last booking created_at
         ref_date = (
             last_booking_dt.date() if last_booking_dt and hasattr(last_booking_dt, "date")
-            else timezone.now().date()
+            else timezone.localdate()
         )
 
         paid_qs = bookings_qs.filter(payment_status__in=PAID_STATUSES)

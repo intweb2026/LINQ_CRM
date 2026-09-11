@@ -288,7 +288,10 @@ class BookEventViewSet(RBACMixin, viewsets.ModelViewSet):
         period = request.query_params.get("period", "total")
         qs = self.filter_queryset(self.get_queryset())
 
-        now = timezone.now()
+        # localtime, not now(): every read below it — .date(), .year, .month —
+        # is a CALENDAR field, and calendar fields off a UTC instant name the
+        # wrong day, month and quarter for the last hours of every Pacific day.
+        now = timezone.localtime()
         today = now.date()
         
         if period == "today":

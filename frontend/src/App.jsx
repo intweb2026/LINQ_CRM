@@ -34,6 +34,7 @@ const PerformanceMatrixPage = lazy(() => import('./pages/PerformanceMatrixPage')
 const MiningMatrixPage = lazy(() => import('./pages/MiningMatrixPage'));
 const PreEventDocsPage = lazy(() => import('./pages/PreEventDocsPage'));
 const AttendancePage = lazy(() => import('./pages/AttendancePage'));
+const CreditControlPage = lazy(() => import('./pages/CreditControlPage'));
 const GoogleSyncPage = lazy(() => import('./pages/GoogleSyncPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const TeamPermissionsPage = lazy(() => import('./pages/TeamPermissionsPage'));
@@ -127,6 +128,12 @@ export default function App() {
                 <Route path="mining-matrix" element={<MiningMatrixPage />} />
                 {/* Tab in the URL, the way Bookings and Tickets do it, so a
                     badge run or a check-in sheet is a shareable link. */}
+                {/* One page, five routes. The path decides which surface it
+                    renders, so each nav entry is a real address that can be
+                    bookmarked and linked, rather than a tab the page opens on
+                    its own. */}
+                <Route path="credit-control" element={<CreditControlPage />} />
+                <Route path="credit-control/:view" element={<CreditControlPage />} />
                 <Route path="pre-event-docs" element={<PreEventDocsPage />} />
                 <Route path="pre-event-docs/:tab" element={<PreEventDocsPage />} />
                 {/* NO tab in the URL here, unlike Pre-Event Docs above, and

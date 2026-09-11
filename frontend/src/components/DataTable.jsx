@@ -846,8 +846,12 @@ function EditMenu({ row, col, close }) {
  *
  * Every other prop is a primitive or a stable callback, see rowClick/toggleRow.
  */
-const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, onToggle, pins, cls }) {
+const Row = memo(function Row({
+  row, cols, selected, select, canEdit, onClick, onToggle, pins, cls,
+  detail = null, open = false, onOpen = null, colCount = 1,
+}) {
   return (
+    <>
     <tr
       className={(selected ? 'sel ' : '') + (cls || '')}
       onClick={onClick ? () => onClick(row) : undefined}
@@ -871,11 +875,20 @@ const Row = memo(function Row({ row, cols, selected, select, canEdit, onClick, o
             className={(c.num ? 'num ' : '') + (c.cls ? c.cls + ' ' : '')
               + (pin ? 'pin-col' + (pin.last ? ' pin-last' : '') : '')}
             style={pin ? { left: pin.left } : undefined}>
-            {c.editOpts && canEdit ? <EditableCell row={row} col={c} value={v} /> : c.cell ? c.cell(v, row) : v == null || v === '' ? <span className="dim">—</span> : v}
+            {/* A third argument, for a cell that needs to open the row's
+                detail. Existing cells take two and ignore it, so this is
+                additive rather than a signature change. */}
+            {c.editOpts && canEdit ? <EditableCell row={row} col={c} value={v} /> : c.cell ? c.cell(v, row, { open, onOpen }) : v == null || v === '' ? <span className="dim">—</span> : v}
           </td>
         );
       })}
     </tr>
+    {detail && open ? (
+      <tr className="dt-detail">
+        <td colSpan={colCount}>{detail(row)}</td>
+      </tr>
+    ) : null}
+    </>
   );
 });
 
@@ -927,6 +940,14 @@ export default function DataTable({
   // the first column carries the label. Opt-in like groupHeader.
   sumRow = false,
   /**
+   * Field to de-duplicate the sum row on, when several rows describe one thing.
+   *
+   * Without it every visible row contributes, which is right for a table whose
+   * rows are distinct records and wrong for one where they are not. See the
+   * `sums` block for the case that produced it.
+   */
+  sumBy = null,
+  /**
    * Show the admin Export button. OFF by default, and server mode only.
    *
    * Deliberately opt-in rather than "every table gets one". The file is built
@@ -959,6 +980,25 @@ export default function DataTable({
    * Undefined for every other page, and then nothing is rendered.
    */
   entryBand = null,
+  /**
+   * A drill-down under one row: `detail(row)` returns what to show beneath it.
+   *
+   * Opt-in, and it TURNS VIRTUALISATION OFF for the table. The virtualiser
+   * converts scroll position to a row index by multiplying by a fixed 44px
+   * pitch (see ROW_HEIGHT), and a detail row is whatever height its content
+   * needs, so leaving windowing on would make the scroll position drift by the
+   * height of every expanded row above the viewport.
+   *
+   * ponytail: full render rather than a variable-height virtualiser. The
+   * ceiling is row count — a few hundred rows of a wide table is comfortable,
+   * a few thousand would not be. If a table with `detail` ever gets that big,
+   * measure per-row heights and feed them to the hook rather than reaching for
+   * a windowing library.
+   *
+   * A cell opens it: `cell(value, row, { open, onOpen })`. Nothing is expanded
+   * on first render, so the table still reads as a list.
+   */
+  detail = null,
   // Receives the table's `refetch` so a parent can reload after a write. Only
   // the function is handed out, never the whole fetch state: that object has a
   // new identity every render, so a parent storing it in state would re-render
@@ -1537,10 +1577,41 @@ export default function DataTable({
     const out = {};
     activeCols.forEach((c) => {
       if (!c.num || c.sum === false) return;
-      out[c.key] = data.reduce((acc, r) => acc + (typeof r[c.key] === 'number' ? r[c.key] : 0), 0);
+      out[c.key] = 0;
+    });
+    /*
+     * `sumBy` COUNTS EACH DISTINCT VALUE OF THAT FIELD ONCE, and it exists
+     * because the naive sum was quietly wrong.
+     *
+     * The Mining Matrix has one row per EVENT but its figures are gathered per
+     * Ticket Central purpose CODE, and two editions of one event share a code:
+     * "DIU - JS" and "APR2027_DIU-JS" both carry DIU's 74,950 mailable
+     * contacts. Adding the column up counted that audience twice, so the
+     * totals row disagreed with the page's own KPI strip by exactly the
+     * duplicated codes — 145,005 across four of them — and both numbers looked
+     * equally plausible.
+     *
+     * De-duplicating HERE rather than taking the server's total keeps the row
+     * filter-aware: narrow the table and it still totals what it shows, which
+     * is the whole reason the sum row is computed in the browser.
+     */
+    const seen = sumBy ? new Set() : null;
+    data.forEach((r) => {
+      if (seen) {
+        const key = r[sumBy];
+        // A row with no key is counted, not dropped: it cannot be a duplicate
+        // of anything, and silently omitting it would understate the total.
+        if (key != null && key !== '') {
+          if (seen.has(key)) return;
+          seen.add(key);
+        }
+      }
+      Object.keys(out).forEach((k) => {
+        if (typeof r[k] === 'number') out[k] += r[k];
+      });
     });
     return out;
-  }, [sumRow, activeCols, data]);
+  }, [sumRow, sumBy, activeCols, data]);
   // A callback ref rather than an effect on the prop: the table, and this row
   // with it, mounts only once rows exist, after the loading and empty states. An
   // effect keyed on `sumRow` ran once against a row that was not there yet and
@@ -1647,10 +1718,37 @@ export default function DataTable({
    * and loadedCount still reads data.length, so both operate over the full
    * accumulated set rather than the visible slice.
    */
+  // Which rows are drilled into. Ids, so a re-fetch that replaces the row
+  // objects keeps whatever the reader had open.
+  const [openRows, setOpenRows] = useState(() => new Set());
+  const toggleDetail = useCallback((id) => {
+    // A row with no id cannot be tracked, and must not be allowed to stand in
+    // for every row: `openRows.has(undefined)` answers true for all of them, so
+    // one click would expand the whole table. Refused loudly in development
+    // rather than silently misbehaving, because the real fix is upstream —
+    // give the rows an `id`, which selection and the React keys need anyway.
+    if (id === undefined || id === null) {
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.error('DataTable: `detail` needs rows to carry an `id`.');
+      }
+      return;
+    }
+    setOpenRows((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
   const { slice, padTop, padBottom } = useVirtualRows(
     pageRows,
     scrollBoxRef,
     ROW_HEIGHT,
+    // See the `detail` prop: a variable-height row and a fixed-pitch
+    // virtualiser cannot both be right, so the table with drill-downs renders
+    // in full.
+    detail ? { threshold: Infinity } : undefined,
   );
 
   /**
@@ -2128,6 +2226,10 @@ export default function DataTable({
                     cls={rowClass ? rowClass(r) : ''}
                     onClick={onRow ? rowClick : null}
                     onToggle={toggleRow}
+                    detail={detail}
+                    open={r.id !== undefined && openRows.has(r.id)}
+                    onOpen={detail ? () => toggleDetail(r.id) : null}
+                    colCount={colCount}
                   />
                 ))}
                 {padBottom > 0 && (
@@ -2244,11 +2346,16 @@ export default function DataTable({
     return (
       <div className="tf">
         <span>Showing <b>{nf(from)}–{nf(to)}</b> of <b>{nf(total)}</b> {noun}</span>
+        {/* NO PAGER ON A SINGLE PAGE. A lone "1" between two dead arrows is a
+            control that cannot do anything, and it reads as though the table
+            has more to show. The count beside it already says it does not. */}
+        {totalPages > 1 ? (
         <div className="pgr">
           <button className="pgb" disabled={curPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} aria-label="Previous"><Icon name="chevL" size={13} /></button>
           {pageList().map((p, i) => p === '…' ? <span className="pge" key={'e' + i}>…</span> : <button key={p} className={'pgb' + (p === curPage ? ' on' : '')} onClick={() => setPage(p)}>{p}</button>)}
           <button className="pgb" disabled={curPage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} aria-label="Next"><Icon name="chevR" size={13} /></button>
         </div>
+        ) : null}
       </div>
     );
   }

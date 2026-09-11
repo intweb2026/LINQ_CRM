@@ -156,11 +156,6 @@ INSTALLED_APPS = [
     # networking draw. Reads book_delegate and events, owns two tables of its
     # own, so it sits AFTER book_delegate.
     "pre_event_docs",
-    # OAuth authorization server for the MCP endpoint. Owns only its own four
-    # tables and reuses accounts for identity; it authenticates nobody itself,
-    # it asks Google and then matches the email to an existing CRM user exactly
-    # as GoogleTokenLoginView does. Sits after accounts for that FK.
-    "mcp_auth",
     # Gmail OAuth (send-only), for emailing QR badges from a user's own Gmail
     # account. Owns one table, keyed on accounts.User, so it sits after
     # accounts; attendance imports it, so it sits before attendance.
@@ -169,6 +164,21 @@ INSTALLED_APPS = [
     # the Pre-Event Docs check-in sheet. Reads book_delegate, events and
     # pre_event_docs, owns one table of its own, so it sits after all three.
     "attendance",
+    # OAuth authorization server for the MCP endpoint. Owns only its own four
+    # tables and reuses accounts for identity; it authenticates nobody itself,
+    # it asks Google and then matches the email to an existing CRM user exactly
+    # as GoogleTokenLoginView does. Sits after accounts for that FK.
+    "mcp_auth",
+    # HubSpot. A SHARED client and cache, not a corner of one module: Credit
+    # Control wants phones, call counts and email evidence, and Ticket Central
+    # wants mailable contact counts per event code. Owns two cache tables and
+    # reads nothing of the CRM's, so its position here is free.
+    "hubspot",
+    # Credit Control. Chases unpaid invoices by phone, assigning each to a
+    # caller and re-routing on age. Reads book_event, book_delegate, events and
+    # teams, so it sits after all four. Owns three tables; the invoices it
+    # chases stay in book_events and are never copied.
+    "credit_control",
 ]
 
 MIDDLEWARE = [
@@ -361,7 +371,22 @@ if DEBUG:
 
 # ── Internationalisation ──────────────────────────────────────────────────────
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# The zone the CRM is READ and REASONED in: Pacific.
+#
+# Storage does not change. USE_TZ stays True, so every DateTimeField is still
+# held in the database as UTC; TIME_ZONE is what timezone.localdate(),
+# timezone.localtime() and the admin render that instant AS. Every "what day is
+# it" in this project routes through those two calls for exactly that reason —
+# timezone.now().date() would still be the UTC day and would disagree with the
+# screen for the last seven or eight hours of every Pacific day.
+#
+# WHY THE ZONE NAME AND NOT A FIXED -08:00
+# Pacific observes DST, so PST and PDT are eight and seven hours behind UTC in
+# the same year. A fixed offset would be correct for one half of it and an hour
+# out for the other, across the March and November transitions, which is worse
+# than the bug it would be replacing. ZoneInfo carries the rule; nothing here
+# has to know the dates.
+TIME_ZONE = "America/Los_Angeles"
 USE_I18N = True
 USE_TZ = True
 
@@ -538,6 +563,37 @@ PAPER_REVIEW_NOTIFICATIONS_ENABLED = os.environ.get(
 WEBSITE_API_KEY     = os.environ.get("WEBSITE_API_KEY", "")
 WEBHOOK_SECRET_KEY  = os.environ.get("WEBHOOK_SECRET_KEY", "")
 
+# ── HubSpot ───────────────────────────────────────────────────────────────────
+# A PRIVATE APP ACCESS TOKEN, not an API key: HubSpot sunset those in 2022, and
+# OAuth only earns its refresh machinery when you distribute an app to portals
+# you do not own. Sent as `Authorization: Bearer <token>` by hubspot/client.py.
+#
+# Scopes the private app needs, all read-only:
+#   crm.objects.contacts.read   phones, contact ids, marketable status
+#   crm.objects.calls.read      call counts and the per-shift matrix
+#   crm.objects.emails.read     evidence for the invoice-type classifier
+#   crm.objects.owners.read     owner id -> CRM user, so no hard-coded ids
+#
+# UNSET IS A SUPPORTED STATE. Every caller checks hubspot.client.enabled() and
+# skips its work, so the CRM runs unchanged on a machine with no HubSpot
+# credential, which includes every laptop and CI.
+HUBSPOT_TOKEN = os.environ.get("HUBSPOT_TOKEN", "")
+
+# The portal number, used ONLY to build a deep link into the HubSpot UI, which
+# is the one thing the API cannot tell us: a contact id is portal-relative and
+# app.hubspot.com needs both to open a record. Not a credential, and a wrong or
+# absent value degrades to no link rather than to a broken one.
+HUBSPOT_PORTAL_ID = os.environ.get("HUBSPOT_PORTAL_ID", "4000965")
+
+# ── Anthropic ─────────────────────────────────────────────────────────────────
+# Credit Control's invoice-type classifier and its handover briefs. Read here so
+# a missing key is a checked condition rather than a stack trace, even though
+# the SDK would also pick this variable up on its own.
+#
+# UNSET IS A SUPPORTED STATE, as above: speaker invoices simply read
+# Unclassified, which is the honest answer, and every queue works regardless.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
 # ── Google Sign-In ────────────────────────────────────────────────────────────
 # Web client ID from Google Cloud Console (OAuth 2.0 -> Web application). The
 # same ID is handed to the browser as REACT_APP_GOOGLE_CLIENT_ID; the ID token flow
@@ -647,8 +703,14 @@ LOG_RETENTION_DAYS = {
 }
 
 # ── Scheduled jobs ───────────────────────────────────────────────────────────
-# cron strings use server time, and TIME_ZONE above is UTC. Activate on the
-# Linux server with `python manage.py crontab add` (no-op on Windows dev).
+# cron strings use SERVER time, which django-crontab writes into the system
+# crontab; settings.TIME_ZONE does not reach them, so the Pacific switch above
+# left every schedule below exactly where it was. The times are still the UTC
+# server times they were written as, and the IST notes beside them still
+# describe the shift they were chosen for. Moving them to the Pacific working
+# day is a decision about WHEN JOBS RUN, not about how the app renders a date,
+# and it is deliberately not bundled into that change. Activate on the Linux
+# server with `python manage.py crontab add` (no-op on Windows dev).
 CRONJOBS = [
     # Ticket Central ticket-number backfill (D5) — 07:00 IST == 01:30 UTC.
     ("30 1 * * *", "django.core.management.call_command", ["backfill_ticket_numbers"]),
@@ -658,5 +720,32 @@ CRONJOBS = [
     # the windows in LOG_RETENTION_DAYS are the safety margin, and ActionLog is
     # excluded by design.
     ("0 2 * * 0",  "django.core.management.call_command", ["prune_logs", "--commit"]),
+    # ── Credit Control ───────────────────────────────────────────────────────
+    # ROUTING IS LIVE. An invoice reaches a queue on the save that creates it,
+    # and leaves it on the save that marks it paid (credit_control/signals.py).
+    # These entries exist for the ONE trigger a save cannot cover: the day-4
+    # handoff, which fires because a date rolled over rather than because
+    # anything happened. Hourly, and routing only, so it makes no network call
+    # and takes about a second; a lead crossing four days at midnight UTC moves
+    # within the hour instead of at the end of the next shift. It also repairs
+    # anything a bulk import deliberately skipped.
+    ("0 * * * *",  "django.core.management.call_command",
+     ["refresh_credit_control", "--skip-hubspot"]),
+    # Once a day WITH the HubSpot half, before the shift opens at 13:00 UTC, so
+    # phone numbers and call totals for the day's queue are in place. Split from
+    # the hourly entry because contacts move slowly and each one is a request.
+    ("30 12 * * *", "django.core.management.call_command", ["refresh_credit_control"]),
+    # The classifier at 22:00 IST, which is 16:30 UTC, inside the shift. Its
+    # verdicts are read by callers rather than written by them, so landing it
+    # mid-evening means a speaker invoice raised today is classified before
+    # anybody phones about it tomorrow. Briefs follow once it has finished.
+    ("30 16 * * *", "django.core.management.call_command", ["classify_invoice_types"]),
+    ("15 17 * * *", "django.core.management.call_command",
+     ["classify_invoice_types", "--briefs"]),
+    # HubSpot call data, HOURLY BUT ONLY THROUGH THE SHIFT. The callers work
+    # 6:30pm to 3:30am IST, which is 13:00 to 22:00 UTC, so there is nothing to
+    # collect outside that window and ten runs a day covers all of it.
+    ("0 13-22 * * *", "django.core.management.call_command", ["sync_hubspot_calls"]),
+    ("30 1 * * *", "django.core.management.call_command", ["sync_mailable_counts"]),
 ]
 CRONTAB_LOCK_JOBS = True  # prevent overlap if a previous run is still going

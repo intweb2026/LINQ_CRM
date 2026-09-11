@@ -4,6 +4,7 @@ accounts/models.py
 Custom user model with CRM roles and event assignments.
 """
 import random
+import re
 import string
 from datetime import timedelta
 
@@ -89,6 +90,25 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.role})"
+
+    def get_full_name(self):
+        """
+        A PERSON'S NAME, never a login handle.
+
+        Django returns "" here when first_name and last_name are both blank, and
+        roughly forty call sites across this codebase spell that as
+        `get_full_name() or username`, so every one of them printed
+        "arthur.pina" wherever a name belonged: the top bar, the users list, the
+        drawer, every owner cell, every export. Fixed here rather than at those
+        call sites because they have to keep AGREEING with each other; the teams
+        board keys its per-member booking counts on the string book_event/views.py
+        builds and looks it up by the string accounts/serializers.py built, and
+        two of them humanising while the others did not is a board of zeroes.
+
+        The `or username` fallbacks are now unreachable. They are left alone: they
+        are correct either way and rewriting forty lines to prove it is not.
+        """
+        return super().get_full_name() or humanize_username(self.username)
 
     @classmethod
     def from_db(cls, db, field_names, values):
@@ -445,6 +465,27 @@ TEAM_NAME_ROLE_KEYWORDS = [
 ]
 
 
+def humanize_username(username):
+    """
+    "arthur.pina" -> "Arthur Pina". An email address loses its domain first.
+
+    Only ever reached for an account with no first_name and no last_name, so it
+    changes nothing for anyone whose name is actually recorded.
+
+    ponytail: the name-matching paths that resolve a user against the free-text
+    owner columns on Event (book_event/views.py, backfill_sales_executives) read
+    the same value. For a nameless account those columns could never contain the
+    username anyway, so they matched nothing before and stand to match correctly
+    now; if one of those columns is ever found to hold literal usernames, give
+    the matchers their own accessor rather than reverting this.
+    """
+    stem = re.sub(r"[._\s]+", " ", (username or "").split("@")[0]).strip()
+    # A hyphen SEPARATES but does not disappear, so "o-neill" is "O-Neill" and
+    # not "O Neill". Only a lowercase letter is raised: an "IQ" or a "McB"
+    # someone typed deliberately survives.
+    return re.sub(r"(^|[ \-])([a-z])", lambda m: m.group(1) + m.group(2).upper(), stem)
+
+
 def role_from_team_name(team_name):
     """The role a team's name implies, or None when no keyword matches."""
     haystack = (team_name or "").lower().strip()
@@ -543,6 +584,16 @@ CRM_MODULES = [
     # bookings would be useless, because whoever works the desk works the whole
     # event.
     "pre_event_docs",
+    # Credit Control. Its own module rather than a corner of "bookings": the
+    # audience is the four people who phone companies about unpaid invoices,
+    # and the bookings grant carries create/update/delete over every delegate
+    # row in the CRM. Backfilled all-False by its migration, so nothing is
+    # visible until it is granted.
+    #
+    # IN SCOPED_MODULES below, and that is the whole of the row-level security
+    # the predecessor build needed a sheet full of range protections for: a
+    # caller without the `all` cell sees only the leads assigned to them.
+    "credit_control",
     # QR Attendance. The on-site door, and its own module rather than a corner
     # of pre_event_docs for one reason: the people holding a phone at a
     # turnstile need exactly this and nothing else, and the Pre-Event Docs grant
@@ -578,6 +629,9 @@ PERM_FIELDS = tuple(f"can_{a}" for a in PERM_ACTIONS)
 # nothing.
 SCOPED_MODULES = frozenset({
     "bookings", "events", "paper_review", "proposal_submission",
+    # A caller sees their own queue; the team lead and anyone else granted the
+    # `all` cell sees every lead. See credit_control/views.py.
+    "credit_control",
 })
 
 

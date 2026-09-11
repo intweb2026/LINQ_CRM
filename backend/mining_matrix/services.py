@@ -32,6 +32,7 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 
 from events.models import Event
+from events.verdicts import EXCLUDED_VERDICTS as _EXCLUDED_VERDICTS
 from ticket_central.models import Ticket
 from ticket_central.scoping import scope_tickets
 
@@ -49,6 +50,19 @@ VIEWS = (VIEW_UPCOMING, VIEW_ALL, VIEW_UNLINKED)
 # its date column says. Both are excluded from `upcoming` even when the date is
 # in the future — a cancelled event dated next March is not upcoming work.
 CLOSED_STATUSES = frozenset({Event.Status.COMPLETED, Event.Status.CANCELLED})
+
+# Editions the Performance Matrix has withdrawn, which this page does not plan
+# against. STATUS AND VERDICT ARE DIFFERENT FIELDS and both matter: status is
+# where the edition is in its own lifecycle, and the verdict is the commercial
+# call an admin recorded about whether it goes ahead. An event can sit at status
+# Draft with a verdict of Cancelled, and CLOSED_STATUSES above would let it
+# through, so mining capacity was being planned against editions nobody intends
+# to run.
+#
+# Excluded from EVERY view, not only Upcoming. A withdrawn edition needs no
+# miners in the All list either, and leaving it in the totals overstates the
+# outstanding work — which is the one number this page exists to report.
+EXCLUDED_VERDICTS = frozenset(_EXCLUDED_VERDICTS)
 
 # ── The split dimensions (Col E onwards) ─────────────────────────────────────
 #
@@ -224,7 +238,51 @@ def _empty_bucket():
     return {"links": 0, "estimate": 0, "splits": {k: {} for k in SPLIT_KEYS}}
 
 
-def _row(*, event_code, canonical, event, bucket, today):
+def _mailable_synced_at():
+    """
+    When the Mailable column was last refreshed, or None.
+
+    The OLDEST fetch across the cached codes, not the newest. The column is only
+    as current as its stalest cell, and reporting the newest would say "synced
+    two minutes ago" on a table where half the rows were counted last week —
+    which is the reassuring answer rather than the true one.
+    """
+    from django.db.models import Min
+
+    from hubspot.models import HubSpotPurposeCount
+
+    return HubSpotPurposeCount.objects.aggregate(at=Min("fetched_at"))["at"]
+
+
+def _mailable_next_sync():
+    """When the mailable sync next runs, or None if nothing schedules it here."""
+    from services import cron
+
+    return cron.next_run_for("sync_mailable_counts")
+
+
+def _mailable_counts() -> dict:
+    """
+    Mailable contacts per `contact_purpose` code, from the HubSpot cache.
+
+    ONE QUERY FOR THE WHOLE PAGE, read from hubspot_purpose_counts and never
+    from HubSpot itself: this runs inside a web request, and a page that calls a
+    third party inline is a page that hangs when the third party is slow. The
+    cache is filled by `sync_mailable_counts`, on cron.
+
+    A code with no cached row yields None rather than 0, because "nobody has
+    counted this yet" and "there are none" are different facts and the column
+    has to be able to say so.
+    """
+    from hubspot.models import HubSpotPurposeCount
+
+    return {
+        row.purpose: row.mailable_count
+        for row in HubSpotPurposeCount.objects.all()
+    }
+
+
+def _row(*, event_code, canonical, event, bucket, today, mailable=None):
     """One matrix row. `event` is None for a code the catalogue does not carry."""
     start = getattr(event, "event_date", None)
     end = getattr(event, "end_date", None)
@@ -244,6 +302,11 @@ def _row(*, event_code, canonical, event, bucket, today):
         "start_date": start,
         "end_date": end,
         "days_to_go": days,
+        # Col B2 — how many HubSpot contacts under this code are mailable.
+        # Frozen beside the dates because it is the other thing somebody
+        # planning a push needs before they read a single mining number: an
+        # event with no mailable audience is not a capacity problem.
+        "mailable": (mailable or {}).get(canonical),
         # Col C / Col D
         "unmined_links": bucket["links"],
         "unmined_data": bucket["estimate"],
@@ -279,13 +342,24 @@ def _context(user, today):
     known = known_purpose_codes()
     buckets = unmined_by_purpose(user)
 
-    events = list(
+    # EVERY edition is read, then the withdrawn ones are dropped from the ROWS
+    # while still counting for the code JOIN. The difference matters and the
+    # obvious version got it wrong: excluding them from the query made a code
+    # whose only edition is Postponed look UNLINKED, so the Unlinked tab grew by
+    # nine rows that were not join failures at all. Somebody would have gone
+    # hunting for a bug in code resolution that does not exist.
+    all_events = list(
         Event.objects.only(
             "event_code", "name", "status", "event_date", "end_date",
-            "location", "city",
+            "location", "city", "verdict",
         ).order_by("event_date", "event_code")
     )
-    resolved = resolve_codes([e.event_code for e in events], known)
+    # The join is resolved over ALL of them, so "does the catalogue carry this
+    # code" keeps its real answer.
+    resolved = resolve_codes([e.event_code for e in all_events], known)
+
+    withdrawn_events = [e for e in all_events if e.verdict in EXCLUDED_VERDICTS]
+    events = [e for e in all_events if e.verdict not in EXCLUDED_VERDICTS]
 
     # Which canonical codes the DEFAULT view accounts for. Computed whichever
     # view was asked for, because `unlinked` is defined as the complement of this
@@ -295,7 +369,16 @@ def _context(user, today):
         if e.event_date and e.event_date >= today and e.status not in CLOSED_STATUSES
     ]
     upcoming_codes = {resolved[e.event_code] for e in upcoming_events}
-    return buckets, events, resolved, upcoming_events, upcoming_codes
+
+    # Codes whose ONLY editions are withdrawn. Held out of Unlinked, because
+    # they are linked — to something nobody is running — and reported as their
+    # own figure instead, so the work behind them does not silently vanish from
+    # a page whose whole job is to surface outstanding work.
+    withdrawn_codes = {
+        resolved[e.event_code] for e in withdrawn_events
+    } - {resolved[e.event_code] for e in events}
+    return (buckets, events, resolved, upcoming_events, upcoming_codes,
+            withdrawn_codes)
 
 
 def _view_counts(buckets, events, resolved, upcoming_events, upcoming_codes,
@@ -346,10 +429,17 @@ def build_payload(user, view=VIEW_UPCOMING, include_zero=False):
         view = VIEW_UPCOMING
 
     today = _today()
-    buckets, events, resolved, upcoming_events, upcoming_codes = _context(user, today)
+    # Read once for the whole payload, not per row: a per-row lookup here is
+    # how a page with three hundred rows acquires three hundred queries.
+    mailable = _mailable_counts()
+    (buckets, events, resolved, upcoming_events, upcoming_codes,
+     withdrawn_codes) = _context(user, today)
 
     if view == VIEW_UNLINKED:
-        rows = _unlinked_rows(buckets, events, resolved, upcoming_codes, today)
+        rows = _unlinked_rows(
+            buckets, events, resolved, upcoming_codes | withdrawn_codes,
+            today, mailable,
+        )
     else:
         source = upcoming_events if view == VIEW_UPCOMING else events
         rows = []
@@ -360,7 +450,7 @@ def build_payload(user, view=VIEW_UPCOMING, include_zero=False):
                 continue
             rows.append(_row(
                 event_code=event.event_code, canonical=code,
-                event=event, bucket=bucket, today=today,
+                event=event, bucket=bucket, today=today, mailable=mailable,
             ))
 
     columns = split_columns(
@@ -379,17 +469,43 @@ def build_payload(user, view=VIEW_UPCOMING, include_zero=False):
         "splits": [{"key": spec["key"], "label": spec["label"]} for spec in SPLITS],
         "rows": rows,
         "totals": _totals(rows, buckets, columns),
+        # When the Mailable column was last refreshed AND when it next will be.
+        # Printed beside the figure rather than left implicit: it is the one
+        # number on this page that comes from outside the CRM, so how old it is
+        # and how soon it moves are both part of reading it. The next firing is
+        # read off settings.CRONJOBS through services.cron, which Credit
+        # Control's dashboard reads too, so the two cannot disagree.
+        "mailable_synced_at": _mailable_synced_at(),
+        "mailable_next_sync": _mailable_next_sync(),
         "view_counts": _view_counts(
-            buckets, events, resolved, upcoming_events, upcoming_codes, include_zero,
+            buckets, events, resolved, upcoming_events,
+            upcoming_codes | withdrawn_codes, include_zero,
         ),
         # Unmined tickets carrying no purpose at all. They can never be a row —
         # there is nothing to group them under — so they are reported as a figure
         # rather than dropped without trace.
         "no_purpose": {"links": no_purpose["links"], "estimate": no_purpose["estimate"]},
+        # Work sitting against editions the Performance Matrix has withdrawn.
+        # Excluded from every view on request, and stated here for the same
+        # reason as `no_purpose`: this page exists to surface outstanding work,
+        # so work it deliberately hides has to be visible as a number. It is
+        # also actionable in its own right — unmined tickets against a postponed
+        # edition are tickets somebody should stop working.
+        "withdrawn": {
+            "codes": len(withdrawn_codes),
+            "links": sum(
+                (buckets.get(code) or _empty_bucket())["links"]
+                for code in withdrawn_codes
+            ),
+            "estimate": sum(
+                (buckets.get(code) or _empty_bucket())["estimate"]
+                for code in withdrawn_codes
+            ),
+        },
     }
 
 
-def _unlinked_rows(buckets, events, resolved, upcoming_codes, today):
+def _unlinked_rows(buckets, events, resolved, upcoming_codes, today, mailable=None):
     """
     One row per purpose holding unmined work that the default view misses.
 
@@ -410,6 +526,7 @@ def _unlinked_rows(buckets, events, resolved, upcoming_codes, today):
         rows.append(_row(
             event_code=(event.event_code if event else code),
             canonical=code, event=event, bucket=buckets[code], today=today,
+            mailable=mailable,
         ))
     # Newest first, and a code with no event at all sorts last: among the rest,
     # the recently-run editions are the ones still worth chasing.

@@ -27,6 +27,7 @@ from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from accounts.models import humanize_username
 from book_delegate.models import BookDelegate
 from book_event.models import BookEvent
 from events.models import Event
@@ -278,7 +279,12 @@ class ScanOutcomeTests(Base):
         self.assertEqual(body["record"]["source"], "qr_scan")
         # checked_in_at must be IN the payload. auto_now_add would have hidden it.
         self.assertTrue(body["record"]["checked_in_at"])
-        self.assertEqual(body["record"]["checked_in_by_name"], self.sca.username)
+        # A DISPLAY NAME, not the login handle: User.get_full_name falls back to
+        # humanize_username for an account with no first/last name, so "att_sca"
+        # prints as "Att Sca". Asserted through the helper so the two stay in step.
+        self.assertEqual(
+            body["record"]["checked_in_by_name"], humanize_username(self.sca.username)
+        )
 
     def test_6_a_second_scan_is_already_checked_in_200_with_the_first_time(self):
         badge = qr.mint(self.delegate.id, ATT)

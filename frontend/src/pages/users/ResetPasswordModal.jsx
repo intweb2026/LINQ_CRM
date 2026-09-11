@@ -36,7 +36,7 @@ export default function ResetPasswordModal({ user: u, onClose }) {
   }
 
   return (
-    <Modal size="sm" title="Reset password" sub={u.name + ' · @' + u.username} onClose={onClose}
+    <Modal size="sm" title="Reset password" sub={u.email} onClose={onClose}
       footer={<>
         <button className="btn btn-s" onClick={onClose} disabled={busy}>Cancel</button>
         <button className="btn btn-p" onClick={save} disabled={busy}><Icon name="key" size={15} />{busy ? 'Saving…' : 'Set password'}</button>

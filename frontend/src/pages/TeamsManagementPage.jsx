@@ -3,7 +3,6 @@ import Popover from '../components/Popover';
 import { Icon } from '../lib/icons';
 import { Av } from '../components/Badge';
 import { nf } from '../lib/helpers';
-import { TEAM_ROLES, ROLE_LABEL, ROLE_FULL } from '../lib/constants';
 import * as teamsApi from '../api/teams';
 import * as usersApi from '../api/users';
 import * as statsApi from '../api/stats';
@@ -25,7 +24,9 @@ function Card({ u, metric, canEdit, onDragStart, onDragEnd }) {
     // the board, watch it snap back and collect "Could not move Ada" — the board
     // offering a move the server was always going to refuse.
     <div className="kk" draggable={canEdit ? 'true' : 'false'} onDragStart={() => canEdit && onDragStart(u.name)} onDragEnd={onDragEnd}>
-      <div className="kk-r"><Av name={u.name} size="sm" /><span className="kk-i"><span className="kk-n">{u.name}</span><span className="kk-r2">{ROLE_FULL[u.role]}</span></span></div>
+      {/* The COLUMN says which team this is, so the second line carries the
+          email instead of repeating the team back as a role. */}
+      <div className="kk-r"><Av name={u.name} size="sm" /><span className="kk-i"><span className="kk-n">{u.name}</span><span className="kk-r2">{u.email}</span></span></div>
       <div className="kk-f">
         <span><Icon name="calendar" size={10} />{u.events_count} events</span>
         <span><Icon name={metric.ic} size={10} />{nf(metric.v)}</span>
@@ -73,7 +74,6 @@ export default function TeamsManagementPage() {
   const { canView, can } = useSession();
   const toast = useToast();
   const confirm = useConfirm();
-  const [roleFilter, setRoleFilter] = useState('all');
   const [q, setQ] = useState('');
   const { data: teams, refetchQuiet: reloadTeams } = useFetch(teamsApi.list, [], { initialData: [] });
   const { data: users, refetchQuiet: reloadUsers } = useFetch(usersApi.list, [], { initialData: [] });
@@ -124,7 +124,8 @@ export default function TeamsManagementPage() {
   const un = [];
   USERS.forEach((u) => { if (board[u.team_id]) board[u.team_id].push(u); else un.push(u); });
 
-  function match(u) { if (roleFilter !== 'all' && u.role !== roleFilter) return false; if (q && !u.name.toLowerCase().includes(q.toLowerCase())) return false; return true; }
+  // Filtering a board of TEAMS by role was filtering it by its own columns.
+  function match(u) { return !q || u.name.toLowerCase().includes(q.toLowerCase()); }
   function secondMetric(u) { return u.role === 'market_research' || u.role === 'data_mining' ? { ic: 'ticket', v: userTickets[u.name] || 0 } : { ic: 'receipt', v: userBookings[u.name] || 0 }; }
 
   async function drop(destId) {
@@ -175,10 +176,6 @@ export default function TeamsManagementPage() {
           BookingsPage / TicketCentralPage. */}
       <div className="tb">
         <div className="tb-s"><input className="in in-s" placeholder="Find a person…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <div className="chips">
-          <span className={'chip' + (roleFilter === 'all' ? ' on' : '')} onClick={() => setRoleFilter('all')}>All roles</span>
-          {TEAM_ROLES.map((r) => <span key={r} className={'chip' + (roleFilter === r ? ' on' : '')} onClick={() => setRoleFilter(r)}>{ROLE_LABEL[r]}</span>)}
-        </div>
         <div className="tb-sp" /><span className="tb-m">{USERS.length} members · {TEAMS.length} teams</span>
         {can('create', 'teams') ? <>
           <button className="btn btn-s" onClick={() => toast('Roster exported', 'ok')}><Icon name="download" size={15} />Export roster</button>

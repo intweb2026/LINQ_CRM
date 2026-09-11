@@ -2,7 +2,8 @@ import { createContext, useContext, useState, useCallback, useEffect, useMemo } 
 import * as authApi from '../api/auth';
 import { myPermissions } from '../api/users';
 import { markTokenFreshness } from '../api/client';
-import { ROLE_FULL, ALL_MODULES } from '../lib/constants';
+import { ALL_MODULES } from '../lib/constants';
+import { humanName } from '../lib/helpers';
 import { clearActivity } from '../lib/idle';
 
 const SessionContext = createContext(null);
@@ -68,9 +69,10 @@ function readCachedPerms() {
   return parsed;
 }
 
-// The Google login response only carries username/email/role — the backend has
-// no display-name field on this endpoint — so `name` falls back to whichever
-// identifier is available.
+// `full_name` is the server's own answer and is never blank: User.get_full_name()
+// builds "Arthur Pina" out of the username for an account with no first/last
+// name recorded. humanName() covers the one case it cannot: a token minted by a
+// deploy that predates the field.
 function toUser(data) {
   const username = data.username || data.email;
   return {
@@ -78,13 +80,27 @@ function toUser(data) {
     username,
     email: data.email,
     role: data.role || 'sales',
-    name: username,
+    name: data.full_name || humanName(username),
   };
 }
 
 export function SessionProvider({ children }) {
+  /**
+    * The cached identity, with its NAME RE-DERIVED rather than trusted.
+    *
+    * `auth_user` is written once, at login, and every reload after that reads it
+    * back. So a session that signed in before the server started sending
+    * `full_name` carries `name: "arthur.pina"` and would keep rendering that in
+    * the top bar and the dashboard greeting for as long as the session lasted,
+    * with the fix shipped and invisible. humanName() is idempotent on a real
+    * name, so running it over the cached value costs a correct one nothing and
+    * repairs a stale one on the next page load.
+    */
   const [user, setUser] = useState(() => {
-    try { return JSON.parse(storageGet('auth_user') || 'null'); } catch { return null; }
+    try {
+      const cached = JSON.parse(storageGet('auth_user') || 'null');
+      return cached ? { ...cached, name: humanName(cached.name) } : null;
+    } catch { return null; }
   });
   // A cached matrix is only trusted if it is actually shaped like one. Otherwise
   // permsLoaded would flip true off a malformed blob, skipping the refetch AND
@@ -255,7 +271,6 @@ export function SessionProvider({ children }) {
   const value = useMemo(() => ({
     user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin,
     managedTeam, mayEditMrFields,
-    roleLabel: user ? ROLE_FULL[user.role] || user.role : '',
   }), [user, perms, permsLoaded, loginWithGoogle, loginWithFallback, logout, canView, can, isAdmin, managedTeam, mayEditMrFields]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

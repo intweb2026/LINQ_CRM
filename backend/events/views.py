@@ -435,7 +435,7 @@ class EventViewSet(FilterSpecMixin, BulkUpdateMixin, RBACMixin, viewsets.ModelVi
                     auto_date = False
                     if not event_date:
                         from django.utils import timezone
-                        event_date = timezone.now().date()
+                        event_date = timezone.localdate()
                         auto_date = True
 
                     end_date = _parse_date(row.get("end_date"))

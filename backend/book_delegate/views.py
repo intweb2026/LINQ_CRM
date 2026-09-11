@@ -1,6 +1,7 @@
 import logging
 
 from django.db import transaction
+from django.utils import timezone
 from django.db.models import DecimalField, ExpressionWrapper, F, TextField, Value
 from django.db.models.functions import Coalesce, Concat, NullIf, Trim
 from rest_framework import viewsets, status
@@ -915,7 +916,6 @@ def _perform_transfer(request, delegates, target_code, new_number):
     generate, so the caller supplies it and the collision rules below decide whether
     it may be used.
     """
-    from datetime import date
     from django.db.utils import IntegrityError
     from events.models import Event
 
@@ -985,7 +985,7 @@ def _perform_transfer(request, delegates, target_code, new_number):
     target_edition = (
         target_event.event_date.year if target_event.event_date else source_invoice.edition
     )
-    today = date.today()
+    today = timezone.localdate()   # settings.TIME_ZONE, not the server clock
 
     # Decided BEFORE anything is written, over the set as a whole. Counting after
     # the fact would see the new rows this transfer creates.

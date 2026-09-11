@@ -20,6 +20,20 @@ export const list = (view = VIEWS.UPCOMING, includeZero = false) =>
     .then((r) => r.data);
 
 /**
+ * Refresh the Mailable column from HubSpot, now.
+ *
+ * HERE rather than in Credit Control, which is where this job first got a
+ * button only because that is where the HubSpot client is exercised from.
+ * Nothing in Credit Control reads the figure; a job belongs on the page whose
+ * data it feeds, or nobody can find the button when the number looks wrong.
+ *
+ * Resolves when the sync has actually finished, which is a minute or two for a
+ * few hundred event codes, because only the stale ones are fetched.
+ */
+export const syncMailable = () =>
+  http.post('mining-matrix/sync-mailable/').then((r) => r.data);
+
+/**
  * The Ticket Central URL a matrix row links to.
  *
  * `canonical_code` and NOT `event_code`: the row is labelled with the Events

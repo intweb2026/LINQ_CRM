@@ -244,4 +244,4 @@ class Event(models.Model):
         if not self.event_date:
             return "Live"
         from django.utils import timezone
-        return "Completed" if self.event_date < timezone.now().date() else "Live"
+        return "Completed" if self.event_date < timezone.localdate() else "Live"

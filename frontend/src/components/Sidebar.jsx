@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../lib/icons';
 import { nf } from '../lib/helpers';
-import { NAV, canAccess, homeFor } from '../lib/nav';
+import { NAV, canAccess, homeFor, navEntryFor } from '../lib/nav';
 import * as bookingsApi from '../api/bookings';
 import * as ticketsApi from '../api/tickets';
 import * as eventsApi from '../api/events';
@@ -14,12 +14,13 @@ export default function Sidebar({ collapsed, mobileOpen, onNavigate }) {
   const nav = useNavigate();
   const loc = useLocation();
   const home = homeFor(canView, user?.username, isAdmin);
-  // Compared against each item's `path`, not its `id` — see nav.js: 'paper_review'
-  // is underscored where /paper-review is hyphenated, so the id comparison this
-  // replaces left Paper Review and Proposal Submission permanently unhighlighted
-  // while sitting on those very pages. "/" only exists for the instant before the
-  // index route redirects, so it reads as the landing page.
-  const activePath = '/' + (loc.pathname.split('/')[1] || home.path.slice(1));
+  // The LONGEST matching entry, not the first path segment. See navEntryFor:
+  // taking the segment made every one of Credit Control's five entries resolve
+  // to the first, so Payment Collection highlighted Dashboard. "/" only exists
+  // for the instant before the index route redirects, so it reads as the
+  // landing page.
+  const matched = navEntryFor(loc.pathname === '/' ? home.path : loc.pathname);
+  const activePath = matched ? matched.item.path : home.path;
 
   // The bookings badge is a COUNT — one row off the paginator, not every page of
   // ~35k delegates length-filtered in the browser. This component mounts in the

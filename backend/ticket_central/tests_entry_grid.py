@@ -216,7 +216,7 @@ class BulkCreateTests(APITestCase):
         resp = self._post([self._row(i) for i in range(3)])
         self.assertEqual(resp.status_code, 201, resp.content)
         for row in resp.data["created"]:
-            self.assertEqual(row["added_user_text"], self.mr.username)
+            self.assertEqual(row["added_user_text"], self.mr.get_full_name())
         self.assertEqual(
             Ticket.objects.filter(created_by=self.mr).count(), 3)
 

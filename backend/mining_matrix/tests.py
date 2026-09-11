@@ -541,7 +541,13 @@ class WireSourceTests(TestCase):
         src = self._read("styles", "base.css")
         block = src[src.index("[band_palette]"):]
         light_at = block.index(":root{")
-        dark_at = block.index("html[data-theme=dark]{")
+        # NOT "html[data-theme=dark]{". The theme work grouped the rule as
+        # `html[data-theme=dark],html[data-theme=bastion]{`, so the brace no
+        # longer follows the selector and this looked like a missing dark
+        # palette when the tokens were all present. Matching the selector alone
+        # survives the next theme added to the same rule; the slice below
+        # already runs to the closing brace.
+        dark_at = block.index("html[data-theme=dark]")
         light = block[light_at:block.index("}", light_at)]
         dark = block[dark_at:block.index("}", dark_at)]
 
@@ -605,3 +611,99 @@ class ModuleGateTests(TestCase):
         response = view(APIRequestFactory().get("/api/mining-matrix/"))
         response.render()
         self.assertIn(response.status_code, (401, 403))
+
+
+class WithdrawnVerdictTests(TestCase):
+    """
+    Editions the Performance Matrix has withdrawn are not planned against.
+
+    STATUS AND VERDICT ARE DIFFERENT FIELDS and both matter: status is where an
+    edition sits in its own lifecycle, the verdict is the commercial call an
+    admin recorded. An event at status Draft with a verdict of Cancelled passed
+    the old status test, so miners were being scheduled against editions nobody
+    intends to run.
+    """
+
+    def setUp(self):
+        from datetime import timedelta
+
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+
+        from events.models import Event
+        from ticket_central.models import Ticket
+
+        # An ALL-ACCESS caller, because unmined_by_purpose is RBAC-scoped to
+        # what the asker may see (see its docstring). A plain user sees no
+        # tickets at all, so the buckets come back empty and the figures under
+        # test read zero for a reason that has nothing to do with verdicts.
+        from teams.models import Team
+
+        team = Team.objects.create(name="MM Admins", is_all_access=True)
+        self.user = get_user_model().objects.create_user(
+            username="mm-verdict", email="mm@iq-hub.com", password="x", team=team,
+        )
+        soon = timezone.now().date() + timedelta(days=30)
+        for code, verdict in (
+            ("LIVEA", Event.Verdict.GOING_AHEAD),
+            ("LIVEB", Event.Verdict.STANDBY),
+            ("GONEA", Event.Verdict.POSTPONED),
+            ("GONEB", Event.Verdict.CANCELLED),
+            ("GONEC", Event.Verdict.TBP),
+        ):
+            Event.objects.create(
+                event_code=code, name=code, event_date=soon, verdict=verdict,
+            )
+            # Unmined work against each, so an excluded one would be visible if
+            # it leaked into a row or a total.
+            Ticket.objects.create(
+                purpose=code, event_code=code, estimate=100, actual_number=None,
+            )
+
+    def _payload(self, view="upcoming"):
+        return services.build_payload(self.user, view=view, include_zero=True)
+
+    def test_a_withdrawn_edition_is_not_a_row_in_any_view(self):
+        for view in ("upcoming", "all"):
+            with self.subTest(view=view):
+                codes = {r["event_code"] for r in self._payload(view)["rows"]}
+                self.assertIn("LIVEA", codes)
+                self.assertNotIn("GONEA", codes)
+                self.assertNotIn("GONEB", codes)
+                self.assertNotIn("GONEC", codes)
+
+    def test_all_three_verdicts_are_excluded_not_just_cancelled(self):
+        """
+        Cancelled was already excluded by CLOSED_STATUSES in one view. Postponed
+        and TBP were not excluded anywhere, which is what this is really for.
+        """
+        codes = {r["event_code"] for r in self._payload("all")["rows"]}
+        self.assertFalse({"GONEA", "GONEB", "GONEC"} & codes)
+
+    def test_a_withdrawn_only_code_is_not_reported_as_unlinked(self):
+        """
+        The subtle one, and the version that shipped first got it wrong.
+
+        Excluding withdrawn events from the QUERY made a code whose only edition
+        is Postponed look like a join failure, so the Unlinked tab grew. It is
+        not unlinked: the catalogue carries it, against something nobody is
+        running. Excluded from that view too, and reported as its own figure.
+        """
+        codes = {r["canonical_code"] for r in self._payload("unlinked")["rows"]}
+        self.assertNotIn("GONEA", codes)
+        self.assertNotIn("GONEC", codes)
+
+    def test_the_hidden_work_is_disclosed_rather_than_vanishing(self):
+        """
+        A page that exists to surface outstanding work must not hide any of it
+        silently, so what the exclusion removed is stated as a figure.
+        """
+        withdrawn = self._payload()["withdrawn"]
+        self.assertEqual(withdrawn["codes"], 3)
+        self.assertEqual(withdrawn["links"], 3)
+        self.assertEqual(withdrawn["estimate"], 300)
+
+    def test_live_verdicts_all_stay_in(self):
+        codes = {r["event_code"] for r in self._payload()["rows"]}
+        self.assertIn("LIVEA", codes)
+        self.assertIn("LIVEB", codes)

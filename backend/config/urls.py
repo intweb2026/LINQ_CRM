@@ -124,6 +124,9 @@ urlpatterns = [
     # target (callback/) alongside three authenticated ones, not a router
     # resource.
     path("api/gmail/", include("gmail_integration.urls")),
+    # Credit Control. A queue plus one aggregate response, so an include
+    # rather than a router entry above; the leads router lives inside it.
+    path("api/credit-control/", include("credit_control.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),
     # GROUP BY aggregates for the Dashboard. Replaces ~350 sequential

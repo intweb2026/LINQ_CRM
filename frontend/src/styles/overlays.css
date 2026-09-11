@@ -77,8 +77,7 @@
 .bc-s i{display:block;transition:height .7s var(--ease)}
 .bc-s i:first-child{border-radius:3px 3px 0 0}
 .bc-l{font-size:9px;color:var(--text-4);margin-top:6px;font-weight:600}
-.bc-t{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:6px 9px;background:var(--n-800);color:var(--n-0);font-size:10px;border-radius:var(--r-sm);white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .13s;z-index:6;box-shadow:var(--sh-md);line-height:1.5}
-html[data-theme=dark] .bc-t{background:var(--n-100);color:var(--text)}
+.bc-t{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:6px 9px;background:var(--n-800);color:var(--n-0);font-size:10px;border-radius:var(--r-sm);white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .13s;z-index:6;box-shadow:var(--sh-md);line-height:1.5}html[data-theme=dark] .bc-t,html[data-theme=bastion] .bc-t{background:var(--n-100);color:var(--text)}
 .bc-s:hover .bc-t{opacity:1}
 .spk{width:62px;height:21px;flex-shrink:0}
 .spk path{fill:none;stroke:var(--t-500);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
@@ -295,6 +294,49 @@ table.gt th.num,table.gt td.num{text-align:right}
 .fg.c3{grid-template-columns:repeat(3,1fr)}
 .fg.c4{grid-template-columns:repeat(4,1fr)}
 .fg .f{grid-column:1/-1}
+/* ── the user form ──  [user_form]
+   The Add/Edit user modal, and only it. Everything here is a tightening of the
+   shared form language above rather than a replacement for it, so the form is
+   still recognisably the same one as every other modal, just denser and squared
+   off. Scoped rather than promoted: the rest of the CRM's forms hold long prose
+   fields where the softer --r-md and the roomier gaps are right.
+
+   WHAT "BOXY" MEANS HERE
+   --r-tag, the token the tags and pills already square off on, so the controls
+   agree with the state tags in the tables rather than inventing a third radius.
+   The two themes that flatten everything take it to 0 for free.
+
+   WHAT IS GREY
+   Any value the user has not supplied: an empty input via ::placeholder, an
+   empty <select> via .in-un, a field the server decided via :disabled. Colour
+   is reserved for something they typed or picked, so the form can be read at a
+   glance for what is actually filled in. */
+.ufm .fs{margin-bottom:15px}
+.ufm .fs-t{margin-bottom:9px}
+.ufm .fg{gap:9px}
+.ufm .fd{gap:4px}
+.ufm .in{border-radius:var(--r-tag);box-shadow:none}
+/* Wider than one column of three, narrower than the modal. An address needs the
+   room; a first name does not. */
+.ufm .f2{grid-column:span 2}
+.ufm .in-un,.ufm .in:disabled,.ufm .in[readonly]{color:var(--text-4)}
+/* Booleans as tiles on the same three-column rhythm as the fields above them,
+   so the row lines up instead of floating. */
+.ufm-flags{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:9px}
+.ufm-flag{
+  display:flex;align-items:center;gap:9px;height:35px;padding:0 11px;
+  border:1px solid var(--border-s);border-radius:var(--r-tag);
+  background:var(--surface);cursor:pointer;user-select:none;
+  font-size:12px;font-weight:600;color:var(--text-4);transition:all .13s;
+}
+.ufm-flag:hover{border-color:var(--n-300)}
+.ufm-flag.on{border-color:var(--t-500);background:var(--t-50);color:var(--t-700)}
+/* The notes that used to sit under every single field, collected into one block
+   that carries only what applies to this account. */
+.ufm-n{font-size:10.5px;color:var(--text-4);line-height:1.5;margin-top:9px}
+ul.ufm-n{display:flex;flex-direction:column;gap:3px;list-style:none;padding:0}
+.ufm-n b{font-weight:680;color:var(--text-3)}
+
 /* A COLUMN of fields inside .fg, for forms that have to read top-to-bottom in
    each column rather than left-to-right across the row — .fg alone is row-major,
    which would scatter a laid-out form's field order. Columns of unequal length
@@ -443,7 +485,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .kc-h{padding:10px 12px 8px;display:flex;align-items:center;gap:7px;flex-shrink:0;border-bottom:1px solid var(--border)}
 .kc-d{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .kc-n{font-size:11.5px;font-weight:700;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kc-c{font-size:9.5px;font-weight:700;color:var(--text-3);background:var(--n-75);padding:1.5px 6px;border-radius:var(--r-full);flex-shrink:0}
+.kc-c{font-size:9.5px;font-weight:700;color:var(--text-3);background:var(--n-75);padding:1.5px 6px;border-radius:var(--r-tag);flex-shrink:0}
 .kc-b{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:56px}
 .kk{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:9px 10px;cursor:grab;transition:box-shadow .13s,border-color .13s;box-shadow:var(--sh-xs);flex-shrink:0}
 .kk:hover{box-shadow:var(--sh-md);border-color:var(--t-200)}
@@ -455,7 +497,7 @@ table.gt th.num,table.gt td.num{text-align:right}
 .kk-f{display:flex;align-items:center;gap:6px;margin-top:7px;padding-top:7px;border-top:1px solid var(--n-50);font-size:9.5px;color:var(--text-4);flex-wrap:wrap}
 .kk-f span{display:inline-flex;align-items:center;gap:3px}
 .kk-f svg{width:10px;height:10px}
-.kk-ld{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;color:var(--amber-tx);background:var(--amber-bg);padding:1.5px 6px;border-radius:var(--r-full);margin-left:auto}
+.kk-ld{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;color:var(--amber-tx);background:var(--amber-bg);padding:1.5px 6px;border-radius:var(--r-tag);margin-left:auto}
 .kk-ld svg{width:9px;height:9px}
 .kc-e{padding:16px 8px;font-size:10.5px;color:var(--text-4);text-align:center;border:1.5px dashed var(--border);border-radius:var(--r-sm)}
 
@@ -538,11 +580,9 @@ table.gt th.num,table.gt td.num{text-align:right}
 .lg-l{display:flex;flex-direction:column;justify-content:center;padding:48px 8vw}
 .lg-mk{display:flex;align-items:center;gap:11px;margin-bottom:38px}
 .lg-mk-img{height:36px;width:auto;display:none}
-.lg-mk-img.lg-light{display:block}
-html[data-theme=dark] .lg-mk-img.lg-light{display:none}
-html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
+.lg-mk-img.lg-light{display:block}html[data-theme=dark] .lg-mk-img.lg-light,html[data-theme=bastion] .lg-mk-img.lg-light{display:none}html[data-theme=dark] .lg-mk-img.lg-dark,html[data-theme=bastion] .lg-mk-img.lg-dark{display:block}
 .lg-mk span{font-size:9px;font-weight:650;text-transform:uppercase;letter-spacing:.1em;color:var(--text-4)}
-.lg-l h1{font-size:27px;font-weight:800;letter-spacing:-.04em;color:var(--text);line-height:1.15}
+.lg-l h1{font-family:var(--display);font-size:27px;font-weight:800;letter-spacing:-.04em;color:var(--text);line-height:1.15}
 .lg-l>p{font-size:13px;color:var(--text-3);margin-top:7px;max-width:380px;line-height:1.55}
 .lg-fm{margin-top:26px;max-width:380px;display:flex;flex-direction:column;gap:14px}
 .lg-seg{display:inline-flex;background:var(--n-75);border-radius:var(--r-md);padding:2.5px;gap:2px;align-self:flex-start;margin-bottom:2px}
@@ -573,18 +613,19 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
      instead of the sidebar covering it. */
   .rail{width:246px;transform:translateX(-100%);box-shadow:var(--sh-xl);z-index:85}
   .rail.open{transform:translateX(0)}
-  body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel,body.rail-min .rail-utx,body.rail-min .rail-out{display:revert}
+  body.rail-min .rail-name,body.rail-min .rail-lb,body.rail-min .rail-glabel{display:revert}
   body.rail-min .rail-head{justify-content:flex-start;padding:13px 14px}
   body.rail-min .rail-item{justify-content:flex-start;padding:0 9px;height:35px}
   body.rail-min .rail-group{margin-bottom:15px;padding-top:0;border-top:none}
   body.rail-min .rail-bdg{position:static;background:var(--n-75);color:var(--text-3);box-shadow:none;font-size:10px;height:auto;padding:1px 6px}
-  body.rail-min .rail-user{justify-content:flex-start;padding:6px 8px}
   .rail-collapse,body.rail-min .rail-collapse{display:none}
   .rail-tip,body.rail-min .rail-tip{display:none!important}
   .top{left:0;padding:0 13px}
   .top-burger{display:grid}
   .top-crumb{display:none}
   .top-search{width:auto;flex:1;min-width:0}
+  /* The button keeps its label; the name is what gives way on a narrow bar. */
+  .top-me-n{display:none}
   /* Below this width the same handoff as .md-b.fill just under: #main drops
      its viewport-pinned position and goes back to a plain block that grows
      with its content — margin-top (rather than an inset) clears the fixed
@@ -597,6 +638,8 @@ html[data-theme=dark] .lg-mk-img.lg-dark{display:block}
   .scrim{left:0}
   .kpis{grid-template-columns:1fr 1fr}
   .fg,.fg.c3,.fg.c4,.ro{grid-template-columns:1fr}
+  .ufm .f2{grid-column:auto}
+  .ufm-flags{grid-template-columns:1fr 1fr}
   /* One column of narrow fields has no room for a 128px label gutter. */
   .fd-h{flex-direction:column;align-items:stretch;gap:5px}
   .fd-h>.fd-l{flex:none;text-align:left}

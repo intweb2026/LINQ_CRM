@@ -56,6 +56,7 @@ from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
 from django.db.models import CharField, DateField, F, Value
+from django.utils import timezone
 from django.db.models.functions import Coalesce, NullIf, Upper
 
 from book_delegate.models import BookDelegate
@@ -349,7 +350,10 @@ def _ticket_targets(fam, today):
 
 
 def build_payload(view=VIEW_UPCOMING, today=None, user=None):
-    today = today or date.today()
+    # localdate(), not date.today(): the latter is the SERVER clock, which is
+    # UTC in production, so "which edition is still upcoming" flipped a day
+    # early for the last hours of every Pacific day.
+    today = today or timezone.localdate()
     events = list(Event.objects.order_by("event_date", "pk"))
     fam, code_to_base, folded = _families(events)
     win = _windows(fam)

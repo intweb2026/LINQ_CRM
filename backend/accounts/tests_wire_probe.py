@@ -34,7 +34,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from accounts.models import (
-    CRM_MODULES, TEAM_NAME_ROLE_KEYWORDS, role_from_team_name,
+    CRM_MODULES, TEAM_NAME_ROLE_KEYWORDS, humanize_username, role_from_team_name,
 )
 from book_delegate.models import BookDelegate
 from book_delegate.views import BookDelegateViewSet
@@ -349,6 +349,27 @@ class WireLiteralReplayTests(TestCase):
             js_pairs, py_pairs,
             "frontend/src/lib/roleFromTeam.js has drifted from "
             "accounts/models.py TEAM_NAME_ROLE_KEYWORDS",
+        )
+
+    def test_the_cached_display_name_matches_what_the_server_would_send(self):
+        """
+        SessionContext re-derives `auth_user.name` on every load, because the
+        cached blob was written before the login response carried `full_name`.
+        A different answer there means the top bar names somebody one way and
+        every payload about them names them another.
+        """
+        js_answers = self.probe["literals"]["human_name_map"]
+        self.assertTrue(js_answers, "probe evaluated no usernames")
+
+        disagreements = []
+        for raw, js_name in js_answers.items():
+            py_name = humanize_username(raw)
+            if py_name != js_name:
+                disagreements.append(f"{raw!r}: js={js_name!r} python={py_name!r}")
+        self.assertEqual(
+            disagreements, [],
+            "frontend/src/lib/helpers.js humanName has drifted from "
+            "accounts/models.py humanize_username:\n  " + "\n  ".join(disagreements),
         )
 
     def test_captured_toggle_status_body_flips_the_status(self):

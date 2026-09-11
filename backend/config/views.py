@@ -149,7 +149,7 @@ class DashboardStatsView(APIView):
         )
 
         from django.utils import timezone
-        today = timezone.now().date()
+        today = timezone.localdate()
 
         ev_stats = ev_qs.aggregate(
             total=Count("id"),
