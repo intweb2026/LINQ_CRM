@@ -713,7 +713,7 @@ function SponsorTable({ rows }) {
  * and one whose last run is unknown shows only the next, rather than inventing
  * a history.
  */
-function ScheduleBrief({ rows, canRun }) {
+function ScheduleBrief({ rows, canRun, onDone }) {
   const toast = useToast();
   const [running, setRunning] = useState('');
   if (!rows || !rows.length) return null;
@@ -726,6 +726,11 @@ function ScheduleBrief({ rows, canRun }) {
       // toast is not a log; the rest is in the server log if anybody needs it.
       const [summary] = (result.output || '').split(/\r?\n/);
       toast(`${label} finished. ${summary || ''}`.trim(), 'ok');
+      // THE RECEIPT IS THE CHIP'S OWN TIMESTAMP. A toast is gone in under four
+      // seconds and these jobs run inline for minutes, so the operator is
+      // rarely looking when it fires. Refetching turns "never run" into "1m
+      // ago" and leaves proof on the page that outlives the toast.
+      onDone?.();
     } catch (err) {
       toast(apiErrorMessage(err, `${label} did not run.`), 'er');
     } finally {
@@ -753,8 +758,14 @@ function ScheduleBrief({ rows, canRun }) {
             <em className="cc-sched-last">
               {r.last_run ? rel(r.last_run) : 'never run'}
             </em>
-            <em className={next.mins !== null && next.mins < 60 ? 'is-soon' : undefined}>
-              {next.text}
+            <em className={
+              running === r.key || (next.mins !== null && next.mins < 60)
+                ? 'is-soon' : undefined
+            }>
+              {/* The classifier and the HubSpot job can run for minutes. An
+                  ellipsis inside a 9px button is not a progress signal, so the
+                  chip says so at chip size. */}
+              {running === r.key ? 'running now' : next.text}
             </em>
             {/* Cron owns the cadence; this is for when somebody has just fixed
                 a verdict or an invoice date and wants to see it land. Admin
@@ -893,13 +904,16 @@ const AGED_HUE = {
   'Add-Ons Only': 'var(--violet)',
 };
 
-function Dashboard({ data, canRun }) {
+function Dashboard({ data, canRun, onDone }) {
   if (!data) return null;
   const k = data.kpis || {};
   const { h36, h72 } = data.age_thresholds || { h36: 36, h72: 72 };
   const status = data.status || {};
   const aged = data.aged_debtor || { buckets: [], rows: {} };
   const bifurcation = data.bifurcation || {};
+  // The bifurcation's rep columns, in the same order and from the same source
+  // as the per-caller section's rows, so the two cannot list different people.
+  const reps = Object.keys(data.status || {});
   const matrix = data.shift_matrix || { dates: [], rows: [], source: '' };
 
   const agedTotal = (row) => aged.buckets.reduce((s, b) => s + (row[b] || 0), 0);
@@ -968,7 +982,7 @@ function Dashboard({ data, canRun }) {
 
   return (
     <div className="ccd">
-      <ScheduleBrief rows={data.schedule} canRun={canRun} />
+      <ScheduleBrief rows={data.schedule} canRun={canRun} onDone={onDone} />
 
       <div className="ccd-sec">
         <div className="ccd-kpis">
@@ -1153,7 +1167,8 @@ function Dashboard({ data, canRun }) {
         <div className="ccd-h">
           <h3>Status bifurcation</h3>
           <p>
-            Every active lead sits in exactly one disposition. A row at zero
+            Every active lead sits in exactly one disposition. Total first, then
+            who is holding them, then how much of each has aged. A row at zero
             still renders, so the table keeps its shape from day to day.
           </p>
         </div>
@@ -1163,6 +1178,7 @@ function Dashboard({ data, canRun }) {
               <tr>
                 <th>Disposition</th>
                 <th>Total</th>
+                {reps.map((name) => <th key={name}>{name}</th>)}
                 <th>Past {h36}h</th>
                 <th>Past {h72}h</th>
               </tr>
@@ -1171,10 +1187,14 @@ function Dashboard({ data, canRun }) {
               {Object.entries(bifurcation).flatMap(([group, rows]) => {
                 const entries = Object.entries(rows);
                 const sum = (key) => entries.reduce((s, [, c]) => s + (c[key] || 0), 0);
+                const repSum = (name) => entries.reduce(
+                  (s, [, c]) => s + ((c.reps || {})[name] || 0), 0,
+                );
                 return [
                   <tr className="ccd-t-grp" key={group} style={{ '--ac': GROUP_HUE[group] }}>
                     <td>{group}</td>
                     <td>{sum('total')}</td>
+                    {reps.map((name) => <td key={name}>{repSum(name)}</td>)}
                     <td>{sum('h36')}</td>
                     <td>{sum('h72')}</td>
                   </tr>,
@@ -1182,6 +1202,12 @@ function Dashboard({ data, canRun }) {
                     <tr key={`${group}-${label}`}>
                       <td className="ccd-sub-row">{label}</td>
                       <td className={cell.total ? undefined : 'ccd-zero'}>{cell.total}</td>
+                      {reps.map((name) => {
+                        const n = (cell.reps || {})[name] || 0;
+                        return (
+                          <td key={name} className={n ? undefined : 'ccd-zero'}>{n}</td>
+                        );
+                      })}
                       <td className={cell.h36 ? undefined : 'ccd-zero'}>{cell.h36}</td>
                       <td className={cell.h72 ? undefined : 'ccd-zero'}>{cell.h72}</td>
                     </tr>
@@ -1334,6 +1360,12 @@ export default function CreditControlPage() {
     ));
   }, []);
 
+  /** Refetch the dashboard. Shared by the Refresh button and the job chips. */
+  const reload = useCallback(() => {
+    bumpRef.current += 1;
+    setBump(bumpRef.current);
+  }, []);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -1343,14 +1375,13 @@ export default function CreditControlPage() {
         + `${summary.done} resolved.`,
         'ok',
       );
-      bumpRef.current += 1;
-      setBump(bumpRef.current);
+      reload();
     } catch (err) {
       toast(apiErrorMessage(err, 'The routing pass did not run.'), 'er');
     } finally {
       setRefreshing(false);
     }
-  }, [toast]);
+  }, [toast, reload]);
 
   const saveRemark = useCallback(async () => {
     if (!remarkFor) return;
@@ -1420,7 +1451,7 @@ export default function CreditControlPage() {
       {isDash ? (
         dashLoading
           ? <EmptyState icon="clock" title="Loading" body="Building the aggregate." />
-          : <Dashboard data={dashData} canRun={isAdmin} />
+          : <Dashboard data={dashData} canRun={isAdmin} onDone={reload} />
       ) : listLoading ? (
         <EmptyState icon="clock" title="Loading" body="Fetching the list." />
       ) : bucket === ccApi.BUCKETS.SPEX ? (

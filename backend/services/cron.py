@@ -34,8 +34,13 @@ from django.utils import timezone
 #   "30 12 * * *"     one time of day
 #   "0 * * * *"       every hour
 #   "0 13-22 * * *"   every hour within a window
-#   "30 1 * * *"      one time of day
-_LOOKAHEAD_DAYS = 2
+#   "0 2 * * 0"       one time of day, one day of the week
+#
+# Eight days of lookahead, not two, because the weekly shape needs a full week
+# plus the day it is standing on. Two was right while every spec was daily, and
+# it silently dropped the weekly log prune the moment something actually read
+# this list to decide what to run.
+_LOOKAHEAD_DAYS = 8
 
 
 def next_fire(spec: str, now=None):
@@ -51,7 +56,17 @@ def next_fire(spec: str, now=None):
         minute, hour, dom, month, dow = spec.split()
     except (AttributeError, ValueError):
         return None
-    if dom != "*" or month != "*" or dow != "*" or not minute.isdigit():
+    if dom != "*" or month != "*" or not minute.isdigit():
+        return None
+
+    # cron counts days from Sunday and accepts 7 for it as well as 0; Python
+    # counts from Monday. One expression rather than a table, because getting
+    # this wrong moves a job by a day and nothing would say so.
+    if dow == "*":
+        days = None
+    elif dow.isdigit() and 0 <= int(dow) <= 7:
+        days = {(int(dow) % 7 + 6) % 7}
+    else:
         return None
 
     if hour == "*":
@@ -70,10 +85,11 @@ def next_fire(spec: str, now=None):
     minute = int(minute)
     base = now.replace(second=0, microsecond=0)
     for day in range(_LOOKAHEAD_DAYS):
+        stamp = base + timedelta(days=day)
+        if days is not None and stamp.weekday() not in days:
+            continue
         for candidate_hour in hours:
-            when = (base + timedelta(days=day)).replace(
-                hour=candidate_hour, minute=minute,
-            )
+            when = stamp.replace(hour=candidate_hour, minute=minute)
             if when > now:
                 return when
     return None

@@ -11,16 +11,24 @@ MR_FIELDS = frozenset([
     "priority", "estimate", "mr_comments", "assigned_mr",
 ])
 
+# The four import-provenance fields that used to be listed here,
+# source_spreadsheet_id, source_tab, source_row_number and idempotency_key, are
+# NO LONGER PART OF THE MODULE. They were the Zoho migration's own bookkeeping,
+# carried into the CRM because the export had them; nobody raises, works or reads
+# a ticket by them. Removing them from this set is what takes them out of the
+# serializers, the filters and the writable surface, since every one of those is
+# derived from here or from the model. The DATABASE COLUMNS are still there,
+# holding what the import wrote, so nothing is lost and re-exposing one is a
+# one-line change; see IMPORT_HIDDEN_FIELDS in utils.py for the import side.
 DMD_FIELDS = frozenset([
     "assign_name", "assign_date", "actual_number", "new_contacts_created",
-    "source_spreadsheet_id", "source_tab", "source_row_number", "idempotency_key",
     "ticket_type", "complete_date", "hubspot_entry_date",
     "mined_count", "dm_comments",
     # Level 2 (LX-2) fields belong to DMD as well
     "assign_name_lx2", "actual_count_lx2", "complete_date_lx2", "dm_comments_lx2",
 ])
 
-# DMD_FIELDS — full set (includes source_* and idempotency_key — import metadata)
+# DMD_FIELDS — every DMD-owned field
 # DMD_WORK_FIELDS — the subset that indicates actual DMD activity
 DMD_WORK_FIELDS = frozenset([
     "assign_name", "assign_date", "actual_number", "new_contacts_created",

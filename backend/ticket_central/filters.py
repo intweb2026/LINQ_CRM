@@ -27,7 +27,6 @@ class TicketFilter(django_filters.FilterSet):
     linkedin_keywords     = django_filters.CharFilter(lookup_expr="icontains")
     mr_comments           = django_filters.CharFilter(lookup_expr="icontains")
     dm_comments           = django_filters.CharFilter(lookup_expr="icontains")
-    source_tab            = django_filters.CharFilter(lookup_expr="icontains")
 
     # Date range filters
     created_at_from       = django_filters.DateFilter(field_name="created_at",        lookup_expr="gte")
@@ -56,7 +55,7 @@ class TicketFilter(django_filters.FilterSet):
             "purpose", "competitor_event_name", "organizer",
             "event_location", "linkedin_keywords",
             "assigned_mr", "assign_name", "assign_name_lx2",
-            "mr_comments", "dm_comments", "source_tab",
+            "mr_comments", "dm_comments",
             "created_at_from", "created_at_to",
             "complete_date_from", "complete_date_to",
             "assign_date_from", "assign_date_to",

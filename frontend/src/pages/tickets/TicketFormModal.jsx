@@ -56,8 +56,11 @@ const MR_KEYS = [
   'relationship', 'type_of_ticket', 'priority', 'estimate', 'mr_comments', 'assigned_mr',
 ];
 const DMD_KEYS = [
+  // The four import-provenance keys that used to sit here, Source_Spreadsheet_ID,
+  // Source_Tab, Source_Row_Number and Idempotency_Key, are gone from the module.
+  // They were the Zoho migration's own bookkeeping, never work product, and the
+  // server no longer serves, filters or imports them.
   'assign_name', 'assign_date', 'actual_number', 'new_contacts_created',
-  'source_spreadsheet_id', 'source_tab', 'source_row_number', 'idempotency_key',
   'ticket_type', 'complete_date', 'hubspot_entry_date', 'mined_count', 'dm_comments',
   'assign_name_lx2', 'actual_count_lx2', 'complete_date_lx2', 'dm_comments_lx2',
 ];
@@ -65,7 +68,7 @@ const ALL_KEYS = [...MR_KEYS, ...DMD_KEYS];
 
 // Everything is held as a string while editing (that is what an <input> gives
 // back); these two sets say how to turn each one back into what the API wants.
-const NUM_KEYS = new Set(['estimate', 'actual_number', 'new_contacts_created', 'source_row_number', 'mined_count', 'actual_count_lx2']);
+const NUM_KEYS = new Set(['estimate', 'actual_number', 'new_contacts_created', 'mined_count', 'actual_count_lx2']);
 const DATE_KEYS = new Set(['event_month_year', 'assign_date', 'complete_date', 'hubspot_entry_date', 'complete_date_lx2']);
 
 /**
@@ -418,18 +421,6 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
               </Field>
               <Field label="New Contacts Created">
                 <NumField min={0} value={form.new_contacts_created} onChange={set('new_contacts_created')} disabled={!dmdOpen} />
-              </Field>
-              <Field label="Source_Spreadsheet_ID">
-                <input className="in" value={form.source_spreadsheet_id} onChange={set('source_spreadsheet_id')} disabled={!dmdOpen} />
-              </Field>
-              <Field label="Source_Tab">
-                <input className="in" value={form.source_tab} onChange={set('source_tab')} disabled={!dmdOpen} />
-              </Field>
-              <Field label="Source_Row_Number">
-                <NumField min={0} value={form.source_row_number} onChange={set('source_row_number')} disabled={!dmdOpen} />
-              </Field>
-              <Field label="Idempotency_Key">
-                <input className="in" value={form.idempotency_key} onChange={set('idempotency_key')} disabled={!dmdOpen} />
               </Field>
             </div>
             <div className="fcol">

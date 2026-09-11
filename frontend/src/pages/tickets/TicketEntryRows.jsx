@@ -117,6 +117,28 @@ function newDraft(prev) {
  */
 const notStarted = (d) => FIELD_ORDER.every((k) => !(d.v[k] || '').trim() || d.carry[k]);
 
+/**
+ * Whether the caret sits at the edge of the value it is in, which is what
+ * decides between moving the caret inside a cell and moving out of it.
+ *
+ * Exported for its test only. `back` is a move to the LEFT, so the edge is the
+ * start of the value; otherwise it is the end. A selection that spans anything
+ * is never at an edge, since the arrow collapses it, which is the browser's own job.
+ *
+ * No caret to protect at all, on a number or a month box, counts as the edge.
+ * Reading selectionStart on those THROWS in Chrome rather than answering null,
+ * which is why this is wrapped. They hold one short value each, and left and
+ * right are better spent on the grid than on their segments.
+ */
+export function atEdge(el, back) {
+  let from;
+  let to;
+  try { from = el.selectionStart; to = el.selectionEnd; } catch { return true; }
+  if (from == null || to == null) return true;
+  if (from !== to) return false;
+  return back ? from === 0 : from >= (el.value || '').length;
+}
+
 // ── Draft storage ────────────────────────────────────────────────────────────
 
 const storeKey = (who) => `tickets.drafts.${who || 'anon'}`;
@@ -295,16 +317,42 @@ function TicketEntryRows({ onCreated, openRef }) {
     return all.length ? 'warn' : 'ok';
   }, [drafts, issues]);
 
-  // ── Keyboard: the two spreadsheet habits that survive native inputs ─
+  // ── Keyboard, the spreadsheet habits that survive native inputs ─────
   //
-  // Tab is the browser's own and needs no code. Enter moves DOWN the same
-  // column, growing the band off the last row; Ctrl+D pulls the value from the
-  // row above into the focused field.
-  const focusCell = useCallback((r, k) => {
+  // Tab is the browser's own and needs no code. The arrows move a cell, up and
+  // down the column and across the row; Enter moves down and grows the band off
+  // the last row; Ctrl+D pulls the value from the row above into the focused
+  // field.
+  const focusCell = useCallback((r, k, caret) => {
     const el = rootRef.current
       && rootRef.current.querySelector(`[data-r="${r}"][data-k="${k}"]`);
-    if (el) el.focus();
+    if (!el) return;
+    el.focus();
+    // Arriving sideways, the caret goes to the edge the move came from, so the
+    // next press of the same key walks through this cell's text before leaving
+    // it. Without it a cell with a value in it is stepped straight over.
+    // A number or month box has no caret to set and throws when asked.
+    if (caret == null) return;
+    const at = caret === 'start' ? 0 : (el.value || '').length;
+    try { el.setSelectionRange(at, at); } catch { /* no selection on this type */ }
   }, []);
+
+  /**
+   * Down the column, growing the band off the last row. focus() brings the cell
+   * into view on its own, which is what makes the arrows scroll a long batch.
+   */
+  const step = useCallback((r, k, dr, grow) => {
+    const to = r + dr;
+    if (to < 0) return;
+    if (to >= drafts.length) {
+      // Only Enter grows the band. An arrow held down at the last row would
+      // otherwise deal out rows for as long as the key was held.
+      if (!grow) return;
+      addRows(1);
+    }
+    // The next row may not exist until React commits, hence the frame's delay.
+    requestAnimationFrame(() => focusCell(to, k));
+  }, [drafts.length, addRows, focusCell]);
 
   const onKeyDown = (r, k) => (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
@@ -312,11 +360,37 @@ function TicketEntryRows({ onCreated, openRef }) {
       if (r > 0) setCell(r, k, drafts[r - 1].v[k] || '');
       return;
     }
-    if (e.key === 'Enter' && e.target.tagName !== 'SELECT') {
+    // SELECT is left alone throughout, since up and down are how a native dropdown is
+    // operated, and a picker that is open takes the arrows before this fires.
+    if (e.target.tagName === 'SELECT') return;
+    if (e.key === 'Enter') {
       e.preventDefault();
-      if (r === drafts.length - 1) addRows(1);
-      // The next row may not exist until React commits, hence the frame's delay.
-      requestAnimationFrame(() => focusCell(r + 1, k));
+      step(r, k, 1, true);
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      // Costs the number box its spinner and the month box its segment nudge.
+      // Worth it, because this is a grid and moving between rows is what the keys are
+      // for here; the value is typed, as it is in every other cell.
+      e.preventDefault();
+      step(r, k, e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      // ACROSS the row, but only from the edge of the value. Left and right are
+      // how a caret is moved through text, so taking them unconditionally would
+      // make a typo in the middle of a link unfixable by keyboard; from the edge
+      // there is nothing left to move through and the next cell is what the key
+      // can only have meant.
+      const back = e.key === 'ArrowLeft';
+      if (!atEdge(e.target, back)) return;
+      const c = FIELD_ORDER.indexOf(k) + (back ? -1 : 1);
+      // Clamped at the ends of the row rather than wrapping. Tab is what crosses
+      // from the last field of one row to the first of the next, and a wrap
+      // here would move the row under the reader without their asking.
+      if (c < 0 || c >= FIELD_ORDER.length) return;
+      e.preventDefault();
+      focusCell(r, FIELD_ORDER[c], back ? 'end' : 'start');
     }
   };
 
@@ -491,7 +565,8 @@ function TicketEntryRows({ onCreated, openRef }) {
         {stats.warn && !stats.blocked ? <span className="tg bg-amber">{stats.warn} to check, will submit</span> : null}
         <span className="eg-hint">{stats.first}</span>
         <span className="eg-keys">
-          <kbd>Enter</kbd> next row
+          <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> move cell
+          <kbd>Enter</kbd> new row
           <kbd>Tab</kbd> next field
           <kbd>Ctrl</kbd><kbd>D</kbd> copy from above
           <kbd>Ctrl</kbd><kbd>V</kbd> paste a block
@@ -499,6 +574,14 @@ function TicketEntryRows({ onCreated, openRef }) {
         <div className="eg-acts">
           <button type="button" className="btn btn-s btn-sm" onClick={() => addRows(1)}>
             <Icon name="plus" size={13} />Row
+          </button>
+          {/* A batch is a batch, ten rows in one click rather than ten clicks
+              on the button beside it. They inherit the event and its
+              classification from the last row the same way a single one does,
+              so a ten-ticket batch for one event is typed link by link. */}
+          <button type="button" className="btn btn-s btn-sm" onClick={() => addRows(10)}
+            title="Add ten rows at once">
+            <Icon name="plus" size={13} />10 rows
           </button>
           <button type="button" className="btn btn-s btn-sm" onClick={discardAll}
             title="Discard every unsubmitted row">

@@ -475,9 +475,13 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 /* The loading line borrows .more, whose border-top is a divider under rows it
    does not have here. */
 .dt-empty>.more{margin:auto;border-top:none}
-/* Drafts are what the user is typing; the empty message above them is what
-   gives way if the box runs short, not the rows. */
-.dt-empty>.dt-band{flex-shrink:0}
+/* Drafts are what the user is typing; whatever is above them, the loaded rows
+   or the empty message, is what gives way when the box runs short, not the
+   band. Without this the band was squashed by the flex row above it and the
+   rows being typed into went under the bottom edge of .tw's overflow:hidden,
+   unreachable by mouse or keyboard. The band scrolls itself past that height
+   (.eg-scroll, entrygrid.css). */
+.dt-band{flex-shrink:0}
 /* Every OTHER direct child of #main — the hero banner, page heads, filter
    rows, KPI cards, whatever a given page renders — must not flex at all. A
    flex child defaults to flex-shrink:1, so without this a page whose content

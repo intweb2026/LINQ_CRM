@@ -10,7 +10,9 @@ import { normalizeEditorHtml, renderInto, sanitizeHtml } from '../lib/richText';
  * the field is still a field, and the markup itself stays reachable behind the
  * HTML toggle for the rows Word pasted a mess into.
  */
-export default function RichTextField({ value, onChange, minHeight = 200, placeholder = '', note }) {
+export default function RichTextField({
+  value, onChange, minHeight = 200, placeholder = '', note, id, label,
+}) {
   const [source, setSource] = useState(false);
   const box = useRef(null);
   /**
@@ -76,9 +78,15 @@ export default function RichTextField({ value, onChange, minHeight = 200, placeh
            the markup, and rewriting it under them while they type would fight
            them; the formatted view sanitises on the way back out. */
         <textarea className="in rt-s" style={{ minHeight }} value={String(value ?? '')}
+          id={id} aria-label={label}
           placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       ) : (
+        /* id and aria-label are carried on both panes, because the paper review
+           forms name every field for whatever is reading the page, a screen
+           reader, or an assistant filling the public MRE link in a browser; and
+           an unnamed box is as good as no box to either. */
         <div ref={box} className="rt-e" style={{ minHeight, maxHeight: 420 }}
+          id={id} aria-label={label}
           contentEditable suppressContentEditableWarning role="textbox" aria-multiline="true"
           data-ph={placeholder} onInput={emit} onBlur={emit} onPaste={onPaste} />
       )}

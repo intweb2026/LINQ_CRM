@@ -135,8 +135,6 @@ export const TARGET_FIELDS = {
     ['assign_name_lx2', 'Assign Name (LX-2)'], ['actual_count_lx2', 'Actual Count (LX-2)'],
     ['complete_date_lx2', 'Complete Date (LX-2)'], ['dm_comments_lx2', 'DM Comments (LX-2)'],
     ['added_user_text', 'Added User'],
-    ['source_spreadsheet_id', 'Source Spreadsheet ID'], ['source_tab', 'Source Tab'],
-    ['source_row_number', 'Source Row Number'], ['idempotency_key', 'Idempotency Key'],
     ['created_at', 'Added Time', ['Created At', 'Created Time']],
     ['updated_at', 'Modified Time', ['Modified At', 'Last Modified', 'Modified']],
   ],

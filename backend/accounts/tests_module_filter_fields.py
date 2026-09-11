@@ -75,9 +75,15 @@ class _Base(TestCase):
 
 class TicketProvenanceFilterTests(_Base):
     """
-    The seven columns DEFAULT_EXCLUDES held back. Provenance is what someone
-    reaches for when tracing a bad import — precisely the moment the answer has
-    to cover the whole table rather than the current scroll position.
+    The three columns DEFAULT_EXCLUDES held back and Ticket Central puts back:
+    ID, Added Time, Modified Time.
+
+    It used to be seven. The four Zoho import-provenance columns were registered
+    here too, because the table showed them; they are out of the module now (see
+    DMD_FIELDS in ticket_central/constants.py), so the last test below is the
+    other half of that change, since a criterion naming one is refused rather than
+    quietly ignored, which is what stops a stale saved filter from widening to
+    the whole table without saying so.
     """
 
     def setUp(self):
@@ -99,27 +105,26 @@ class TicketProvenanceFilterTests(_Base):
             created_at=datetime(2026, 5, 6, 9, 0, tzinfo=dt_timezone.utc),
             updated_at=datetime(2026, 5, 6, 9, 0, tzinfo=dt_timezone.utc))
 
-    def test_source_columns(self):
-        self.assertEqual(
-            self._ids(TICKETS, [{"field": "source_spreadsheet_id", "op": "is",
-                                 "value": "sheet-alpha"}]),
-            {self.a.id})
-        self.assertEqual(
-            self._ids(TICKETS, [{"field": "source_tab", "op": "is", "value": "Feb"}]),
-            {self.b.id})
-        self.assertEqual(
-            self._ids(TICKETS, [{"field": "idempotency_key", "op": "contains",
-                                 "value": "beta"}]),
-            {self.b.id})
-
-    def test_source_row_number_is_a_number_not_text(self):
-        self.assertEqual(
-            self._ids(TICKETS, [{"field": "source_row_number", "op": "gt", "value": 50}]),
-            {self.b.id})
-        self.assertEqual(
-            self._ids(TICKETS, [{"field": "source_row_number", "op": "between",
-                                 "values": [10, 20]}]),
-            {self.a.id})
+    def test_provenance_columns_are_no_longer_filterable(self):
+        """
+        The fixtures above populate all four, so this cannot pass by there being
+        nothing to match. Deny-by-default answers 400 rather than dropping the
+        criterion, which matters, because a dropped criterion returns every row and reads
+        as a filter that found everything.
+        """
+        for field, op, value in (
+            ("source_spreadsheet_id", "is", "sheet-alpha"),
+            ("source_tab", "is", "Feb"),
+            ("idempotency_key", "contains", "beta"),
+            ("source_row_number", "gt", 50),
+        ):
+            with self.subTest(field=field):
+                req = self.factory.get("/?" + spec_qs(
+                    [{"field": field, "op": op, "value": value}]))
+                force_authenticate(req, user=self.user)
+                resp = TICKETS(req)
+                resp.render()
+                self.assertEqual(resp.status_code, 400, resp.content)
 
     def test_id_column(self):
         self.assertEqual(

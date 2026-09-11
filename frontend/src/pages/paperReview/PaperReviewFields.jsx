@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import Select from '../../components/Select';
+import RichTextField from '../../components/RichTextField';
 import { Icon } from '../../lib/icons';
 import { Dot } from '../../components/Badge';
 import { NumField } from '../../components/UI';
@@ -225,20 +226,38 @@ export default function PaperReviewFields({ form, setForm, events, showInternal 
           <div className="fd" style={{ gridColumn: showInternal ? '3/-1' : '1/3' }}>{lab('feedback_to_speaker', 'Feedback to speaker or request information')}<input className="in" id="pr-feedback_to_speaker" name="feedback_to_speaker" value={form.feedback_to_speaker} onChange={set('feedback_to_speaker')} /></div>
         </div>
       </div>
+      {/* THE TWO PROSE FIELDS ARE RICH TEXT, NOT TEXTAREAS.
+          Both are pasted in from Word and from the Zoho editor; 3,512 of the
+          3,540 imported reviews hold markup, and the agenda copy is a title, a
+          bulleted list and bold runs. A textarea showed all of that as visible
+          tags on the way in and threw the formatting away on the way out, so the
+          bullets a reviewer pasted arrived as one grey paragraph. RichTextField
+          renders the formatting, keeps what is pasted, takes Ctrl+B / Ctrl+I from
+          the browser, and leaves the markup itself reachable behind its HTML
+          toggle for a row Word made a mess of. Same component the Proposal
+          Submission form uses for the same bridged field, so the copy reads the
+          same on both sides of proposal_bridge.
+
+          aria-label rather than a lab() line, because both fields are titled by their
+          section header above, so a visible label would read the name twice. */}
       <div className="fs">
         <div className="fs-t"><Icon name="note" size={13} />Proposal received<span className="req">*</span></div>
         <div className="fg">
-          {/* aria-label rather than a lab() line: these two fields are titled by
-              their section header above, so a visible label would read the name
-              twice. The attribute gives the same name to the accessibility tree
-              that the header gives to the eye. */}
-          <div className="fd full"><textarea className="in" id="pr-proposal_received" name="proposal_received" aria-label="Proposal received" style={{ minHeight: 140 }} placeholder="Proposed session title, talking points…" value={form.proposal_received} onChange={set('proposal_received')} /></div>
+          <div className="fd full">
+            <RichTextField id="pr-proposal_received" label="Proposal received"
+              value={form.proposal_received} onChange={setSel('proposal_received')}
+              minHeight={160} placeholder="Proposed session title, talking points…" />
+          </div>
         </div>
       </div>
       <div className="fs">
         <div className="fs-t"><Icon name="edit" size={13} />Agenda addition<span className="req">*</span></div>
         <div className="fg">
-          <div className="fd full"><textarea className="in" id="pr-agenda_addition" name="agenda_addition" aria-label="Agenda addition" style={{ minHeight: 140 }} placeholder="Agenda copy, industry tags…" value={form.agenda_addition} onChange={set('agenda_addition')} /></div>
+          <div className="fd full">
+            <RichTextField id="pr-agenda_addition" label="Agenda addition"
+              value={form.agenda_addition} onChange={setSel('agenda_addition')}
+              minHeight={160} placeholder="Agenda copy, industry tags…" />
+          </div>
         </div>
       </div>
 

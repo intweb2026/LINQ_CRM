@@ -3,6 +3,7 @@ import DataTable from '../components/DataTable';
 import { Icon } from '../lib/icons';
 import { Dot, Who } from '../components/Badge';
 import { fdate, nf } from '../lib/helpers';
+import { htmlToText } from '../lib/richText';
 import { PAPER_REVIEW_CRITERIA, PAPER_GRADES, PAPER_GRADE_TONE, PAPER_SESSION_OPTIONS } from '../lib/constants';
 import * as paperReviewApi from '../api/paperReview';
 import { useFetch } from '../hooks/useFetch';
@@ -14,6 +15,25 @@ import PaperReviewFormModal from './paperReview/PaperReviewFormModal';
 import PaperReviewImportModal from './paperReview/PaperReviewImportModal';
 import BulkUpdateModal from '../components/BulkUpdateModal';
 import ClearAllButton from '../components/ClearAllButton';
+
+/**
+ * One line of an HTML-stored prose column.
+ *
+ * proposal_received and agenda_addition are rich text, pasted from Word and
+ * from the Zoho editor, and edited as formatting in the form (RichTextField, on
+ * PaperReviewFields), so the RAW value in a cell this narrow read
+ * `<p><b>FROM INVISIBLE LOSSES TO SMART…` and was cut off inside its first tag.
+ * The words are what belongs on one line. Same reduction Proposal Submission
+ * makes of the same bridged field; htmlToText leaves a tag-free legacy value
+ * untouched, and a value that is nothing but markup reduces to no words at all
+ * and reads as empty rather than as a stray fragment.
+ */
+const proseCell = (v) => {
+  const text = htmlToText(v);
+  return text
+    ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{text}</span>
+    : <span className="dim">—</span>;
+};
 
 /**
  * The columns, at module scope — evaluated once, never rebuilt.
@@ -86,11 +106,11 @@ const REVIEW_COLS = [
   { key: 'proposal_score', serverField: 'proposal_score', serverOrdering: 'proposal_score', label: 'Proposal Score', group: 'sc', num: true, cell: (v) => (v == null ? <span className="dim">—</span> : <b style={{ color: 'var(--text)' }}>{nf(v)}</b>) },
   { key: 'grade', serverField: 'grade', serverOrdering: 'grade', label: 'Grade', group: 'sc', cell: (v) => (v ? <Dot tone={PAPER_GRADE_TONE[v] || 'neutral'}>{v}</Dot> : <span className="dim">—</span>), opts: () => PAPER_GRADES },
   { key: 'session_location_on_agenda', serverField: 'session_location_on_agenda', serverOrdering: 'session_location_on_agenda', label: 'Session or Location on Agenda', group: 'ag', opts: () => PAPER_SESSION_OPTIONS },
-  { key: 'internal_footnotes', serverField: 'internal_footnotes', label: 'Internal Footnotes', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
-  { key: 'feedback_to_speaker', serverField: 'feedback_to_speaker', serverOrdering: 'feedback_to_speaker', label: 'Feedback to Speaker or Request Information', group: 'ag', cell: (v) => v || <span className="dim">—</span> },
+  { key: 'internal_footnotes', serverField: 'internal_footnotes', label: 'Internal Footnotes', group: 'ag', cell: (v) => htmlToText(v) || <span className="dim">—</span> },
+  { key: 'feedback_to_speaker', serverField: 'feedback_to_speaker', serverOrdering: 'feedback_to_speaker', label: 'Feedback to Speaker or Request Information', group: 'ag', cell: (v) => htmlToText(v) || <span className="dim">—</span> },
   { key: 'theme', serverField: 'theme', serverOrdering: 'theme', label: 'Theme', group: 'ct' },
-  { key: 'proposal_received', serverField: 'proposal_received', serverOrdering: 'proposal_received', label: 'Proposal Received', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
-  { key: 'agenda_addition', serverField: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'ct', cell: (v) => (v ? <span className="dim" style={{ maxWidth: 260, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>{v}</span> : <span className="dim">—</span>) },
+  { key: 'proposal_received', serverField: 'proposal_received', serverOrdering: 'proposal_received', label: 'Proposal Received', group: 'ct', cell: proseCell },
+  { key: 'agenda_addition', serverField: 'agenda_addition', serverOrdering: 'agenda_addition', label: 'Agenda Addition', group: 'ct', cell: proseCell },
 ];
 
 // Same reasoning as REVIEW_COLS, for the two props DataTable reads by identity.

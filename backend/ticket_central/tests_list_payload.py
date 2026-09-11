@@ -64,11 +64,6 @@ class ListPayloadContractTests(APITestCase):
         self.assertEqual(missing, [], f"MR fields absent from the list payload: {missing}")
 
     def test_list_row_carries_every_dmd_field(self):
-        """
-        Includes source_spreadsheet_id / source_tab / source_row_number /
-        idempotency_key. They are import provenance, not work product, but the
-        Zoho report shows them and so does this table.
-        """
         row = self._row()
         missing = sorted(f for f in DMD_FIELDS if f not in row)
         self.assertEqual(missing, [], f"DMD fields absent from the list payload: {missing}")
@@ -78,13 +73,21 @@ class ListPayloadContractTests(APITestCase):
         missing = [f for f in UI_RECORD_FIELDS if f not in row]
         self.assertEqual(missing, [], f"record fields absent from the list payload: {missing}")
 
-    def test_provenance_values_round_trip(self):
-        """Present is not the same as populated — these four came back empty once."""
+    def test_import_provenance_is_not_served_at_all(self):
+        """
+        The four Zoho migration columns are OUT of the module, and the list
+        endpoint is the only place the UI reads a ticket from, so this is where
+        that is true or not. The row above populates all four, which is the point:
+        the database still holds them and the payload still must not carry them,
+        or the columns would come back the moment somebody re-adds a column
+        definition to the table.
+        """
         row = self._row()
-        self.assertEqual(row["source_spreadsheet_id"], "sheet-1")
-        self.assertEqual(row["source_tab"], "General")
-        self.assertEqual(row["source_row_number"], 726)
-        self.assertEqual(row["idempotency_key"], "sheet-1|General|726")
+        for field in ("source_spreadsheet_id", "source_tab",
+                      "source_row_number", "idempotency_key"):
+            self.assertNotIn(field, row)
+        # Added User sits beside them in the same block and is NOT going anywhere;
+        # it is who raised the ticket, which the table shows.
         self.assertEqual(row["added_user_text"], "zoho_linq-corporate")
 
     def test_dates_are_plain_iso_days(self):

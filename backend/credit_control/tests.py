@@ -562,6 +562,57 @@ class DashboardTests(EngineTestCase):
         self.assertEqual(sum(rows["Speakers, Unclassified"].values()), 1)
         self.assertEqual(sum(rows["Add-Ons Only"].values()), 1)
 
+    def test_the_bifurcation_rep_columns_reconcile_with_the_caller_rows(self):
+        """
+        The rep columns are a second way of slicing the same active set, so they
+        have to add up two ways. Down a disposition they must equal its own
+        total, and across the whole table they must equal what the per-caller
+        section says that person holds. A column that disagrees with the row
+        above it is exactly what makes a manager stop trusting the page.
+        """
+        from . import dashboard
+
+        self._invoice("INV-R1", days_old=5)
+        self._invoice("INV-R2", days_old=9)
+        self._invoice("INV-R3", days_old=12)
+        engine.refresh()
+
+        payload = dashboard.build()
+        bifurcation = payload["bifurcation"]
+
+        per_rep = {}
+        for cells in bifurcation.values():
+            for cell in cells.values():
+                reps = cell["reps"]
+                self.assertEqual(
+                    sum(reps.values()), cell["total"],
+                    "a disposition's rep columns must add up to its own total",
+                )
+                for name, count in reps.items():
+                    per_rep[name] = per_rep.get(name, 0) + count
+
+        self.assertEqual(sum(per_rep.values()), payload["kpis"]["total_active"])
+        for name, row in payload["status"].items():
+            self.assertEqual(
+                per_rep.get(name, 0), row["total"],
+                f"{name} holds a different number in the two sections",
+            )
+
+    def test_a_disposition_nobody_holds_still_carries_an_empty_rep_map(self):
+        """
+        Every seeded disposition renders even at zero, so the table keeps its
+        shape. The frontend reads `reps` per row, and a row seeded without one
+        would be the single row that throws on render.
+        """
+        from . import dashboard
+
+        self._invoice("INV-R4", days_old=5)
+        engine.refresh()
+
+        for cells in dashboard.build()["bifurcation"].values():
+            for label, cell in cells.items():
+                self.assertIn("reps", cell, f"{label} has no reps map")
+
 
 class ShiftMatrixTests(EngineTestCase):
     def test_calls_are_attributed_to_a_caller_by_email(self):

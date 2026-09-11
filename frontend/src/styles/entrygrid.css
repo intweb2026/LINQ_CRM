@@ -21,8 +21,13 @@
 }
 .dt-band:empty { display: none; }
 
-/* The band's own horizontal scroll, independent of the table's. */
-.eg-scroll { overflow-x: auto; }
+/* The band's own scroll, independent of the table's, in BOTH directions.
+   overflow-x alone left the rows to grow the band downwards for ever; .tw around
+   it is overflow:hidden, so past a dozen rows the ones you were typing into were
+   simply clipped away with no scrollbar anywhere to reach them. A bounded height
+   makes the band scroll itself instead, and the table above yields the space
+   (.dt-band is flex-shrink:0; see [table_shell]). */
+.eg-scroll { overflow: auto; max-height: min(46vh, 420px); }
 
 .eg-t {
   border-collapse: separate;
@@ -30,7 +35,12 @@
   table-layout: fixed;
   width: max-content;
 }
+/* Sticky, now that the band scrolls vertically, so row 20 of a batch is typed
+   against the same headings row 1 was. */
 .eg-t thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: .07em;

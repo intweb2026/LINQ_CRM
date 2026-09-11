@@ -59,6 +59,13 @@ IMPORT_HIDDEN_FIELDS = frozenset({
     # if it ever stopped being recomputed — would quietly break the repeated-link
     # check for every row it touched.
     "link_key",
+    # The Zoho migration's own bookkeeping, removed from the module (see the note
+    # on DMD_FIELDS in constants.py). Hidden HERE as well as there because this
+    # allowlist is derived from the MODEL rather than from that set, and the
+    # columns are still on the model, so without these four lines Smart Import would
+    # go on offering them to map a spreadsheet onto, which is the one door left
+    # for writing a field nothing in the module can now read.
+    "source_spreadsheet_id", "source_tab", "source_row_number", "idempotency_key",
 })
 
 

@@ -31,6 +31,14 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 # registry up. Importing the other order raises AppRegistryNotReady.
 django_application = get_asgi_application()
 
+# Scheduled jobs, in this process. Importing config.asgi means something is
+# serving, which is the only case that should schedule anything; no management
+# command reaches this module. See services/scheduler.py for why it is not
+# django-crontab.
+from services import scheduler  # noqa: E402
+
+scheduler.start()
+
 from mcp_server import TRANSPORT_SECURITY, mcp  # noqa: E402
 
 # streamable_http_path must match the prefix tested below, otherwise the inner

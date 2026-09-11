@@ -30,8 +30,7 @@ class TicketListSerializer(serializers.ModelSerializer):
             "actual_number", "new_contacts_created", "mined_count",
             "complete_date", "hubspot_entry_date", "dm_comments",
             "assign_name_lx2", "actual_count_lx2", "complete_date_lx2",
-            "dm_comments_lx2", "source_spreadsheet_id", "source_tab",
-            "source_row_number", "idempotency_key",
+            "dm_comments_lx2",
             # Audit / method fields.
             # added_user_text is Zoho's "Added User" (D16) and return_reason/
             # returned_at are what a returned ticket was actually sent back for —

@@ -749,3 +749,25 @@ CRONJOBS = [
     ("30 1 * * *", "django.core.management.call_command", ["sync_mailable_counts"]),
 ]
 CRONTAB_LOCK_JOBS = True  # prevent overlap if a previous run is still going
+
+# WHO ACTUALLY RUNS THE LIST ABOVE. services/scheduler.py, in the web process,
+# not django-crontab. `manage.py crontab add` was run and fired nothing, because
+# a cron child gets a minimal environment and this file reads its configuration
+# from the process environment the platform injects; .env is gitignored, so
+# there is no file in the image to fall back to. Settings failed to import on a
+# missing SECRET_KEY before any job reached its first line, and cron mailed the
+# traceback to a spool that does not exist.
+#
+# DO NOT RUN `manage.py crontab add` AGAIN. django_crontab stays in
+# INSTALLED_APPS only because CRONJOBS is its format, and that format is read by
+# services/cron.py for the Credit Control dashboard and the Mining Matrix. An
+# installed crontab now would run every job a second time.
+#
+# On outside development, so a laptop does not start calling HubSpot and
+# Anthropic on its own. Keyed to DEBUG rather than a new variable, because the
+# whole failure above was a step somebody had to remember and nobody did.
+RUN_SCHEDULER = config(
+    "RUN_SCHEDULER",
+    default="False" if DEBUG else "True",
+    cast=lambda v: str(v).lower() in ("true", "1"),
+)

@@ -264,11 +264,17 @@ def build(*, scoped_to=None, now=None) -> dict:
         cell["h72"] += int(past72)
 
         slot = bifurcation.setdefault(group, {}).setdefault(
-            key, {"total": 0, "h36": 0, "h72": 0},
+            key, {"total": 0, "h36": 0, "h72": 0, "reps": {}},
         )
         slot["total"] += 1
         slot["h36"] += int(past36)
         slot["h72"] += int(past72)
+        # WHO holds each disposition, not only how many sit in it. The per-caller
+        # section already answers "how much does this person have"; this answers
+        # "who is sitting on the Callbacks", which is the question a team lead
+        # actually asks. Keyed on the same `name` the status section uses, so a
+        # column here and a row there cannot disagree.
+        slot["reps"][name] = slot["reps"].get(name, 0) + 1
 
         band = _bucket_for(lead.days_pending(now=now))
         if band:
@@ -289,9 +295,11 @@ def build(*, scoped_to=None, now=None) -> dict:
     # not change from day to day and a caller can find a row where they expect
     # it.
     for label, _category, group in constants.DISPOSITION_SEED:
-        bifurcation.setdefault(group, {}).setdefault(label, {"total": 0, "h36": 0, "h72": 0})
+        bifurcation.setdefault(group, {}).setdefault(
+            label, {"total": 0, "h36": 0, "h72": 0, "reps": {}},
+        )
     bifurcation.setdefault(constants.GROUP_NOT_ATTEMPTED, {}).setdefault(
-        "(not attempted)", {"total": 0, "h36": 0, "h72": 0},
+        "(not attempted)", {"total": 0, "h36": 0, "h72": 0, "reps": {}},
     )
 
     counts = dict(

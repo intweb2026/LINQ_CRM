@@ -133,15 +133,16 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
             },
         ),
         # ── Columns DEFAULT_EXCLUDES held back ────────────────────────────────
-        # The surrogate key, the two timestamps and the four provenance columns
-        # are excluded from every registry by default, because on most models
-        # nobody filters them. This table SHOWS all seven — Added Time, Modified
-        # Time, ID, Source_Spreadsheet_ID, Source_Tab, Source_Row_Number and
-        # Idempotency_Key are columns in the grid — and a shown column with no
-        # server field is not unfiltered, it is filtered in the browser over the
-        # rows already fetched. Provenance is exactly what someone reaches for
-        # when tracing a bad import, which is precisely when the answer must
-        # cover the whole table rather than the current scroll position.
+        # The surrogate key and the two timestamps are excluded from every
+        # registry by default, because on most models nobody filters them. This
+        # table SHOWS all three, Added Time, Modified Time and ID, and a shown
+        # column with no server field is not unfiltered, it is filtered in the
+        # browser over the rows already fetched.
+        #
+        # The four provenance columns were re-added here on the same reasoning
+        # until they were removed from the module; see the note on DMD_FIELDS in
+        # constants.py. They are back to being DEFAULT_EXCLUDES now, so no
+        # criterion may name one, which is what it means for them to be gone.
         #
         # has_time is what tells the client to send the END of a day as the
         # upper bound instead of its midnight; without it a filter for "today"
@@ -149,11 +150,6 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
         "created_at": {"type": "date", "label": "Added Time", "has_time": True},
         "updated_at": {"type": "date", "label": "Modified Time", "has_time": True},
         "id": {"type": "number", "label": "ID"},
-        "source_spreadsheet_id": {"type": "text", "label": "Source Spreadsheet ID"},
-        "source_tab": {"type": "text", "label": "Source Tab"},
-        "source_row_number": {"type": "number", "label": "Source Row Number",
-                              "nullable": True},
-        "idempotency_key": {"type": "text", "label": "Idempotency Key"},
     }
 
     _BULK_STATIC_FIELDS = build_bulk_update_fields(
@@ -284,7 +280,10 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
     #   external_id, idempotency_key, source_spreadsheet_id, source_tab,
     #   source_row_number, id, created_at, updated_at
     #                  — DEFAULT_EXCLUDES in accounts/bulk_update.py: source-system
-    #                    keys and audit columns.
+    #                    keys and audit columns. The four provenance columns are
+    #                    out of the module altogether now (DMD_FIELDS in
+    #                    constants.py); they stay named here because this list
+    #                    describes what the BUILDER drops from the model.
     #
     #   assigned_mr, assign_name and assign_name_lx2 are NOT excluded — all
     #   three are added per request in the property above, because their options
