@@ -6,10 +6,33 @@ Phase-specific serializers enforce which fields are writable at each stage.
 from rest_framework import serializers
 from .models import Ticket
 from .constants import MR_FIELDS, DMD_FIELDS
+from .permissions import hidden_fields_for
 from .utils import display_name as _name
 
 
-class TicketListSerializer(serializers.ModelSerializer):
+class HidesForeignSection:
+    """
+    Drops the fields hidden_fields_for() says this caller is not served.
+
+    On the READ serializers only. A Market Research request gets the Data Mining
+    half minus Actual Number removed from the payload, so the table column, the
+    filter bar entry and the drawer field are all gone at once rather than each
+    being hidden separately and one of them being missed.
+
+    No request in the context means no user to judge, which is the webhook and
+    the internal callers that build a serializer by hand; those keep the full
+    payload, as they did.
+    """
+
+    def get_fields(self):
+        fields = super().get_fields()
+        user = getattr(self.context.get("request"), "user", None)
+        for name in hidden_fields_for(user):
+            fields.pop(name, None)
+        return fields
+
+
+class TicketListSerializer(HidesForeignSection, serializers.ModelSerializer):
     created_by_name       = serializers.SerializerMethodField()
     mr_submitted_by_name  = serializers.SerializerMethodField()
     dmd_submitted_by_name = serializers.SerializerMethodField()
@@ -47,7 +70,7 @@ class TicketListSerializer(serializers.ModelSerializer):
     def get_dmd_submitted_by_name(self, obj): return _name(obj.dmd_submitted_by)
 
 
-class TicketDetailSerializer(serializers.ModelSerializer):
+class TicketDetailSerializer(HidesForeignSection, serializers.ModelSerializer):
     """Full read-only detail — both sections visible."""
     created_by_name       = serializers.SerializerMethodField()
     mr_submitted_by_name  = serializers.SerializerMethodField()

@@ -20,8 +20,8 @@ from .management.commands.sync_verdicts_from_sheet import (
     apply_changes, column_index, normalise_status, plan_changes,
 )
 from .services import (
-    ATT_CURVE, BENCHMARK, PAY_CURVE, build_payload, countdown, curve_projection,
-    previous_edition_label, projection,
+    ATT_BENCHMARK, ATT_CURVE, BENCHMARK, PAY_CURVE, build_payload, countdown,
+    curve_due, curve_projection, previous_edition_label, projection,
 )
 
 TODAY = date(2026, 1, 12)
@@ -139,6 +139,12 @@ class MatrixTests(TestCase):
         self.assertEqual(cur["proj"], 9)
         self.assertEqual(cur["att_proj"], 7)
         self.assertEqual(cur["paid_proj"], 3)
+        # 30 days out is 4 whole weeks, where 85.5% of the 65 attendees and 90%
+        # of the 40 paid heads should already be in, against this edition's own
+        # 6 live and 3 paid.
+        self.assertEqual((cur["due_att"], cur["gap_att"]), (56, -50))
+        self.assertEqual((cur["due_pay"], cur["gap_pay"]), (36, -33))
+        self.assertEqual(p["att_benchmark"], ATT_BENCHMARK)
         # A finished edition's projection is its count.
         self.assertEqual((prev["proj"], prev["att_proj"], prev["paid_proj"]), (3, 3, 3))
 
@@ -236,6 +242,19 @@ class MatrixTests(TestCase):
         # From the event week the curve is complete and the count is the finish.
         self.assertEqual(curve_projection(ev, ev, 40, PAY_CURVE), 40)
         self.assertEqual(curve_projection(ev + timedelta(days=9), ev, 64, ATT_CURVE), 64)
+
+    def test_pace(self):
+        ev = date(2026, 8, 11)
+        # Before the curve starts nothing is due yet and the window is open ended.
+        far = ev - timedelta(weeks=22)
+        self.assertIsNone(curve_due(far, ev, ATT_BENCHMARK, ATT_CURVE))
+        # 20 weeks out the curves expect 22.5% of the 65 attendees and 20% of the
+        # 40 paid heads banked.
+        d = ev - timedelta(weeks=20)
+        self.assertEqual(curve_due(d, ev, ATT_BENCHMARK, ATT_CURVE), 15)
+        self.assertEqual(curve_due(d, ev, BENCHMARK, PAY_CURVE), 8)
+        # From the event week the curve is complete, so the whole target is due.
+        self.assertEqual(curve_due(ev, ev, BENCHMARK, PAY_CURVE), BENCHMARK)
 
     def test_countdown(self):
         self.assertEqual(countdown(TODAY, TODAY), "Today")

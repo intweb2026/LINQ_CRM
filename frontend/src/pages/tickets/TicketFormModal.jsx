@@ -212,6 +212,12 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
     : isNew ? 'Data Mining fills this in after the ticket is submitted — the API refuses these fields at create.'
       : user.role === 'data_mining' ? 'Read-only — DMD fields are editable once a ticket is MR Submitted.'
         : 'Read-only for your role.';
+  // Market Research sees ONE cell of this section, Actual Number: the count the
+  // mining returned against the brief they raised. The rest is Data Mining's
+  // working and the server does not send it to them at all
+  // (ticket_central/permissions.hidden_fields_for), so rendering the fields here
+  // would draw a column of empty boxes, not a read-out.
+  const seesDmdDetail = user.role !== 'market_research' || isAdmin;
 
   const patch = useMemo(() => {
     const out = {};
@@ -410,19 +416,24 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                     — never caller-writable, at any status or role. */}
                 <input className="in" value={ticket?.ticket_number || ''} placeholder={isNew ? 'Assigned on create' : ''} readOnly disabled />
               </Field>
-              <Field label="Assign Name">
-                <input className="in" value={form.assign_name} onChange={set('assign_name')} disabled={!dmdOpen} />
-              </Field>
-              <Field label="Assign Date">
-                <input className="in" type="date" value={form.assign_date} onChange={set('assign_date')} disabled={!dmdOpen} />
-              </Field>
+              {seesDmdDetail ? <>
+                <Field label="Assign Name">
+                  <input className="in" value={form.assign_name} onChange={set('assign_name')} disabled={!dmdOpen} />
+                </Field>
+                <Field label="Assign Date">
+                  <input className="in" type="date" value={form.assign_date} onChange={set('assign_date')} disabled={!dmdOpen} />
+                </Field>
+              </> : null}
               <Field label="Actual Number">
                 <NumField min={0} value={form.actual_number} onChange={set('actual_number')} disabled={!dmdOpen} />
               </Field>
-              <Field label="New Contacts Created">
-                <NumField min={0} value={form.new_contacts_created} onChange={set('new_contacts_created')} disabled={!dmdOpen} />
-              </Field>
+              {seesDmdDetail ? (
+                <Field label="New Contacts Created">
+                  <NumField min={0} value={form.new_contacts_created} onChange={set('new_contacts_created')} disabled={!dmdOpen} />
+                </Field>
+              ) : null}
             </div>
+            {seesDmdDetail ? <>
             <div className="fcol">
               <Field label="Ticket Type">
                 <Pick value={form.ticket_type} options={TK_TICKET_TYPES} onChange={pick('ticket_type')} disabled={!dmdOpen} />
@@ -454,6 +465,7 @@ export default function TicketFormModal({ ticket, onClose, onSaved }) {
                 <input className="in" value={form.dm_comments_lx2} onChange={set('dm_comments_lx2')} disabled={!dmdOpen} />
               </Field>
             </div>
+            </> : null}
           </div>
         </div>
 

@@ -5,6 +5,8 @@ Role-based access for ticket operations.
 """
 from rest_framework.permissions import BasePermission
 
+from .constants import MR_HIDDEN_FIELDS
+
 
 class IsMarketResearchOrAdmin(BasePermission):
     message = "Market Research or Admin role required."
@@ -58,3 +60,24 @@ def may_edit_mr_fields(user):
     return user.role == "data_mining" and bool(
         user.is_team_lead or user.is_team_manager
     )
+
+
+def hidden_fields_for(user):
+    """
+    Ticket fields this person is not served AT ALL.
+
+    Read visibility, not write permission — the two update serializers already
+    decide who may WRITE which half. Until now every role was sent every field,
+    so a Market Research user read the Data Mining columns and the LX-2 second
+    pass in full, in the table, in the filter bar and in the drawer.
+
+    Empty for everyone but MR: Data Mining needs the brief it is working from,
+    and admin is exempt here as everywhere else.
+    """
+    if not (user and getattr(user, "is_authenticated", False)):
+        return frozenset()
+    if getattr(user, "is_admin", False):
+        return frozenset()
+    if getattr(user, "role", None) == "market_research":
+        return MR_HIDDEN_FIELDS
+    return frozenset()

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ExtLink, Tabs } from '../components/UI';
 import DataTable from '../components/DataTable';
@@ -91,6 +91,27 @@ const tkCols = () => [
 // Evaluated ONCE. See the note on the `cols` prop below for why the identity of
 // this array, not merely its contents, is what matters.
 const TK_COLS = tkCols();
+
+/**
+ * What Market Research is shown of the Data Mining half: Actual Number, and
+ * nothing else.
+ *
+ * The brief is theirs, the mining result answers it, and the rest of the For DMD
+ * group plus the whole LX-2 second pass is Data Mining's own working. The server
+ * agrees — ticket_central/permissions.hidden_fields_for drops those fields from
+ * an MR request's payload — so these are not columns that would render if left
+ * in, they are columns that would render EMPTY. Filtering the array rather than
+ * adding them to HIDDEN_DEFAULT is the point: hidden-by-default is one click in
+ * the Columns menu away from visible again.
+ *
+ * Data Mining and admin are unchanged and still see every column.
+ */
+const mrHides = (c) => (c.group === 'dm' || c.group === 'lx') && c.key !== 'actual_number';
+
+const TK_GROUPS = [
+  { key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' },
+  { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' },
+];
 
 const HIDDEN_DEFAULT = ['competitor_event_name', 'organizer', 'event_month_year', 'event_location', 'relationship', 'actual_count_lx2'];
 
@@ -186,6 +207,14 @@ export default function TicketCentralPage() {
     [refresh],
   );
   const [importOpen, setImportOpen] = useState(false);
+  // Memoised on the role alone, so the identity stays stable for the same reason
+  // TK_COLS is a module constant — DataTable memoises its Row against `cols` and
+  // a fresh array every render re-renders all 42,912 of them.
+  const isMROnly = user.role === 'market_research';
+  const cols = useMemo(() => (isMROnly ? TK_COLS.filter((c) => !mrHides(c)) : TK_COLS), [isMROnly]);
+  // The Columns menu draws a heading per group, so the LX-2 heading would sit
+  // there empty for an MR viewer with nothing under it.
+  const groups = useMemo(() => TK_GROUPS.filter((g) => cols.some((c) => c.group === g.key)), [cols]);
 
   if (!canView('ticket_central')) return <NoAccessPage module="Ticket Central" />;
 
@@ -272,7 +301,7 @@ export default function TicketCentralPage() {
         // everyone who visited during the ascending spell has one stored.
         defaultSort={{ key: 'created_at', dir: 'desc' }} defaultSortVersion={1}
         searchPlaceholder="Search ticket, organizer, keywords…"
-        groups={[{ key: 'rec', label: 'Record' }, { key: 'mr', label: 'Ticket Hub (MR)' }, { key: 'dm', label: 'For DMD' }, { key: 'lx', label: 'LX-2 Second Pass' }]}
+        groups={groups}
         hiddenDefault={HIDDEN_DEFAULT}
         // TK_COLS, not tkCols(). The call returned a fresh array on every render,
         // so `cols` was a new prop identity each time and DataTable's memoised Row
@@ -281,7 +310,7 @@ export default function TicketCentralPage() {
         // no arguments and closes over nothing in the component, so the result is
         // a constant; it stays a factory only because the module already exported
         // it that way.
-        cols={TK_COLS}
+        cols={cols}
         // The Priority column declares editOpts. DataTable now renders an in-cell
         // editor only where the page says the viewer may write, so this has to be
         // passed explicitly or the column goes read-only.

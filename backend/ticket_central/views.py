@@ -40,6 +40,7 @@ from .permissions import (
     IsMarketResearchOrAdmin,
     IsDataMiningOrAdmin,
     IsTicketTeamOrAdmin,
+    hidden_fields_for,
     may_edit_mr_fields,
 )
 
@@ -260,6 +261,13 @@ class TicketViewSet(PeriodFilterMixin, FilterSpecMixin, BulkUpdateMixin,
                 "group": "row", "type": "choice", "label": label,
                 "choices": dmd_names,
             }
+        # A column this caller is never SERVED is not one they may mass-write.
+        # bulk_update writes model fields directly and never touches the two
+        # update serializers (accounts/bulk_update.py), so without this an MR user
+        # could select 1000 rows and set Mined Count or an LX-2 date on all of
+        # them — columns their table no longer even shows.
+        for name in hidden_fields_for(self.request.user):
+            fields.pop(name, None)
         return fields
 
     # EXCLUDED, and why — anything absent from bulk_update_fields is refused:

@@ -50,3 +50,17 @@ SHARED_FIELDS = frozenset([
 ])
 
 TICKET_PREFIX = "TC"
+
+# The ONE Data Mining field a Market Research user is served.
+#
+# MR raises the brief and Actual Number is the answer to it — the count the
+# mining actually returned — so it comes back with the ticket. The rest of
+# Section B is Data Mining's own working, and the whole LX-2 second pass with it;
+# MR was reading every cell of both.
+#
+# Subtracted from the payload by permissions.hidden_fields_for(), which is read
+# by the two read serializers and by TicketViewSet.bulk_update_fields, so the
+# columns are not merely hidden in the table, they are not sent and not writable.
+# Mirrored in the frontend by MR_SEES in TicketCentralPage.jsx.
+MR_VISIBLE_DMD_FIELDS = frozenset(["actual_number"])
+MR_HIDDEN_FIELDS = DMD_FIELDS - MR_VISIBLE_DMD_FIELDS

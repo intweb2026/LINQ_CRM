@@ -83,6 +83,7 @@ PAYABLE = "Paid"
 REFUNDED = "Refunded"
 
 BENCHMARK = 40                    # paid heads every edition is measured against
+ATT_BENCHMARK = 65                # attendees every edition is measured against
 PENDING_GRACE_DAYS = 14           # a pending invoice older than this is Pending, 14 days or newer is Expected, none yet is Not invoiced
 FIRST_EDITION_LOOKBACK_DAYS = 365
 
@@ -220,15 +221,30 @@ def projection(today, event_date, live):
     return _round(live / share) if share else None
 
 
+def curve_share_now(today, event_date, curve):
+    """The share of the final figure a weekly curve expects banked today."""
+    weeks = max(0, (event_date - today).days // 7)
+    return next(s for lo, s in curve if weeks > lo)
+
+
 def curve_projection(today, event_date, actual, curve):
     """
-    The finish `actual` points to on a weekly curve: the actual over the share
+    The finish `actual` points to on a weekly curve, the actual over the share
     the curve expects banked with this many whole weeks to go, so it IS the
     actual from the event week on. None while the curve expects nothing yet.
     """
-    weeks = max(0, (event_date - today).days // 7)
-    share = next(s for lo, s in curve if weeks > lo)
+    share = curve_share_now(today, event_date, curve)
     return _round(actual / share) if share else None
+
+
+def curve_due(today, event_date, target, curve):
+    """
+    The same curve read the other way round, how many heads must ALREADY be
+    banked today for the edition to finish at `target`. None while the curve
+    expects nothing yet, exactly as the projection is.
+    """
+    share = curve_share_now(today, event_date, curve)
+    return _round(target * share) if share else None
 
 
 def _families(events):
@@ -476,8 +492,10 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         cos = companies.get(e.pk) or {}
         gp_new = cos.get("gp", set())
         gp_all = gp_new | carried["gp"] if carried else gp_new
-        # Projections read this edition's own figures, s, never the total.
+        # Projections and pace read this edition's own figures, s, never the total.
         paid_proj = curve_projection(today, e.event_date, s["paid"], PAY_CURVE)
+        due_att = curve_due(today, e.event_date, ATT_BENCHMARK, ATT_CURVE)
+        due_pay = curve_due(today, e.event_date, BENCHMARK, PAY_CURVE)
         iso = lambda d: d.isoformat() if d else None  # noqa: E731
 
         rows.append({
@@ -515,6 +533,12 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
             "proj": projection(today, e.event_date, s["live"]),
             "att_proj": curve_projection(today, e.event_date, s["live"], ATT_CURVE),
             "paid_proj": paid_proj,
+            # Pace. What the curve step in force demands an edition already
+            # hold to finish on its benchmark, and the gap to what it holds.
+            "due_att": due_att,
+            "due_pay": due_pay,
+            "gap_att": (s["live"] - due_att) if due_att is not None else None,
+            "gap_pay": (s["paid"] - due_pay) if due_pay is not None else None,
             **{"bk_" + k: s["bk_" + k] for k, _, _ in WINDOWS},
             "bk_last": iso(s["bk_last"]),
             **{"pay_" + k: s["pay_" + k] for k, _, _ in WINDOWS},
@@ -551,6 +575,7 @@ def build_payload(view=VIEW_UPCOMING, today=None, user=None):
         "today": today.isoformat(),
         "view": view,
         "benchmark": BENCHMARK,
+        "att_benchmark": ATT_BENCHMARK,
         "verdicts": list(Event.Verdict.values),
         "years": sorted({e.year for e in events if e.year}),
         "ticket_types": ticket_types,

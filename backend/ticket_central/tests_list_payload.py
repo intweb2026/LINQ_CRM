@@ -17,7 +17,7 @@ here instead of in the browser.
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .constants import DMD_FIELDS, MR_FIELDS
+from .constants import DMD_FIELDS, MR_FIELDS, MR_HIDDEN_FIELDS, MR_VISIBLE_DMD_FIELDS
 from .tests import auth, make_ticket, make_user
 
 # Every field the Ticket Central table has a column for, or the ticket form an
@@ -38,8 +38,12 @@ class ListPayloadContractTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.mr = make_user("payload_mr", "market_research")
+        # Data Mining is served the whole row, so it is the viewer for every
+        # assertion about the FULL payload; MR is now a narrower read, pinned
+        # by its own tests below.
+        cls.dmd = make_user("payload_dmd", "data_mining")
 
-    def _row(self):
+    def _row(self, viewer=None):
         # created_by is the viewer because the list is scoped to the person who
         # added the row now (TicketViewSet.get_queryset). added_user_text keeps a
         # legacy Zoho value on purpose: that combination — raised by this user,
@@ -52,7 +56,7 @@ class ListPayloadContractTests(APITestCase):
             added_user_text="zoho_linq-corporate",
             created_by=self.mr,
         )
-        auth(self.client, self.mr)
+        auth(self.client, viewer or self.mr)
         resp = self.client.get("/api/tickets/")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.data["results"]), 1)
@@ -64,9 +68,28 @@ class ListPayloadContractTests(APITestCase):
         self.assertEqual(missing, [], f"MR fields absent from the list payload: {missing}")
 
     def test_list_row_carries_every_dmd_field(self):
-        row = self._row()
+        row = self._row(self.dmd)
         missing = sorted(f for f in DMD_FIELDS if f not in row)
         self.assertEqual(missing, [], f"DMD fields absent from the list payload: {missing}")
+
+    def test_mr_is_not_served_the_dmd_working_columns(self):
+        """
+        MR raises the brief and reads the answer to it. Everything else in the
+        Data Mining section, the LX-2 second pass included, is not sent to them —
+        so it cannot be un-hidden in the Columns menu, read out of the drawer, or
+        filtered on. See permissions.hidden_fields_for.
+        """
+        row = self._row()
+        leaked = sorted(f for f in MR_HIDDEN_FIELDS if f in row)
+        self.assertEqual(leaked, [], f"DMD working columns served to MR: {leaked}")
+        for field in MR_VISIBLE_DMD_FIELDS:
+            self.assertIn(field, row)
+
+    def test_mr_keeps_its_own_half_in_full(self):
+        """The trim takes the DMD working columns and nothing else."""
+        row = self._row()
+        missing = sorted(f for f in MR_FIELDS if f not in row)
+        self.assertEqual(missing, [], f"MR fields lost to the DMD trim: {missing}")
 
     def test_list_row_carries_the_record_fields(self):
         row = self._row()
@@ -103,7 +126,9 @@ class ListPayloadContractTests(APITestCase):
             complete_date_lx2="2026-05-02",
             created_by=self.mr,   # the list is author-scoped now
         )
-        auth(self.client, self.mr)
+        # Read as DMD: four of the five dates below are Data Mining columns, which
+        # an MR request is no longer served.
+        auth(self.client, self.dmd)
         row = self.client.get("/api/tickets/").data["results"][0]
         for f in ("assign_date", "complete_date", "event_month_year",
                   "hubspot_entry_date", "complete_date_lx2"):

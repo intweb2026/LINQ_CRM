@@ -60,6 +60,7 @@ const GROUPS = [
   { key: 'lv', label: 'Live position', min: 2, hint: 'A rescheduled edition includes the postponed edition it replaces; the bracket is the old share' },
   { key: 'vd', label: 'Verdict' },
   { key: 'pj', label: 'Projection', hint: 'Read off this edition’s own bookings and payments; the bracket is the new count on a rescheduled edition' },
+  { key: 'pc', label: 'On pace by today', hint: 'The weekly curves read backwards, the heads an edition holds minus the heads it must already hold to finish on its benchmark; plus is ahead of the curve, minus is behind' },
   { key: 'bk', label: 'Bookings', hint: 'Live bookings by request date' },
   { key: 'py', label: 'Payments', hint: 'Paid heads by payment date' },
   { key: 'sp', label: 'Speakers', hint: 'Booking codes naming Speaker or SPP' },
@@ -140,7 +141,7 @@ function VerdictPill({ value }) {
 /** A projected finish with a dot for where it lands: green from the target,
  *  amber from the floor under it, dark red below that. Attendance targets 65
  *  over a floor of 40; payments target the benchmark over a floor of 25. */
-const ATT_BANDS = [40, 65];
+const ATT_FLOOR = 40;
 const PAY_FLOOR = 25;
 const pending = (hint) => <span className="dim" title={hint}>Pending</span>;
 function Health({ value, bands: [floor, target], hint, tail }) {
@@ -149,7 +150,20 @@ function Health({ value, bands: [floor, target], hint, tail }) {
   return <><span className={'pm-hl ' + tone} title={hint}><i /><b className="pm-n">{nf(value)}</b></span>{tail}</>;
 }
 
-function buildCols(onVerdict, benchmark, ticketTypes) {
+/** Heads ahead of the curve, or behind it. Ahead is green, within ten of the
+ *  demand is amber, further behind is red; the hover carries the demand. */
+const pace = (dueKey, noun) => (v, r) => {
+  if (v == null) return pending('The weekly curve starts 21 weeks out');
+  const t = v >= 0 ? 'green' : v >= -10 ? 'amber' : 'red';
+  return (
+    <span className={'pm-hl ' + t}
+      title={`${nf(r[dueKey])} ${noun} should already be in by today, this edition holds ${nf(r[dueKey] + v)}`}>
+      <i /><b className="pm-n">{v > 0 ? '+' : ''}{nf(v)}</b>
+    </span>
+  );
+};
+
+function buildCols(onVerdict, benchmark, attBenchmark, ticketTypes) {
   const cols = [
     {
       key: 'event_code', label: 'Event', group: 'ev', pin: true, w: 126,
@@ -229,8 +243,8 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
     },
     {
       key: 'att_proj', label: 'Health · attendees', group: 'pj', num: true, w: 84,
-      cell: (v, r) => <Health value={v} bands={ATT_BANDS} tail={fresh(r, 'live_count')}
-        hint="Live count over the attendance the weekly curve expects banked by now; green from 65, amber from 40" />,
+      cell: (v, r) => <Health value={v} bands={[ATT_FLOOR, attBenchmark]} tail={fresh(r, 'live_count')}
+        hint={`Live count over the attendance the weekly curve expects banked by now; green from ${attBenchmark}, amber from ${ATT_FLOOR}`} />,
     },
     {
       key: 'paid_proj', label: 'Health · payments', group: 'pj', num: true, w: 84,
@@ -240,6 +254,20 @@ function buildCols(onVerdict, benchmark, ticketTypes) {
     {
       key: 'shortfall', label: `Short of ${benchmark}`, group: 'pj', num: true, w: 72,
       cell: (v) => (v == null ? dim() : v ? <span className="tg bg-red">{nf(v)}</span> : <span className="tg bg-green">Met</span>),
+    },
+    // On pace by today: the weekly curves say what share of the finish should be
+    // banked with this many weeks to go, so the benchmark times that share is
+    // what an edition must already hold, and the heads it actually holds minus
+    // that is the number worth reading. Plus is ahead, minus is the shortfall to
+    // make up. The demand itself is the hover, it is the same for every edition
+    // sitting in the same week.
+    {
+      key: 'gap_att', label: 'Attendees', group: 'pc', num: true, cls: 'sec', w: 84,
+      cell: pace('due_att', 'attendees'),
+    },
+    {
+      key: 'gap_pay', label: 'Payments', group: 'pc', num: true, w: 84,
+      cell: pace('due_pay', 'paid heads'),
     },
   ];
   WINDOWS.forEach(([k, label], i) => cols.push({
@@ -315,6 +343,7 @@ export default function PerformanceMatrixPage() {
   const rows = useMemo(() => toRows(payload), [payload]);
   const ticketTypes = useMemo(() => payload.ticket_types || [], [payload]);
   const benchmark = payload.benchmark || 40;
+  const attBenchmark = payload.att_benchmark || 65;
 
   // The year chips. None selected means every edition in the view; two ticked
   // means those two editions side by side, which is the comparison the matrix
@@ -334,7 +363,7 @@ export default function PerformanceMatrixPage() {
     }
   }, [toast, refetchQuiet]);
 
-  const cols = useMemo(() => buildCols(setVerdict, benchmark, ticketTypes), [setVerdict, benchmark, ticketTypes]);
+  const cols = useMemo(() => buildCols(setVerdict, benchmark, attBenchmark, ticketTypes), [setVerdict, benchmark, attBenchmark, ticketTypes]);
   // Completed editions carry their own wash, whatever the verdict; the verdict
   // still shows in the edge and the cell.
   const rowClass = useCallback((r) => (r.done ? 'pm-done ' : '') + pmApi.verdictClass(r.verdict), []);
