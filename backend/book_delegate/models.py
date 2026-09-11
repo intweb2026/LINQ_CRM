@@ -19,11 +19,16 @@ from .accounts_contact import fill_accounts_contact_from_delegate
 
 
 class BookDelegate(models.Model):
+    # TWO values, because the field IS the Zoho "Attendance - IN?" CHECKBOX and a
+    # checkbox has two states. 'No-show' and 'Cancelled' used to sit here as well,
+    # which made the stored field a four-way status the UI had no way to express:
+    # the only editor is the tick in the booking modal, so neither could ever be
+    # SET from the app, and a row holding one rendered as an empty box exactly
+    # like Pending. Nothing was recording those two facts; a Cancelled BOOKING is
+    # payment_status, which is a real four-way field with its own column.
     class Attendance(models.TextChoices):
         PENDING   = "Pending",   "Pending"
         CONFIRMED = "Confirmed", "Confirmed"
-        NO_SHOW   = "No-show",   "No-show"
-        CANCELLED = "Cancelled", "Cancelled"
 
     invoice = models.ForeignKey(
         "book_event.BookEvent",

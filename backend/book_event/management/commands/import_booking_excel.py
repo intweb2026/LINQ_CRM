@@ -31,7 +31,8 @@ Excel column → model field mapping:
   Direct Line       → BookDelegate.phone_number  (+ BookEvent.contact_phone for first)
   Delegate Number   → BookDelegate.delegate_number
   Attendance - IN?  → BookDelegate.attendance  (via accounts/booking_coercion,
-                       so "false" translates to Pending and "Absent" to No-show)
+                       so "true" translates to Confirmed and every other
+                       recognised spelling, "false" and "Absent" alike, to Pending)
 
 Any invoices that cannot be matched to an Event are written to import_issues.md
 in the repo root for manual resolution.

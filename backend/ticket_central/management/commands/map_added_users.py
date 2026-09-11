@@ -47,13 +47,19 @@ User = get_user_model()
 # same treatment the column itself gets — so the stray trailing space on the
 # second "SGE " row and the lower-case tails on "TIEf", "ODU b" and
 # "Pharma Generic" all land on the value actually stored.
+#
+# 2026-09-12: SCU, SCE, BAPE, FLE, FLU, FLC, SCSG, PCU, FLTX, FLIL and
+# FLUK moved from Paxton Medina to Danny Velgara (market_research), by
+# request. The original sheet still reads Paxton on those eleven rows, so a
+# straight re-paste over this table hands his 2,405 tickets back — carry the
+# reassignment forward, or paste from a sheet that already has it.
 _OWNERSHIP = """
-SCU\tPaxton Medina
-SCE\tPaxton Medina
-BAPE\tPaxton Medina
-FLE\tPaxton Medina
-FLU\tPaxton Medina
-FLC\tPaxton Medina
+SCU\tDanny Velgara
+SCE\tDanny Velgara
+BAPE\tDanny Velgara
+FLE\tDanny Velgara
+FLU\tDanny Velgara
+FLC\tDanny Velgara
 BIY\tPaxton Medina
 BIU\tPaxton Medina
 BIF\tPaxton Medina
@@ -135,11 +141,11 @@ REU\tRay Santos
 CNZ\tRay Santos
 BMSE\tRay Santos
 HFE\tRay Santos
-SCSG\tPaxton Medina
-PCU\tPaxton Medina
-FLTX\tPaxton Medina
-FLIL\tPaxton Medina
-FLUK\tPaxton Medina
+SCSG\tDanny Velgara
+PCU\tDanny Velgara
+FLTX\tDanny Velgara
+FLIL\tDanny Velgara
+FLUK\tDanny Velgara
 BINY\tPaxton Medina
 BIE\tPaxton Medina
 DDE\tPercy Tovar

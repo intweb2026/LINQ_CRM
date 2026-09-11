@@ -73,8 +73,10 @@ export const BOOKING_CODES = [
 export const DELEGATE_NUMBERS = [0, 1];
 export const PAYMENT_TYPES = ['Stripe', 'Bank'];
 export const TICKET_TIERS = ['SEB', 'EB', 'Regular'];
-export const ATTENDANCE = ['Pending', 'Confirmed', 'No-show', 'Cancelled'];
-export const ATT_TONE = { Confirmed: 'green', Pending: 'amber', 'No-show': 'red', Cancelled: 'slate' };
+// The two states of the "Attendance - IN?" checkbox, which is the only editor
+// this field has. See BookDelegate.Attendance for why it is not four.
+export const ATTENDANCE = ['Pending', 'Confirmed'];
+export const ATT_TONE = { Confirmed: 'green', Pending: 'amber' };
 /**
  * Discount options, as percentages.
  *

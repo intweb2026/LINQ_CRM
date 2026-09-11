@@ -158,10 +158,10 @@ class TwoPopulations(Base):
         The workbook has none. A Cancelled PAYMENT STATUS is what removes a
         cancellation; the IN? column is the tick, not a filter.
         """
-        cancelled_tick = self.add(
-            "Ticked", attendance=BookDelegate.Attendance.CANCELLED)
-        self.assertIn(cancelled_tick.id, {d.id for d in self.rows()})
-        self.assertIn(cancelled_tick.id, self.desk())
+        ticked = self.add(
+            "Ticked", attendance=BookDelegate.Attendance.CONFIRMED)
+        self.assertIn(ticked.id, {d.id for d in self.rows()})
+        self.assertIn(ticked.id, self.desk())
 
     def test_delegate_override_beats_its_invoice_in_both_directions(self):
         """The whole reason book_delegate/effective.py is shared, not copied."""

@@ -141,9 +141,14 @@ PAYMENT_STATUS_ALIASES = {
 # Attendance arrives as an "Attendance - IN?" flag in the sheets we import, whose
 # vocabulary is true/false. `true` was already recognised; `false` matched
 # nothing and fell through to the Pending default, so 13,481 rows reached a
-# defensible end state by accident rather than by translation — and the same
-# fallback silently absorbed No and Absent, which do NOT mean Pending. Both
-# vocabularies are now declared, and the two that mean No-show say so.
+# defensible end state by accident rather than by translation. Both vocabularies
+# are declared now, so every spelling is TRANSLATED rather than fallen into.
+#
+# The target field is a two-state checkbox (BookDelegate.Attendance), so every
+# spelling lands on Confirmed or Pending. The absent/cancelled vocabularies stay
+# LISTED rather than deleted: they appear in real sheets, and an unlisted word is
+# a hard import error, not a default — dropping them would fail the file instead
+# of reading it. They mean "not ticked in", which is Pending.
 ATTENDANCE_ALIASES = {
     "true":  "Confirmed",
     "yes":   "Confirmed",
@@ -158,16 +163,14 @@ ATTENDANCE_ALIASES = {
     "n":     "Pending",
     "0":     "Pending",
     "not attended": "Pending",
-    # Marked as having failed to appear, which is a different fact from "not yet
-    # known" and used to be flattened onto it.
-    "absent":  "No-show",
-    "noshow":  "No-show",
-    "no show": "No-show",
-    "did not attend": "No-show",
-    "dna":     "No-show",
-    "cancel":    "Cancelled",
-    "cancelled": "Cancelled",
-    "canceled":  "Cancelled",
+    "absent":  "Pending",
+    "noshow":  "Pending",
+    "no show": "Pending",
+    "did not attend": "Pending",
+    "dna":     "Pending",
+    "cancel":    "Pending",
+    "cancelled": "Pending",
+    "canceled":  "Pending",
 }
 
 
