@@ -145,7 +145,14 @@ function firstMessage(value) {
 export function apiErrorMessage(err, fallback = 'Something went wrong.') {
   const data = err?.response?.data;
   if (data === undefined || data === null) return err?.message || fallback;
-  if (typeof data === 'string') return data.trim() || fallback;
+  if (typeof data === 'string') {
+    const text = data.trim();
+    // A 500 renders Django's debug page, and that whole document arrives here as
+    // a string. Showing it verbatim buries the UI in markup, so treat any HTML
+    // body as unreadable and use the caller's fallback.
+    if (!text || text.startsWith('<')) return fallback;
+    return text;
+  }
   if (Array.isArray(data)) return firstMessage(data) || fallback;
   if (typeof data !== 'object') return fallback;
 

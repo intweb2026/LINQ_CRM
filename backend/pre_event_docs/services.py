@@ -263,6 +263,11 @@ def _event_keys(code, edition):
     return keys
 
 
+# The catalogue spellings of one (code, edition); attendance/roster.py and
+# attendance/qr_email.py both need it by a public name.
+event_keys = _event_keys
+
+
 def event_meta(event_code, edition=None):
     """
     Name, start date and the three upcoming events, from the catalogue.
@@ -300,6 +305,8 @@ _EVENT_FIELDS = (
     "event_code", "name", "official_name", "event_date", "end_date",
     "city", "country", "venue", "location", "status",
     "upcoming_event_1", "upcoming_event_2", "upcoming_event_3",
+    # Badge-email details; see attendance/qr_email.py.
+    "registration_opens", "registration_closes", "start_time",
 )
 
 
@@ -326,7 +333,8 @@ def _event_detail(row):
     if not row:
         return {"event_name": "", "official_name": "", "event_date": None,
                 "end_date": None, "location": "", "venue": "", "status": "",
-                "upcoming_events": []}
+                "upcoming_events": [], "registration_opens": "",
+                "registration_closes": "", "start_time": ""}
     parts = []
     for candidate in (row.get("city"), row.get("country"), row.get("location")):
         candidate = (candidate or "").strip()
@@ -345,6 +353,13 @@ def _event_detail(row):
             e for e in (row.get("upcoming_event_1"), row.get("upcoming_event_2"),
                         row.get("upcoming_event_3")) if e
         ],
+        "registration_opens": row.get("registration_opens") or "",
+        "registration_closes": row.get("registration_closes") or "",
+        "start_time": row.get("start_time") or "",
+        # The raw venue, before the place de-duplication above folds it away.
+        # missing_fields() has to know whether a venue was ever recorded, which
+        # `venue` cannot answer once save() has fanned `location` across it.
+        "raw_city": row.get("city") or "",
     }
 
 

@@ -66,6 +66,27 @@ export const qrToken = (event, delegateId) =>
     .post('attendance/qr_token/', { ...scope(event), delegate_id: delegateId })
     .then((r) => r.data);
 
+/** Who would receive a QR email right now, and whether Gmail is connected. */
+export const qrEmailPreview = (event) =>
+  http.get('attendance/qr_email_preview/', { params: scope(event) }).then((r) => r.data);
+
+/** Email every eligible confirmed attendee their QR badge. */
+/**
+ * The real email the first eligible recipient will get, QR and all, rendered
+ * from `values` — the variables as the SCA just edited them.
+ *
+ * POST because those values are the point; it writes nothing, and nothing is
+ * saved back to the event.
+ */
+export const qrEmailSample = (event, values) =>
+  http.post('attendance/qr_email_sample/', { ...scope(event), ...values })
+    .then((r) => r.data);
+
+/** `values` must be the ones the preview was built from, or a different email goes out. */
+export const sendQrEmails = (event, values) =>
+  http.post('attendance/send_qr_emails/', { ...scope(event), ...values })
+    .then((r) => r.data);
+
 /**
  * The two params every per-event endpoint takes.
  *

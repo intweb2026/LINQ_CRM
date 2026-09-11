@@ -38,6 +38,47 @@ router.register(r"proposal-submissions", ProposalSubmissionViewSet,
 # The path frontend/src/api/paperReview.js was written against.
 router.register(r"paper-reviews", PaperReviewViewSet, basename="paper-reviews")
 
+
+class ReactShellView(TemplateView):
+    """
+    The React shell, for every non-API route.
+
+    WITHOUT THE COOP HEADER BELOW, GOOGLE SIGN-IN SILENTLY HANGS when the app
+    is reached through Django.
+
+    SecurityMiddleware stamps every Django response with
+    Cross-Origin-Opener-Policy: same-origin, which severs window.opener for
+    cross-origin popups. Google Identity Services opens accounts.google.com in
+    a popup and returns the credential by posting a message to the window that
+    opened it; under same-origin that link does not exist, so the popup
+    completes, goes blank on /gsi/transform, and nothing further happens. No
+    error is raised anywhere, which is what makes it hard to see.
+
+    IT LOOKED LIKE A DEV-ONLY PROBLEM AND IS NOT. `npm start` serves the build
+    from the Node server on :3000, which sets no COOP header, so login works
+    there and the fault only shows when the same page is fetched from Django on
+    :8000. But this catch-all is also how the app is served wherever Django
+    fronts the build, so the hang follows it there.
+
+    mcp_auth.views.consent carries this same header and the same reasoning for
+    its own page. That fix was correctly scoped to one view at the time; this is
+    the second place that needs it, and the two are the complete set, being the
+    only pages this project serves that host a Google sign-in button.
+
+    same-origin-allow-popups is the documented value for a page that opens an
+    OAuth popup. It keeps the protection that matters, other origins still
+    cannot get a handle on this window, and only restores this page's reference
+    to popups it opened itself. SecurityMiddleware leaves the header alone when
+    a view has already set it.
+    """
+    template_name = "index.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        response = super().dispatch(request, *args, **kwargs)
+        response["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+        return response
+
+
 urlpatterns = [
     path("admin/",               admin.site.urls),
     path("api/",                 include(router.urls)),
@@ -78,6 +119,11 @@ urlpatterns = [
     # the log is a plain paginated list but everything else here is a per-event
     # aggregate or a scan, not a router resource.
     path("api/attendance/", include("attendance.urls")),
+    # Gmail OAuth (send-only), so a user can connect their own Gmail account for
+    # sending QR-code emails. Its own include, an unauthenticated redirect
+    # target (callback/) alongside three authenticated ones, not a router
+    # resource.
+    path("api/gmail/", include("gmail_integration.urls")),
     path("api/search/",          GlobalSearchView.as_view(),    name="global-search"),
     path("api/stats/dashboard/", DashboardStatsView.as_view(), name="dashboard-stats"),
     # GROUP BY aggregates for the Dashboard. Replaces ~350 sequential
@@ -97,6 +143,6 @@ urlpatterns = [
     path("api-auth/",            include("rest_framework.urls")),
     # Serve React frontend for all non-API routes
     re_path(r"^(?!api/|admin/|api-auth/|static/).*$",
-            TemplateView.as_view(template_name="index.html"),
+            ReactShellView.as_view(),
             name="react-frontend"),
 ]

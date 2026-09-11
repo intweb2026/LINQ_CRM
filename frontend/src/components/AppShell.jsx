@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
 import IdleLogout from './IdleLogout';
+import GmailConnectPrompt from './GmailConnectPrompt';
 import { NAV, homeFor } from '../lib/nav';
 import { useSession } from '../context/SessionContext';
 import { useToast } from '../context/ToastContext';
@@ -106,6 +107,13 @@ export default function AppShell() {
       {/* Six-hour inactivity sign-out. Mounted HERE rather than in App.jsx so
           it only ever runs for an authenticated session. */}
       <IdleLogout />
+      {/* Asks once per sign-in for the Gmail consent that QR badge emails need,
+          and reports the outcome when Google sends the browser back. Here for
+          the same reason IdleLogout is, and because the return trip can land on
+          any route. Renders nothing for anyone already connected, anyone
+          outside Pre-Event Docs and QR Attendance, or anyone who has said no
+          this session. */}
+      <GmailConnectPrompt />
     </div>
   );
 }

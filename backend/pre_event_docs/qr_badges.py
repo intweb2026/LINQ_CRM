@@ -110,12 +110,26 @@ def _wrap(text, font, max_px, max_lines):
     return lines
 
 
+def qr_png(token, scale=6):
+    """
+    The bare code as PNG bytes, for showing in an email body.
+
+    Smaller scale than the badge: this is read off a screen at arm's length
+    rather than printed, and a 405px image is bigger than most mail clients
+    will show without scaling it, which is the one thing a decoder minds.
+    """
+    buffer = io.BytesIO()
+    segno.make(token, error="m").save(
+        buffer, kind="png", scale=scale, border=QR_BORDER)
+    return buffer.getvalue()
+
+
 def badge_pdf(badge):
     """
     One person's badge as a single-page PDF, as bytes.
 
     `badge` is one row of the projection in views.qr_codes: the token plus the
-    four facts a person is identified by at a door.
+    facts a person is identified by at a door.
     """
     buffer = io.BytesIO()
     segno.make(badge["token"], error="m").save(
@@ -132,9 +146,14 @@ def badge_pdf(badge):
     for text, size, max_lines in (
         (badge["name"], 34, 2),
         (badge["company"], 24, 2),
-        (" ".join(str(part) for part in
-                  (badge["event_code"], badge["edition"]) if part), 22, 1),
-        ("SPEAKER" if badge["attendee_type"] == "speaker" else "DELEGATE", 20, 1),
+        # THE EVENT NAME, NOT ITS CODE. "REU - RS" is a key this database sorts
+        # on; the person holding the badge and the person at the door both read
+        # the name. Two lines because catalogue names run long. The code is the
+        # fallback only when the delegate's event does not resolve in the
+        # catalogue exactly, which services.event_meta leaves blank on purpose.
+        (badge.get("event_name") or " ".join(
+            str(part) for part in
+            (badge["event_code"], badge["edition"]) if part), 22, 2),
     ):
         if not text:
             continue

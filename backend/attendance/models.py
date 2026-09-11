@@ -112,3 +112,50 @@ class AttendanceRecord(models.Model):
 
     def __str__(self):
         return f"{self.attendee_name} {self.event_code} {self.checked_in_at:%Y-%m-%d %H:%M}"
+
+
+class AttendanceQrEmailLog(models.Model):
+    """
+    One row per QR-code email attempt, "sent" or "failed". WHY BOTH STATUSES
+    ARE LOGGED, not just successes: a "failed" row lets a re-run of
+    send_qr_emails retry that person without a human first figuring out who
+    was skipped, while the conditional unique constraint below still stops a
+    SECOND successful send once one has already gone out.
+    """
+    class Status(models.TextChoices):
+        SENT    = "sent",    "Sent"
+        FAILED  = "failed",  "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    delegate = models.ForeignKey(
+        "book_delegate.BookDelegate",
+        on_delete=models.CASCADE,
+        related_name="qr_email_logs",
+    )
+    event_code = models.CharField(max_length=50, db_index=True)
+    edition    = models.IntegerField(null=True, blank=True, db_index=True)
+    recipient_email = models.EmailField()
+    status = models.CharField(max_length=16, choices=Status.choices)
+    error_message = models.TextField(blank=True, default="")
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name="qr_email_sends",
+    )
+    sent_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "attendance_qr_email_log"
+        constraints = [
+            # One SUCCESSFUL send per delegate, ever. A prior "failed" row does
+            # not block a retry, because it never satisfies status="sent".
+            models.UniqueConstraint(
+                fields=["delegate"],
+                condition=models.Q(status="sent"),
+                name="attendance_qr_email_one_sent_per_delegate",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.recipient_email} {self.event_code} {self.status}"

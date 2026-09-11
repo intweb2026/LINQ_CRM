@@ -14,6 +14,7 @@ import BadgeRunModal from './preEventDocs/BadgeRunModal';
 import NetworkingTab from './preEventDocs/NetworkingTab';
 import EventPicker from './preEventDocs/EventPicker';
 import RunHistory from './preEventDocs/RunHistory';
+import QrEmailModal from './preEventDocs/QrEmailModal';
 
 /**
  * Pre-Event Docs. FOUR REPORTS, named exactly as the spec names them.
@@ -72,6 +73,7 @@ export default function PreEventDocsPage() {
   // A download, not a mode: the printable sheet it used to open is gone, so
   // there is no view to lay out. Its own flag so it cannot disable logRun.
   const [qrBusy, setQrBusy] = useState(false);
+  const [qrEmailOpen, setQrEmailOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const printRef = useRef(null);
 
@@ -261,8 +263,8 @@ export default function PreEventDocsPage() {
             </>
           ) : null}
           {tab === 'check-in' && d?.check_in?.length ? (
-            <button className="btn btn-p" onClick={exportQrCodes} disabled={qrBusy}
-              title="One PDF per confirmed person, in a single ZIP. Regenerating produces the same codes.">
+            <button className="btn btn-p" onClick={() => setQrEmailOpen(true)} disabled={qrBusy}
+              title="Email each confirmed person their QR code, or download them all as a ZIP.">
               <Icon name="qr" size={15} />
               {qrBusy ? 'Building ZIP…' : 'Generate QR Codes'}
             </button>
@@ -333,6 +335,15 @@ export default function PreEventDocsPage() {
           busy={busy}
           onClose={() => setRunMode(null)}
           onConfirm={logRun}
+        />
+      ) : null}
+
+      {qrEmailOpen ? (
+        <QrEmailModal
+          ev={ev}
+          downloading={qrBusy}
+          onDownload={exportQrCodes}
+          onClose={() => setQrEmailOpen(false)}
         />
       ) : null}
     </>

@@ -161,6 +161,10 @@ INSTALLED_APPS = [
     # it asks Google and then matches the email to an existing CRM user exactly
     # as GoogleTokenLoginView does. Sits after accounts for that FK.
     "mcp_auth",
+    # Gmail OAuth (send-only), for emailing QR badges from a user's own Gmail
+    # account. Owns one table, keyed on accounts.User, so it sits after
+    # accounts; attendance imports it, so it sits before attendance.
+    "gmail_integration",
     # QR Attendance. The on-site door: one arrival row per person, sourced from
     # the Pre-Event Docs check-in sheet. Reads book_delegate, events and
     # pre_event_docs, owns one table of its own, so it sits after all three.
@@ -540,6 +544,29 @@ WEBHOOK_SECRET_KEY  = os.environ.get("WEBHOOK_SECRET_KEY", "")
 # uses no client secret, so there is nothing else to configure. Without this,
 # POST /api/auth/google/ answers 500 rather than silently letting anyone in.
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+
+# ── Gmail send-on-behalf (gmail_integration) ─────────────────────────────────
+# A SEPARATE OAuth product from the ID-token login above: this one needs a
+# client secret and offline access, so a user's own Gmail account can be used
+# to send the QR-code emails later, unattended. GOOGLE_OAUTH_CLIENT_ID is
+# reused as the OAuth client id; only the secret and the redirect are new.
+GOOGLE_OAUTH_CLIENT_SECRET = config("GOOGLE_OAUTH_CLIENT_SECRET", default="")
+GMAIL_OAUTH_REDIRECT_URI = config(
+    "GMAIL_OAUTH_REDIRECT_URI", default="http://localhost:8000/api/gmail/callback/",
+)
+# Fernet key encrypting GmailAccount.refresh_token_encrypted at rest. Generate
+# one with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Left unset in dev is fine — nothing reads it until a Gmail account is
+# actually connected; see gmail_integration/models.py.
+GMAIL_TOKEN_ENCRYPTION_KEY = config("GMAIL_TOKEN_ENCRYPTION_KEY", default="")
+
+# ── QR badge emails (attendance/qr_email.py) ──────────────────────
+# Sits under the sender's own name in the badge email sign-off. Deployment-wide
+# because no column holds a job title; the registration times that used to live
+# beside it are per-event columns on Event, since two events rarely share a
+# desk window.
+QR_EMAIL_SENDER_TITLE = config("QR_EMAIL_SENDER_TITLE", default="")
 
 # ── MCP endpoint ─────────────────────────────────────────────────────────────
 # The address clients reach /mcp on, and the identity the OAuth metadata is

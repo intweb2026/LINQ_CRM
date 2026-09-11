@@ -37,9 +37,12 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.crm_permissions import crm_permission
+from accounts.permissions import is_super_admin
 from book_delegate.models import BookDelegate
 
-from . import access, qr, roster
+from gmail_integration import service as gmail_service
+
+from . import access, qr, qr_email, roster
 from .models import AttendanceRecord
 from .serializers import AttendanceRecordSerializer
 
@@ -271,6 +274,112 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                     record.attendee_name, event_code, edition, request.user)
         return _outcome("checked_in", f"{record.attendee_name} is checked in.",
                         status.HTTP_201_CREATED, record=serialized)
+
+    # ── emailing the QR badges ───────────────────────────────────────────────
+
+    @action(detail=False, methods=["get"], url_path="qr_email_preview")
+    def qr_email_preview(self, request):
+        """Who would receive a QR email right now, and whether Gmail is linked."""
+        event_code, edition, refusal = self._event(request)
+        if refusal:
+            return refusal
+
+        eligible, skipped = qr_email.eligible_recipients(event_code, edition)
+        # WHY THE REASON IS HERE AND NOT ONLY IN THE LOG. An admin who opened
+        # this modal was shown "ask an administrator to complete it", being the
+        # administrator, and had to read a server log to learn which variable
+        # was wrong. Same audience split as GmailConnectView: the reason names
+        # environment variables, so only somebody who can change them sees it.
+        config_error = gmail_service.config_error()
+        return Response({
+            "eligible_count": len(eligible),
+            "skipped_no_email": skipped["no_email"],
+            "skipped_invalid_email": skipped["invalid_email"],
+            "skipped_already_sent": skipped["already_sent"],
+            "gmail_connected": gmail_service.is_connected(request.user),
+            # Whether pressing "Connect Gmail" could succeed. Without this the
+            # modal offered the button regardless and the only thing behind it
+            # was a server-configuration error, shown to a user who cannot act
+            # on one; see QrEmailModal's `blocked` step.
+            "gmail_can_connect": not config_error,
+            "gmail_config_error": (
+                config_error if config_error and is_super_admin(request.user) else ""
+            ),
+            # EVERY template variable, pre-filled from the event, because the
+            # SCA reviews and may correct all of them before each send rather
+            # than only filling gaps. `value` is the event's own data; what
+            # comes back in the send request is what actually gets merged.
+            "fields": qr_email.email_form(event_code, edition, request.user),
+        })
+
+    @action(detail=False, methods=["post"], url_path="qr_email_sample")
+    def qr_email_sample(self, request):
+        """
+        The actual email one real recipient will get, rendered for the SCA.
+
+        POST rather than GET because the SCA's edited values are the point: the
+        preview has to be built from what they just typed, not from the event
+        row. It writes nothing, so this POST is a render, not a change.
+
+        The FIRST eligible delegate, not a fabricated one, so the preview shows
+        real merged values and that person's own QR code. eligible_recipients
+        is the same function the send uses, so whoever is previewed is
+        genuinely first in the queue.
+        """
+        event_code, edition, refusal = self._event(request)
+        if refusal:
+            return refusal
+
+        missing = qr_email.missing_fields(event_code, edition, request.user,
+                                          request.data)
+        if missing:
+            return _outcome("incomplete",
+                            "Fill in every field before previewing the email.",
+                            status.HTTP_400_BAD_REQUEST, missing_fields=missing)
+
+        eligible, _ = qr_email.eligible_recipients(event_code, edition)
+        if not eligible:
+            return _outcome("no_recipients",
+                            "Nobody on this event is waiting for a QR email.",
+                            status.HTTP_400_BAD_REQUEST)
+        values = qr_email.event_values(event_code, edition, request.user,
+                                       request.data)
+        return Response(qr_email.preview_for(eligible[0], event_code, values))
+
+    @action(detail=False, methods=["post"], url_path="send_qr_emails")
+    def send_qr_emails(self, request):
+        """Email every eligible confirmed attendee their QR badge, from Gmail."""
+        event_code, edition, refusal = self._event(request)
+        if refusal:
+            return refusal
+
+        if not gmail_service.is_connected(request.user):
+            return _outcome("gmail_not_connected",
+                            "Connect your Gmail account before sending QR emails.",
+                            status.HTTP_400_BAD_REQUEST)
+
+        # THE SAME VALUES THE PREVIEW WAS BUILT FROM, carried on this request.
+        # If they were re-read from the event here, the SCA would have approved
+        # one email and sent a different one.
+        missing = qr_email.missing_fields(event_code, edition, request.user,
+                                          request.data)
+        if missing:
+            return _outcome("incomplete",
+                            "Fill in every field before sending.",
+                            status.HTTP_400_BAD_REQUEST, missing_fields=missing)
+
+        summary = qr_email.send_qr_emails(event_code, edition, request.user,
+                                          request.data)
+        if summary["fatal_error"]:
+            # 200, not an error status: the summary is a real result that names
+            # who was and was not emailed, and the modal renders it the same way
+            # it renders a partial success.
+            return Response(summary)
+        if summary["gmail_not_connected"]:
+            return _outcome("gmail_not_connected",
+                            "Gmail access expired or was revoked. Reconnect Gmail "
+                            "and try again.", status.HTTP_400_BAD_REQUEST, **summary)
+        return Response(summary)
 
 
 def _same_event(delegate, event_code, edition):

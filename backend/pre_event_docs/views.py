@@ -86,10 +86,17 @@ def badge_rows(event_code, edition=None):
     two exports of the same event. Sorted in the DATABASE, not in Python, so
     this stays a generator.
     """
+    # The catalogue is read once per (code, edition) rather than once per
+    # person: event_meta scans every Event row, and a 172-person roster all
+    # names the same event.
+    names = {}
     for delegate in services.event_queryset(event_code, edition).order_by("id"):
         if not services.at_desk(delegate):
             continue
         attendee_type = roster.attendee_type(delegate)
+        key = (delegate.event_code, delegate.edition)
+        if key not in names:
+            names[key] = services.event_meta(*key)["event_name"]
         yield {
             # The delegate's OWN code, not the one asked for. A request may name
             # the event without its edition, and what goes on a badge has to be
@@ -102,6 +109,9 @@ def badge_rows(event_code, edition=None):
             "name": roster.collapse(
                 delegate.first_name + " " + delegate.last_name),
             "company": roster.collapse(services.company_of(delegate)),
+            # What gets PRINTED under the code; event_code above is what the
+            # scanner compares against and stays as it is.
+            "event_name": names[key],
             "attendee_type": attendee_type,
             "token": qr.mint(delegate.id, delegate.event_code, attendee_type),
         }

@@ -97,6 +97,14 @@ class Event(models.Model):
         related_name="assigned_events_list",
     )
 
+    # Badge-email details the catalogue import does not carry. Free text, not
+    # TimeField: these are printed verbatim in the venue's own local clock and
+    # arrive typed by hand, so "08:00" and "8.00am" both have to survive.
+    # Filled by the SCA through the QR email flow when they are blank; see
+    # attendance/qr_email.py MISSING_FIELDS.
+    registration_opens = models.CharField(max_length=32, blank=True, default="")
+    registration_closes = models.CharField(max_length=32, blank=True, default="")
+    start_time = models.CharField(max_length=32, blank=True, default="")
     created_at  = models.DateTimeField(default=timezone.now)
     updated_at  = models.DateTimeField(auto_now=True)
 

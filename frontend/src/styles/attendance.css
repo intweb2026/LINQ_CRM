@@ -240,3 +240,104 @@
   .att-manual-form { flex-direction: row; align-items: flex-end; }
   .att-manual-form label { flex: 1; }
 }
+
+/* QR email popup, off PreEventDocsPage's "Generate QR Codes" */
+/* The two options are cards rather than footer buttons: each one carries a
+   sentence of explanation, and neither may read as the default action. */
+.qe-choices { display: grid; gap: 10px; margin-top: 14px; }
+.qe-choice { display: flex; gap: 12px; align-items: flex-start; width: 100%;
+  padding: 12px 14px; text-align: left; cursor: pointer;
+  background: var(--surface); color: inherit; font: inherit;
+  border: 1px solid var(--border); border-radius: var(--r-lg); }
+.qe-choice:hover:not(:disabled) { border-color: var(--t-500);
+  background: var(--surface-2); }
+.qe-choice:disabled { opacity: .55; cursor: default; }
+.qe-choice svg { flex: none; margin-top: 2px; color: var(--t-500); }
+.qe-choice b { display: block; margin-bottom: 3px;
+  font-size: 14px; color: var(--text); }
+.qe-choice span { font-size: 12px; color: var(--text-3); line-height: 1.5; }
+
+.qe-err { color: var(--red); font-size: 13px; margin-top: 8px; }
+.qe-note { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+.qe-fail { margin-top: 12px; }
+.qe-fail ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px;
+  color: var(--text-3); }
+.qe-fail li { margin-bottom: 4px; }
+
+/* QR email modal: the batch review screen and the email preview.
+   [qr_email_review]
+
+   TOKENS ONLY FROM base.css. An earlier pass here used --bd, --bg, --tx2, --ac
+   and --er, none of which exist: --bd is a BADGE colour scoped to .bnd, and the
+   rest were invented. Every declaration naming one was invalid and dropped, so
+   the section cards and the field borders never rendered at all and the form
+   read as loose text. The real names are --surface, --surface-2, --border,
+   --border-s, --text, --text-2/3/4, --red and the --r-* radii. */
+.qe-lede { margin: 0 0 14px; color: var(--text-3); line-height: 1.5; }
+.qe-warn {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 0 14px; padding: 9px 12px; border-radius: var(--r-md);
+  background: var(--red-bg); color: var(--red-tx);
+  border: 1px solid var(--red); font-size: 12.5px;
+}
+
+/* One card per section, so Event, Schedule and Sign-off read as three blocks
+   rather than one long column. The card is the separator, which is why the gap
+   between them is small: a 16px margin between two bordered surfaces separates
+   more clearly than the 40-odd px of dead space it replaces. */
+.qe-group {
+  margin-bottom: 12px; padding: 14px 16px 16px;
+  border: 1px solid var(--border-s); border-radius: var(--r-lg);
+  background: var(--surface-2);
+}
+.qe-group:last-of-type { margin-bottom: 10px; }
+.qe-group h4 {
+  margin: 0 0 12px; padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-4); font-weight: 700;
+}
+
+/* Two columns where there is room, one on a narrow window. `align-items:start`
+   matters: without it every cell stretches to the tallest in its row, so a
+   two-line hint under one field pushed its neighbour's box out of alignment. */
+.qe-grid {
+  display: grid; gap: 14px 16px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+.qe-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.qe-field > span {
+  display: flex; align-items: center; gap: 7px;
+  font-weight: 600; font-size: 12px; color: var(--text-2);
+}
+/* "Enter manually" on the two fields the CRM has no source for. */
+.qe-field > span i {
+  font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-full);
+  background: var(--t-100); color: var(--t-600); white-space: nowrap;
+}
+/* The box itself comes from .in in components.css; only the invalid state is
+   added here, so these fields cannot drift from the rest of the CRM's forms. */
+.qe-field.bad .in { border-color: var(--red); }
+.qe-field.bad .in:focus { box-shadow: 0 0 0 3px var(--red-bg); }
+.qe-field small {
+  color: var(--text-4); font-size: 11px; line-height: 1.35;
+  /* Two lines of hint, so one long help string cannot shove the next row. */
+  min-height: 2.7em;
+}
+.qe-field small.bad { color: var(--red); font-weight: 600; }
+.qe-note {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0; color: var(--text-4); font-size: 12px;
+}
+.qe-subject {
+  margin: 12px 0 8px; padding: 9px 12px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--border-s);
+  font-size: 13px; color: var(--text-2);
+}
+/* The preview is a real email body, so it gets its own document rather than
+   inheriting the CRM's styles. min-height keeps it usable before it loads. */
+.qe-frame {
+  width: 100%; min-height: 320px; border: 1px solid var(--border-s);
+  border-radius: var(--r-md); background: #fff;
+}
