@@ -59,7 +59,7 @@ export default function ClearAllButton({ noun, count, onClear, onCleared, extra 
               {count === 1 ? '' : 's'} and cannot be undone.
             </span>
           </div>
-          {extra ? <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>{extra}</p> : null}
+          {extra ? <p>{extra}</p> : null}
         </div>
       ),
     });

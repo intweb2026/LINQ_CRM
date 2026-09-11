@@ -145,7 +145,7 @@ export default function TeamsManagementPage() {
   }
 
   async function archive(id, name, memberCount) {
-    const ok = await confirm({ title: 'Archive ' + name + '?', danger: true, ok: 'Archive', sub: memberCount + ' member(s) will need reassignment.', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>Archived teams are hidden from the board but not deleted.</p> });
+    const ok = await confirm({ title: 'Archive ' + name + '?', danger: true, ok: 'Archive', sub: memberCount + ' member(s) will need reassignment.', body: <p>Archived teams are hidden from the board but not deleted.</p> });
     if (ok) {
       try {
         await teamsApi.archive(id);

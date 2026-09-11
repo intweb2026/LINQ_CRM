@@ -91,7 +91,7 @@ const bkCols = ({ onTransfer } = {}) => [
     serverOrdering: '_sort_effective_payment_status',
     cell: (v) => <StatusBadge value={v} />, opts: () => PAYMENT_STATUSES },
   { key: 'event_code', label: 'Event Code', group: 'id', serverField: 'event_code', serverOrdering: 'event_code',
-    cell: (v) => <span className="mono" style={{ color: 'var(--t-600)' }}>{v}</span> },
+    cell: (v) => <span className="mono code">{v}</span> },
   // serverField stays 'booking_code', which now resolves to the DELEGATE's own
   // column (book_delegate/views.py) — the same value this cell renders.
   { key: 'booking_code', label: 'Booking Code', group: 'id', serverField: 'booking_code',
@@ -103,9 +103,9 @@ const bkCols = ({ onTransfer } = {}) => [
   // beside the Delegate Company column that already holds it.
   { key: 'name', label: 'Name', group: 'del', serverField: 'name', serverOrdering: '_sort_name', cls: 'st', cell: (v) => <Who name={v} avatar={false} /> },
   { key: 'company_name', label: 'Delegate Company', group: 'del', serverField: 'company_name' },
-  { key: 'email', label: 'Delegate Email', group: 'del', serverField: 'email', serverOrdering: 'email', cell: (v) => <span style={{ fontSize: 11.5 }}>{v}</span> },
-  { key: 'phone_number', label: 'Direct Line', group: 'del', serverField: 'phone_number', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
-  { key: 'accounts_contact_email', label: 'Accounts Contact', group: 'del', serverField: 'accounts_contact_email', cell: (v) => <span className="dim" style={{ fontSize: 11.5 }}>{v}</span> },
+  { key: 'email', label: 'Delegate Email', group: 'del', serverField: 'email', serverOrdering: 'email', cell: (v) => <span className="cell-sub">{v}</span> },
+  { key: 'phone_number', label: 'Direct Line', group: 'del', serverField: 'phone_number', cell: (v) => <span className="mono">{v}</span> },
+  { key: 'accounts_contact_email', label: 'Accounts Contact', group: 'del', serverField: 'accounts_contact_email', cell: (v) => <span className="dim cell-sub">{v}</span> },
   { key: 'delegate_number', label: 'Delegate Number', group: 'del', serverField: 'delegate_number', cell: (v) => <span className="mono">{v}</span> },
   // Displayed as "Payable"/"Free" and filtered by the STORED values — paidOrFreeLabel
   // is a rename of the wording only, so `optLabel` relabels the filter checkboxes
@@ -123,7 +123,7 @@ const bkCols = ({ onTransfer } = {}) => [
   { key: 'discount', label: 'Discount', group: 'pay', num: true, serverField: 'discount_percent',
     cell: (v) => <span>{v == null || v === '' ? 0 : v}</span> },
   { key: 'add_ons', label: 'Add-Ons', group: 'pay', serverField: 'add_ons' },
-  { key: 'reference', label: 'Ref', group: 'pay', serverField: 'reference', cell: (v) => <span className="mono" style={{ fontSize: 11 }}>{v}</span> },
+  { key: 'reference', label: 'Ref', group: 'pay', serverField: 'reference', cell: (v) => <span className="mono">{v}</span> },
   { key: 'event_name', label: 'Event Name', group: 'audit', serverField: 'event_name', cls: 'st' },
   // Where the dead "Transfer to Other Event" text column used to be. It held a
   // value with no backend field behind it, so anything typed into it was discarded;
@@ -356,9 +356,9 @@ export default function BookingsPage() {
         cols={cols}
         card={(r) => (
           <div className="rc">
-            <div className="rc-t"><Av name={r.name} size="md" /><span className="who-t" style={{ flex: 1 }}><span className="who-n">{r.name}</span><span className="who-s mono">{r.invoice_number}</span></span><StatusBadge value={r.payment_status} /></div>
+            <div className="rc-t"><Av name={r.name} size="md" /><span className="who-t"><span className="who-n">{r.name}</span><span className="who-s mono">{r.invoice_number}</span></span><StatusBadge value={r.payment_status} /></div>
             <div className="rc-m">
-              <div><div className="l">Event</div><div className="v mono" style={{ color: 'var(--t-600)' }}>{r.event_code}</div></div>
+              <div><div className="l">Event</div><div className="v mono code">{r.event_code}</div></div>
               <div><div className="l">Company</div><div className="v">{r.company_name}</div></div>
               <div><div className="l">Attendance - IN?</div><div className="v">{r.attendance === 'Confirmed' ? 'Yes' : 'No'}</div></div>
               <div><div className="l">Tier</div><div className="v">{r.ticket_tier}</div></div>
@@ -376,7 +376,7 @@ export default function BookingsPage() {
                 two differ, so a partial selection can never read as the whole
                 filtered set. */}
             <span className="n">{nf(ids.length)}</span> selected
-            {total > ids.length ? <span className="dim" style={{ fontSize: 11 }}>&nbsp;of {nf(total)} matching</span> : null}
+            {total > ids.length ? <span className="dim cell-sub">&nbsp;of {nf(total)} matching</span> : null}
             <div className="sep" />
             {can('update', 'bookings') ? (
               <button className="btn btn-sm btn-p" onClick={() => bulk.open(ids, clear)}>
@@ -387,7 +387,7 @@ export default function BookingsPage() {
             <button className="btn btn-sm btn-s" onClick={() => toast('Exporting ' + plur(ids.length, 'row') + '…', 'nf')}><Icon name="download" size={13} />Export</button>
             {can('delete', 'bookings') ? (
               <button className="btn btn-sm btn-d" onClick={async () => {
-                const ok = await confirm({ title: 'Delete bookings?', sub: plur(ids.length, 'record') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. Related delegate rows are removed with the invoice.</p> });
+                const ok = await confirm({ title: 'Delete bookings?', sub: plur(ids.length, 'record') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p>This cannot be undone. Related delegate rows are removed with the invoice.</p> });
                 // The toast reports what the SERVER deleted, not how many were
                 // asked for. Those differ whenever RBAC scoping skips a row, and
                 // that gap widens with select-all — "13,264 records deleted" over

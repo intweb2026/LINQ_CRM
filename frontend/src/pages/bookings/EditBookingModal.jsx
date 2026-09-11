@@ -129,7 +129,7 @@ export default function EditBookingModal({ delegateRows, onClose, onSaved, onTra
     onClose();
     const ok = await confirm({
       title: 'Delete booking?', sub: invoiceNumber + ' · ' + delegates.length + ' delegate' + (delegates.length === 1 ? '' : 's'), danger: true, ok: 'Delete booking',
-      body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This removes the invoice and every delegate on it. This cannot be undone.</p>,
+      body: <p>This removes the invoice and every delegate on it. This cannot be undone.</p>,
     });
     if (!ok) return;
     // Same reason as the bulk Delete in BookingsPage: only 401 is handled

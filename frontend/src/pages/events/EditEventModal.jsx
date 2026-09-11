@@ -85,7 +85,7 @@ export default function EditEventModal({ event: ev, onClose, onSaved }) {
   }
   async function del() {
     onClose();
-    const ok = await confirm({ title: 'Delete ' + ev.event_code + '?', danger: true, ok: 'Delete event', sub: 'This removes the event from the catalogue. Bookings that reference it are not deleted.', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>This cannot be undone.</p> });
+    const ok = await confirm({ title: 'Delete ' + ev.event_code + '?', danger: true, ok: 'Delete event', sub: 'This removes the event from the catalogue. Bookings that reference it are not deleted.', body: <p>This cannot be undone.</p> });
     if (ok) { await eventsApi.remove(ev.id); toast(ev.event_code + ' deleted', 'ok'); nav('/events'); }
   }
 

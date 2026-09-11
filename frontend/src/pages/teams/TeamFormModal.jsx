@@ -50,7 +50,7 @@ export default function TeamFormModal({ team: t, onClose, onSaved }) {
   async function del() {
     const ok = await confirm({
       title: 'Delete ' + t.name + '?', danger: true, ok: 'Delete', sub: 'This cannot be undone.',
-      body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>Archive instead if you only want it off the board. A team with members cannot be deleted — move them out first.</p>,
+      body: <p>Archive instead if you only want it off the board. A team with members cannot be deleted — move them out first.</p>,
     });
     if (!ok) return;
     setBusy(true);

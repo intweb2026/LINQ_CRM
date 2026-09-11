@@ -33,7 +33,12 @@ export function ConfirmProvider({ children }) {
             </button>
           </>}
         >
-          {state.body}
+          {/* Wrapped rather than left to each caller. The body was set inline at
+              every call site, and not identically — half carried a line-height
+              and half did not — so the same sentence was set at two different
+              rhythms depending on which button had opened the dialog. The
+              callers pass a plain <p> now and .cf-b sets all of them. */}
+          {state.body ? <div className="cf-b">{state.body}</div> : null}
           {state.typed && (
             <div className="fd" style={{ marginTop: 12 }}>
               <label className="fd-l">Type <b>{state.typed}</b> to confirm</label>

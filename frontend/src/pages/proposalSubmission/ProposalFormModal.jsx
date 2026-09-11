@@ -114,7 +114,7 @@ export default function ProposalFormModal({ proposal, onClose, onSaved }) {
 
   async function del() {
     onClose();
-    const ok = await confirm({ title: 'Delete this proposal?', sub: form.speaker_name + ' · ' + form.company_name, danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>This cannot be undone.</p> });
+    const ok = await confirm({ title: 'Delete this proposal?', sub: form.speaker_name + ' · ' + form.company_name, danger: true, ok: 'Delete', body: <p>This cannot be undone.</p> });
     if (ok) {
       try {
         await proposalApi.remove(proposal.id);

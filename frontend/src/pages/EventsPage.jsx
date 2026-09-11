@@ -160,7 +160,7 @@ export default function EventsPage() {
                 would otherwise close the dialog and do nothing visible. */}
             {isAdmin ? (
               <button className="btn btn-sm btn-d" onClick={async () => {
-                const ok = await confirm({ title: 'Delete events?', sub: plur(ids.length, 'event') + ' will be permanently removed from the catalogue.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. Bookings are not deleted with them — they store their event as a text code, so they survive with codes that no longer resolve, and imports in Paper Review, Proposal Submission and Bookings will reject rows matching those codes.</p> });
+                const ok = await confirm({ title: 'Delete events?', sub: plur(ids.length, 'event') + ' will be permanently removed from the catalogue.', danger: true, ok: 'Delete', body: <p>This cannot be undone. Bookings are not deleted with them — they store their event as a text code, so they survive with codes that no longer resolve, and imports in Paper Review, Proposal Submission and Bookings will reject rows matching those codes.</p> });
                 if (!ok) return;
                 try {
                   // The toast reports what the SERVER deleted, not how many were

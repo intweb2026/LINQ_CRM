@@ -32,7 +32,7 @@
 .att-counts span {
   padding: 5px 10px;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-full);
+  border-radius: 0;
 }
 .att-counts b { color: var(--text); font-size: 13px; }
 
@@ -181,7 +181,7 @@
   font-size: 12px; font-weight: 600; color: var(--green-tx); }
 
 .att-tag {
-  padding: 3px 8px; border-radius: var(--r-full);
+  padding: 3px 8px; border-radius: 0;
   font-size: 11px; font-weight: 600; white-space: nowrap;
 }
 .att-tag-delegate { color: var(--slate-tx); background: var(--slate-bg); }
@@ -313,7 +313,7 @@
 /* "Enter manually" on the two fields the CRM has no source for. */
 .qe-field > span i {
   font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .05em;
-  text-transform: uppercase; padding: 2px 6px; border-radius: var(--r-full);
+  text-transform: uppercase; padding: 2px 6px; border-radius: 0;
   background: var(--t-100); color: var(--t-600); white-space: nowrap;
 }
 /* The box itself comes from .in in components.css; only the invalid state is

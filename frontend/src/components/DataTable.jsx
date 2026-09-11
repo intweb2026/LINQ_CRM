@@ -754,7 +754,11 @@ function HeaderCell({ col, cond, sort, canSort = true, onSort, onChange, onRemov
             title={sortHint(col, dir)}
           >
             <span>{col.label}</span>
-            {dir ? <Icon name={dir === 'asc' ? 'chevU' : 'chevD'} size={11} /> : null}
+            {/* ONE chevron that turns, not two that swap. Swapping icons gave a
+                sort flip no movement at all — the arrow was simply a different
+                arrow on the next frame, which is the least legible way to show
+                that the thing you just clicked did something. */}
+            {dir ? <span className={'th-dir' + (dir === 'asc' ? ' up' : '')}><Icon name="chevD" size={11} /></span> : null}
           </button>
         ) : (
           <span className="th-sort th-nosort" title="This column cannot be sorted by the server">{col.label}</span>
@@ -914,6 +918,14 @@ const Row = memo(function Row({
  * invoice edit both write `invoices/`, so without `live: ['invoices']` neither
  * would reach the table.
  */
+/* The skeleton's size. Rows enough to fill .dt-tw's 280px minimum and a little
+   past it, so the box does not look half-drawn; columns capped where bars stop
+   reading as a table. Neither is derived from anything — a skeleton only has to
+   be the right shape, and measuring for it would cost a layout pass to place
+   something nobody will look at for more than a second. */
+const SK_ROWS = 8;
+const SK_COLS = 11;
+
 export default function DataTable({
   rows, cols, noun = 'records', groups, hiddenDefault = [], select = false, infinite = false,
   pageSize = PAGE_SIZE_DEFAULT, defaultSort = null, scope = null, searchPlaceholder = 'Search…',
@@ -927,6 +939,18 @@ export default function DataTable({
    */
   defaultSortVersion = 0,
   card, onRow, bulkActions, extraToolbar, tableId, server = null,
+  /**
+   * The caller's own first fetch is still in flight.
+   *
+   * A server-mode table knows this already, from `server`. A client-mode one is
+   * handed `rows` and nothing else, so it cannot tell an empty result from an
+   * unanswered one — and it guessed empty. The Mining Matrix, the Performance
+   * Matrix and Credit Control therefore rendered "No Events Found" for the
+   * whole of their first request, and again on every tab switch, because each
+   * view remounts. That is a wrong answer rather than a slow one, and it is the
+   * one a reader is most likely to believe and act on.
+   */
+  loading = false,
   // A class for the whole <tr>, from the row. The Performance Matrix paints a
   // row in its verdict's colour with it; every other table leaves it unset.
   rowClass = null,
@@ -1938,7 +1962,29 @@ export default function DataTable({
   // Rows on screen answer the PREVIOUS query while the next one is in flight.
   // Dimming is the whole indicator: it says "this is about to change" without
   // removing anything, which is what blanking the table got wrong.
-  const staleRows = serverMode && serverState.loading && sourceRows.length > 0;
+  // Either kind of table waiting on rows. `staleRows` is the subset of that
+  // where rows are already on screen — a re-query, not a first load — which is
+  // the case that must not blank or blink them.
+  /**
+   * A new ANSWER, which is not the same thing as new rows.
+   *
+   * Sort, search and filters change what the table is CLAIMING. Scrolling into
+   * the next slice and a live update from a colleague's save do not — they
+   * bring new rows to a question that has not changed. Only the first kind
+   * should replay the rows' entrance, so this is keyed on the question and the
+   * tbody is keyed on this.
+   *
+   * Stringified rather than compared field by field because `conds` is an array
+   * of objects rebuilt on every edit; its identity changes constantly and its
+   * CONTENT is what matters here.
+   */
+  const answerKey = useMemo(
+    () => JSON.stringify([sort, q, conds.filter(condActive)]),
+    [sort, q, conds],
+  );
+
+  const busy = loading || (serverMode && serverState.loading);
+  const staleRows = busy && sourceRows.length > 0;
   const activeCondCount = conds.filter(condActive).length;
   const isFiltered = activeCondCount > 0 || !!q;
   const nounCap = noun.charAt(0).toUpperCase() + noun.slice(1);
@@ -2204,7 +2250,11 @@ export default function DataTable({
                   </tr>
                 ) : null}
               </thead>
-              <tbody>
+              {/* KEYED, so React rebuilds the tbody when the question changes and
+                  the rows play their entrance again. Keyed on nothing else: a
+                  remount here throws away every memoised Row, which is right
+                  once per sort and wrong once per scroll tick. */}
+              <tbody key={answerKey}>
                 {/* Spacer rows stand in for the rows scrolled past, so the
                     scrollbar still reflects the full set. aria-hidden because
                     they carry no content and must not appear to a screen reader
@@ -2251,8 +2301,33 @@ export default function DataTable({
           ) : null}
           <Footer />
         </div>
-      ) : serverMode && serverState.loading ? (
-        <div className="tw dt-tw dt-empty"><div className="more"><span className="spin" />Loading {noun}…</div></div>
+      ) : busy ? (
+        /**
+         * THE SHAPE OF THE TABLE, not a spinner in an empty box.
+         *
+         * Two things the spinner could not say. The box is already the size it
+         * will be, so the rows arriving move nothing — the old state collapsed
+         * to a small centred line and then jumped to a full table, on every
+         * load and every tab switch. And the reader can see how many columns
+         * are coming while the first request is still out, which on a table
+         * this wide is most of what they are waiting to find out.
+         *
+         * Capped at SK_COLS of the columns that would be visible anyway: past
+         * about a dozen the bars stop reading as a table and start reading as
+         * noise, and the Mining Matrix has forty of them.
+         */
+        <div className="tw dt-tw dt-sk" aria-busy="true" aria-label={`Loading ${noun}…`}>
+          <div className="sk-r sk-h">
+            {select ? <i className="sk-ck" /> : null}
+            {activeCols.slice(0, SK_COLS).map((c) => <i key={c.key} />)}
+          </div>
+          {Array.from({ length: SK_ROWS }, (_, i) => (
+            <div className="sk-r" key={i}>
+              {select ? <i className="sk-ck" /> : null}
+              {activeCols.slice(0, SK_COLS).map((c) => <i key={c.key} />)}
+            </div>
+          ))}
+        </div>
       ) : (
         /**
          * NO ROWS — the SAME BOX the rows branch renders, holding the message.

@@ -172,8 +172,7 @@ function buildCols(splits, splitColumns) {
        */
       cell: (v, r) => (
         <Link
-          className="mono lnk"
-          style={r.matched ? undefined : { color: 'var(--amber-tx)' }}
+          className={'mono lnk' + (r.matched ? '' : ' mm-unmatched')}
           to={matrixApi.ticketsHref(r)}
           onClick={(e) => e.stopPropagation()}
           title={r.matched
@@ -240,17 +239,17 @@ function buildCols(splits, splitColumns) {
       cls: 'mm-mail',
       cell: (v) => {
         if (v === null || v === undefined) return <span className="dim">—</span>;
-        return v ? <b style={{ color: 'var(--text)' }}>{nf(v)}</b> : zero();
+        return v ? <b className="fig">{nf(v)}</b> : zero();
       },
     },
     { key: 'location', label: 'Location', group: 'ev', cell: (v) => v || dim() },
     {
       key: 'unmined_links', label: 'Unmined links', group: 'un', num: true,
-      cell: (v) => (v ? <b style={{ color: 'var(--text)' }}>{nf(v)}</b> : zero()),
+      cell: (v) => (v ? <b className="fig">{nf(v)}</b> : zero()),
     },
     {
       key: 'unmined_data', label: 'Unmined data', group: 'un', num: true,
-      cell: (v) => (v ? <b style={{ color: 'var(--text)' }}>{nf(v)}</b> : zero()),
+      cell: (v) => (v ? <b className="fig">{nf(v)}</b> : zero()),
     },
   ];
 
@@ -573,6 +572,11 @@ export default function MiningMatrixPage() {
         sumBy="canonical_code"
         rows={rows}
         cols={cols}
+        /* Without this the table cannot tell "no events" from "not asked yet",
+           and it guessed: every first load and every tab switch (each view
+           remounts, see `key` above) showed "No Events Found" until the request
+           landed. It now draws its own skeleton instead. */
+        loading={loading}
         noun={isUnlinked ? 'codes' : 'events'}
         pageSize={1000}
         // Soonest first in the event views: the matrix is read top-down as a
@@ -601,14 +605,13 @@ export default function MiningMatrixPage() {
                 as "codes that still hold unmined work", so it has no zero row to
                 reveal. */}
             {isUnlinked ? null : (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-3)', whiteSpace: 'nowrap' }}
+              <label className="tb-ck"
                 title="Also list events whose links have all been mined. Off by default: the matrix is a worklist, and a fully mined event has nothing left to schedule against.">
                 <input type="checkbox" className="ck" checked={includeZero}
                   onChange={(e) => setIncludeZero(e.target.checked)} />
                 Include fully mined
               </label>
             )}
-            {loading ? <span className="dim" style={{ fontSize: 11.5 }}>Loading…</span> : null}
           </>
         )}
       />

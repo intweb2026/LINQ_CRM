@@ -244,7 +244,7 @@ export default function UserFormModal({ user: u, users, onClose, onSaved }) {
     const ok = await confirm({
       title: 'Delete ' + u.name + '?', danger: true, ok: 'Delete',
       sub: u.email,
-      body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>The account is removed permanently. Deactivate instead if they may come back.</p>,
+      body: <p>The account is removed permanently. Deactivate instead if they may come back.</p>,
     });
     if (!ok) return;
     setBusy(true);

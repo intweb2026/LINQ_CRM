@@ -312,7 +312,7 @@ export default function TicketCentralPage() {
                 dialog and do nothing visible. */}
             {can('delete', 'ticket_central') ? (
               <button className="btn btn-sm btn-d" onClick={async () => {
-                const ok = await confirm({ title: 'Delete tickets?', sub: plur(ids.length, 'ticket') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)', lineHeight: 1.55 }}>This cannot be undone. The ticket numbers are not reissued.</p> });
+                const ok = await confirm({ title: 'Delete tickets?', sub: plur(ids.length, 'ticket') + ' will be permanently removed.', danger: true, ok: 'Delete', body: <p>This cannot be undone. The ticket numbers are not reissued.</p> });
                 if (!ok) return;
                 try {
                   // The toast reports what the SERVER deleted, not how many were

@@ -12,7 +12,7 @@ export default function Topbar({ crumb, theme, onPickTheme, railPos, onPickRailP
   const current = THEMES.find((t) => t.id === theme) || THEMES[0];
 
   async function handleLogout() {
-    const ok = await confirm({ title: 'Sign out?', ok: 'Sign out', body: <p style={{ fontSize: 12.5, color: 'var(--text-3)' }}>You can sign back in any time.</p> });
+    const ok = await confirm({ title: 'Sign out?', ok: 'Sign out', body: <p>You can sign back in any time.</p> });
     if (ok) logout();
   }
 

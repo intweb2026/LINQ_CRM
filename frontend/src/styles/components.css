@@ -68,7 +68,12 @@
    next step up from the button's resting --t-500. */
 html[data-theme=dark] .btn-p:hover,
 html[data-theme=bastion] .btn-p:hover{background:var(--t-400)}
-.btn-p:active{transform:none}
+/* A PRESS THE FINGER CAN FEEL. This line used to read `transform:none`, which
+   cancelled the press outright: the primary button rose on hover and then held
+   perfectly still on the way down, so the one instant the user is certain they
+   acted was the one instant nothing moved. Down is fast and up is eased, which
+   is the asymmetry a real button has. */
+.btn:active:not(:disabled){transform:translateY(.5px) scale(.985);transition-duration:.06s}
 .btn-s{background:var(--surface);color:var(--text-2);border-color:var(--border-s);box-shadow:var(--sh-xs)}
 .btn-s:hover{background:var(--n-50);border-color:var(--n-300);color:var(--text)}
 .btn-g{background:none;color:var(--text-3);border:none;padding:0 9px}
@@ -116,7 +121,7 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 /* ═══ AVATARS ═══  [avatars_identity]
    .av the circle in five sizes, .av-stk an overlapping row of them, and .who
    the avatar-plus-name-plus-subtitle unit used in tables and headers. */
-.av{display:inline-grid;place-items:center;border-radius:50%;font-weight:700;color:#fff;flex-shrink:0;text-transform:uppercase;line-height:1;user-select:none}
+.av{display:inline-grid;place-items:center;border-radius:0;font-weight:700;color:#fff;flex-shrink:0;text-transform:uppercase;line-height:1;user-select:none}
 .av-xs{width:21px;height:21px;font-size:8px}
 .av-sm{width:26px;height:26px;font-size:9.5px}
 .av-md{width:32px;height:32px;font-size:11px}
@@ -157,8 +162,8 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .kpi-v{font-family:var(--display);font-size:25px;font-weight:800;color:var(--text);letter-spacing:-.04em;line-height:1.05}
 .kpi-v small{font-size:12.5px;font-weight:700;color:var(--text-4);letter-spacing:0;margin-left:3px}
 .kpi-s{font-size:10.5px;color:var(--text-4);margin-top:4px;line-height:1.4}
-.kpi-b{height:4px;background:var(--n-75);border-radius:3px;margin-top:11px;overflow:hidden}
-.kpi-b i{display:block;height:4px;border-radius:3px;transition:width .7s var(--ease)}
+.kpi-b{height:4px;background:var(--n-75);border-radius:0;margin-top:11px;overflow:hidden}
+.kpi-b i{display:block;height:4px;border-radius:0;transition:width .7s var(--ease)}
 .kpi.hi{background:linear-gradient(150deg,var(--t-700),var(--t-900));border-color:transparent;box-shadow:0 3px 12px -3px rgba(6,74,91,.35)}
 .kpi.hi .kpi-i{background:rgba(255,255,255,.13);color:var(--t-200)}
 .kpi.hi .kpi-l{color:var(--t-200)}
@@ -177,9 +182,18 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .tabs{display:flex;align-items:center;justify-content:space-between;gap:12px 18px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:15px}
 .tabs-list{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 .tabs-list::-webkit-scrollbar{display:none}
-.tab{padding:8px 13px;font-size:12.5px;font-weight:650;color:var(--text-3);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .13s;display:flex;align-items:center;gap:6px;letter-spacing:-.01em;background:none;border-left:none;border-right:none;border-top:none}
+.tab{position:relative;padding:8px 13px;font-size:12.5px;font-weight:650;color:var(--text-3);cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .13s;display:flex;align-items:center;gap:6px;letter-spacing:-.01em;background:none;border-left:none;border-right:none;border-top:none}
 .tab:hover{color:var(--text-2)}
-.tab.on{color:var(--t-600);border-bottom-color:var(--t-500)}
+/* THE UNDERLINE WIPES IN. It was border-bottom-color, which can only fade, so
+   switching tab put a bar under the new one and took the old one away with no
+   relationship between the two. A scaled pseudo-element grows from the centre
+   of the tab you picked, which is movement that points back at what you just
+   clicked. The transparent border stays for LAYOUT — it reserves the 2px, so
+   removing it would shift every tab by two pixels the moment this rule loads. */
+.tab.on{color:var(--t-600)}
+.tab::after{content:'';position:absolute;left:0;right:0;bottom:-2px;height:2px;
+  background:var(--t-500);transform:scaleX(0);transition:transform .26s var(--ease)}
+.tab.on::after{transform:scaleX(1)}
 .tab .c{font-size:10px;font-weight:700;padding:1.5px 6px;background:var(--n-75);border-radius:var(--r-tag);color:var(--text-3);line-height:1.3}
 .tab.on .c{background:var(--t-50);color:var(--t-600)}
 .tabs-act{display:flex;align-items:center;gap:10px;padding-bottom:8px;flex-shrink:0;margin-left:auto}
@@ -203,6 +217,20 @@ textarea.in{height:auto;padding:8px 10px;resize:vertical;min-height:66px;line-he
 .mono{font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:-.02em}
 .lnk{color:var(--t-600);cursor:pointer}.lnk:hover{text-decoration:underline}
 .dim{color:var(--text-4)}
+/* A mono identifier in the brand hue that is NOT a link — an event code, a
+   reference. .lnk carries the same colour but also a pointer and an underline
+   on hover, which promises a navigation these do not have. */
+.code{color:var(--t-600)}
+/* Subordinate cell text: an email, a phone number, an accounts contact, the
+   qualifier on a selection count. ONE size for all of it. These were set inline
+   per column at 11 and 11.5, which is half a pixel of difference nobody chose
+   and everybody sees as a table that does not quite line up. .mono already sits
+   at this size, so a mono cell needs nothing beyond .mono. */
+.cell-sub{font-size:11.5px}
+/* A figure that carries the weight of its cell — a non-zero count in a column
+   of mostly zeroes. The zero case stays .dim, so the contrast between them is
+   what the column is read by. */
+.fig{color:var(--text);font-weight:650}
 
 /* ═══ FILLED CELLS ═══  [table_filled_cells]
    A status inside a TABLE CELL paints the whole cell in its colour rather than
@@ -231,6 +259,10 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .tb{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:11px}
 .tb-s{flex:1;min-width:170px;max-width:300px}
 .tb-sp{flex:1}
+/* A checkbox that rides on the table's own toolbar row, where a page has an
+   option with no tab strip to fold it into. Mining Matrix's "Include fully
+   mined" and Paper Review's filter toggle. */
+.tb-ck{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);white-space:nowrap;cursor:pointer}
 .tb-m{font-size:11.5px;color:var(--text-4);white-space:nowrap}
 .tb-m b{color:var(--text);font-weight:700}
 .seg{display:inline-flex;background:var(--n-75);border-radius:var(--r-md);padding:2.5px;gap:2px}
@@ -244,6 +276,11 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .chip.on{background:var(--t-500);border-color:var(--t-500);color:#fff;box-shadow:0 1px 3px rgba(0,129,157,.25)}
 .fch{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:11px}
 .fc{display:inline-flex;align-items:center;gap:6px;padding:0 5px 0 9px;height:26px;max-width:340px;background:var(--t-50);border:1px solid var(--t-200);border-radius:var(--r-sm);font-size:11.5px;font-weight:600;color:var(--t-700)}
+/* A chip is the app answering a filter you just set, so it arrives rather than
+   appearing. Only NEW chips play it; React keys them by criterion, so the ones
+   already standing are untouched when you add another. */
+.fc{animation:chipIn .2s var(--ease) both}
+@keyframes chipIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
 .fc .k{opacity:.7;flex-shrink:0}
 .fc .fc-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fc button{width:17px;height:17px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:var(--r-xs);opacity:.65}
@@ -256,9 +293,19 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .fc-open{cursor:pointer}
 .fc-open:hover{background:var(--t-100);border-color:var(--t-500)}
 .fc-open:focus-visible{outline:2px solid var(--t-500);outline-offset:1px}
-/* Rows answering the query the user just replaced. Dimmed, never removed —
-   emptying the table is what made a filter change look like a page reload. */
-.dt-busy{opacity:.5;transition:opacity .12s}
+/* Rows answering the query the user just replaced. Never removed — emptying the
+   table is what made a filter change look like a page reload — and no longer
+   DIMMED either. Half opacity blinked the whole table on every sort, filter and
+   page, over rows that were still correct for the moment they had left, and on
+   a live table it fired whenever a colleague saved anything. The new query says
+   so with one line sweeping the top edge instead, which is a quarter of a
+   second of movement in the one place a reader who just clicked a header is
+   already looking, and it leaves the figures readable throughout. */
+.dt-busy{position:relative}
+.dt-busy::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;z-index:6;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--t-400),transparent);background-size:38% 100%;
+  background-repeat:no-repeat;animation:dtsweep 1.05s var(--ease) infinite}
+@keyframes dtsweep{from{background-position:-38% 0}to{background-position:138% 0}}
 .fcl{font-size:11.5px;font-weight:650;color:var(--text-4);background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:var(--r-xs)}
 .fcl:hover{color:var(--red);background:var(--red-bg)}
 
@@ -313,8 +360,8 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .flt-row-l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);margin-top:2px}
 .vti-opts{max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-xs);background:var(--surface)}
 .vti-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px}
-.vti-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 3px 2px 8px;background:var(--t-50);border:1px solid var(--t-200);color:var(--t-700);border-radius:999px;font-size:11px;font-weight:600}
-.vti-tag button{width:14px;height:14px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:50%}
+.vti-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 3px 2px 8px;background:var(--t-50);border:1px solid var(--t-200);color:var(--t-700);border-radius:0;font-size:11px;font-weight:600}
+.vti-tag button{width:14px;height:14px;display:grid;place-items:center;border:none;background:none;color:var(--t-600);cursor:pointer;border-radius:0}
 .vti-tag button:hover{background:var(--t-100)}
 
 /* ═══ DATE FILTER ═══  [filter_date_condition]
@@ -406,7 +453,7 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
    border, radius, background and type regardless of element/browser default styles. */
 .flt-pill{display:block;box-sizing:border-box;width:100%;height:42px;padding:0 16px;margin:0;
   font:inherit;font-size:13.5px;line-height:40px;color:var(--text);
-  background:var(--surface);border:1px solid var(--border-s);border-radius:999px;box-shadow:none}
+  background:var(--surface);border:1px solid var(--border-s);border-radius:0;box-shadow:none}
 .flt-pill:focus{outline:none;border-color:var(--t-500);box-shadow:0 0 0 3px var(--t-100)}
 /* custom operator dropdown — a real <select>'s open option list can't be restyled,
    so this is plain markup that shares `.flt-pill` for the closed-state box exactly. */
@@ -416,7 +463,7 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
 .flt-op-menu{position:absolute;z-index:20;top:calc(100% + 6px);left:0;right:0;max-height:260px;overflow-y:auto;
   padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--sh-lg)}
 .pop-search-f{padding:14px 16px;border-top:1px solid var(--border);display:flex;justify-content:center}
-.btn-pill{border-radius:999px;padding:0 34px;height:42px;font-size:14px}
+.btn-pill{border-radius:0;padding:0 34px;height:42px;font-size:14px}
 
 /* ═══ LARGE FILTER PANEL ═══  [filter_panel_large]
    The same panel at full height. Every rule here is a .pop-lg override of
@@ -482,6 +529,39 @@ table.dt tbody td .ec::after{position:absolute;right:5px;top:50%;margin-top:-1px
    unreachable by mouse or keyboard. The band scrolls itself past that height
    (.eg-scroll, entrygrid.css). */
 .dt-band{flex-shrink:0}
+
+/* ── loading skeleton ──  [table_skeleton]
+   .dt-sk is the box DataTable renders in place of its rows while the first
+   request is out. It imitates the table rather than centring a spinner in an
+   empty box: same surface, same 44px row pitch, same header band, so the real
+   rows replace it without moving anything.
+   The bars are bare <i>, styled here; the widths are varied in CSS and not
+   randomised per render, because it only has to not look like graph paper and a
+   fresh random width every render is a fresh layout every render. */
+.sk-r{display:flex;align-items:center;gap:24px;height:44px;padding:0 14px;border-bottom:1px solid var(--n-50);flex-shrink:0}
+.sk-r:last-child{border-bottom:none}
+.sk-r i{flex:1;height:9px;border-radius:var(--r-xs);background:var(--n-50);
+  background-image:linear-gradient(90deg,transparent 0,var(--n-75) 45%,transparent 90%);
+  background-size:220% 100%;background-repeat:no-repeat;animation:sk 1.5s var(--ease) infinite}
+/* Not every bar the same length, and not every row the same rhythm. */
+.sk-r i:nth-child(3n){max-width:54%}
+.sk-r i:nth-child(4n){max-width:78%}
+.sk-r i:nth-child(5n){max-width:38%}
+.sk-r:nth-child(even) i{max-width:none}
+.sk-r:nth-child(even) i:nth-child(3n){max-width:72%}
+.sk-r:nth-child(even) i:nth-child(5n){max-width:46%}
+/* The sweep starts a beat later down the block, so it reads as one surface
+   filling rather than eight bars pulsing in time. */
+.sk-r:nth-child(2n) i{animation-delay:.07s}
+.sk-r:nth-child(3n) i{animation-delay:.14s}
+/* The checkbox column, where the table has one. */
+.sk-ck{flex:0 0 13px!important;max-width:none!important;height:13px!important;border-radius:var(--r-xs)}
+/* The header band is STILL, on the surface the real header uses. It is the part
+   of a table that is known before the data is, so animating it would claim the
+   headings are loading too. */
+.sk-h{height:38px;background:var(--n-25);border-bottom:1px solid var(--border)}
+.sk-h i{height:7px;background:var(--n-75);background-image:none;animation:none;max-width:66%}
+@keyframes sk{from{background-position:120% 0}to{background-position:-120% 0}}
 /* Every OTHER direct child of #main — the hero banner, page heads, filter
    rows, KPI cards, whatever a given page renders — must not flex at all. A
    flex child defaults to flex-shrink:1, so without this a page whose content
@@ -616,7 +696,46 @@ table.dt thead tr.sum th{top:var(--sum-top,0px);color:var(--text);font-size:11.5
    a column as numeric for colWidth() and remains the hook if a genuinely
    place-value column ever needs its old behaviour back. */
 table.dt tbody td{--cell-px:12px;--row-h:44px;padding:0 var(--cell-px);height:var(--row-h);border-bottom:1px solid var(--n-50);vertical-align:middle;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);text-align:center}
+/* ── the answer changing ──  [table_answer_motion]
+   A sort, a search or a filter replaces what the table is claiming, and it used
+   to replace it between one frame and the next. On a table whose top rows often
+   look much the same before and after — Bookings sorted by two different dates,
+   the Matrix by two different measures — that left the reader with no way to
+   tell a click that worked from a click that missed, short of reading the rows
+   and comparing. The rows play in, staggered, so the change is something you
+   watch happen.
+
+   OPACITY ONLY. NOT transform. The frozen columns on the Mining Matrix and the
+   pinned pair in the booking modals are position:sticky, and a transform on an
+   ancestor becomes their containing block, which breaks the stick — the frozen
+   block would scroll away with the rest of the row. A fade carries this on its
+   own, and it is the one property here that cannot break layout.
+
+   Keyed on the QUESTION, not the rows: see answerKey in DataTable. Scrolling
+   into the next slice and a live update from a colleague's save both leave it
+   alone, because neither changes what the table is claiming.
+
+   The stagger stops at the twelfth row. Past that it is the slowest thing on
+   screen rather than the liveliest, and rows below the fold have finished long
+   before anyone scrolls to them. Spacer rows are excluded; they are height with
+   nothing in them, and fading them would stutter the scroll. */
 table.dt tbody tr{transition:background .1s}
+/* ON THE ROW SET, NOT ON EACH ROW. Per-row this looked better and was wrong:
+   the table is virtualised, so rows mount as you scroll, and a rule matching
+   tr would have played the entrance on every one of them — a trail of rows
+   fading in at the leading edge of every scroll, which reads as a table
+   struggling to keep up rather than as polish. The tbody mounts once per
+   answer and never on scroll, so it is the only element here that can carry
+   this correctly. ponytail: a stagger down the rows needs a marker class
+   removed on animationend; worth doing if one fade ever looks flat, not
+   before. */
+table.dt tbody{animation:rowIn .26s var(--ease) both}
+@keyframes rowIn{from{opacity:0}to{opacity:1}}
+/* The sorted column's chevron. ONE arrow that turns through the flip rather
+   than two arrows that swap, which is movement the reader can follow back to
+   the header they just clicked. */
+.th-dir{display:inline-flex;transition:transform .22s var(--ease)}
+.th-dir.up{transform:rotate(180deg)}
 table.dt tbody tr:hover{background:var(--t-50)}
 table.dt tbody tr.sel{background:var(--t-50)}
 table.dt tbody tr:last-child td{border-bottom:none}
@@ -791,6 +910,8 @@ table.dt th.sec,table.dt td.sec{border-left:2px solid var(--border-s)}
 .rc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px;cursor:pointer;transition:all .15s var(--ease);box-shadow:var(--sh-xs);display:flex;flex-direction:column;gap:11px}
 .rc:hover{box-shadow:var(--sh-md);border-color:var(--t-200);transform:translateY(-1px)}
 .rc-t{display:flex;align-items:flex-start;gap:9px}
+/* The name and reference take whatever the avatar and the status badge leave. */
+.rc-t .who-t{flex:1}
 .rc-m{display:grid;grid-template-columns:1fr 1fr;gap:8px 11px;padding-top:10px;border-top:1px solid var(--n-50)}
 .rc-m .l{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-4);margin-bottom:1px}
 .rc-m .v{font-size:11.5px;font-weight:600;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -997,7 +1118,7 @@ table.dt tbody tr.pm-done .pm-hl i{background:var(--pm-done-tx)}
 /* An option in the verdict menu: a swatch in the verdict's fill and edge colour,
    read off the same .vd-* class the row uses, so the menu previews the row. */
 .pm-opt{display:inline-flex;align-items:center;gap:9px}
-.pm-opt i{width:12px;height:12px;border-radius:3px;background:var(--vd-fill,var(--n-75));box-shadow:inset 0 0 0 1.5px var(--vd,var(--n-300));flex-shrink:0}
+.pm-opt i{width:12px;height:12px;border-radius:0;background:var(--vd-fill,var(--n-75));box-shadow:inset 0 0 0 1.5px var(--vd,var(--n-300));flex-shrink:0}
 /* ═══ Pre-Event Docs ═══  [pre_event_docs]
    The badge lists, the change lists and the networking draw. Tables here are
    plain <table>, not DataTable: they are read, printed and exported rather than
@@ -1798,7 +1919,13 @@ table.ccd-t td.ccd-sub-row{padding-left:26px;font-weight:500;color:var(--text-2)
 :root{--mm-mail-bg:#FBF3DF;--mm-mail-tx:#6B5312;--mm-mail-bd:#E8D9AE}html[data-theme=dark],html[data-theme=bastion]{--mm-mail-bg:rgba(232,205,132,.12);--mm-mail-tx:#E8CD84;--mm-mail-bd:rgba(232,205,132,.28)}
 table.dt thead th.mm-mail{background:var(--mm-mail-bg);color:var(--mm-mail-tx);border-bottom-color:var(--mm-mail-bd)}
 table.dt tbody td.mm-mail{background:var(--mm-mail-bg)}
-table.dt tbody td.mm-mail b{color:var(--mm-mail-tx)!important}
+/* No !important any more. It was here to outrank an inline colour on the <b>
+   inside; that is .fig now, which this outranks on specificity alone. */
+table.dt tbody td.mm-mail b.fig{color:var(--mm-mail-tx)}
+/* A row whose event code found no tickets to join to. It reads zero straight
+   across, which is indistinguishable from fully mined, so the code says which
+   one it is; the title on the link says it in words. */
+.mm-unmatched{color:var(--amber-tx)}
 table.dt thead tr.sum th.mm-mail{background:var(--mm-mail-bg);color:var(--mm-mail-tx)}
 table.dt tbody tr:hover td.mm-mail{background:var(--mm-mail-bg);filter:brightness(.985)}
 

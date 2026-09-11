@@ -34,7 +34,16 @@
      page title) and by the big figures. */
   --display:var(--font);
   --mono:'JetBrains Mono',ui-monospace,monospace;
-  --r-xs:4px;--r-sm:6px;--r-md:9px;--r-lg:13px;--r-xl:18px;--r-full:9999px;
+  /* THE SCALE IS SQUARE. Every tier is 0; the tiers are kept as separate
+     tokens rather than collapsed into one so a later decision to soften any
+     single tier is one number here, not a search through 145 call sites.
+     --r-full is NOT 0 and must not become 0. It is the only survivor, and it
+     survives because the two things reading it are not design: the 36x20 track
+     of the .sw toggle, which is a mechanism, and the 6px dot in .kbar-chip i,
+     which is a dot. Everything that is a SHAPE is square; everything that is a
+     dot or a mechanism keeps its geometry. That is the whole rule, and it is
+     the one to apply to anything new. */
+  --r-xs:0;--r-sm:0;--r-md:0;--r-lg:0;--r-xl:0;--r-full:9999px;
   /* SMALL TAGS ARE BOXY, NOT PILLS.
      Badges, status tags, counts and filter chips used --r-full, which is
      9999px, so every one of them was a fully rounded pill. At tag size that
@@ -43,7 +52,7 @@
      --r-full stays 9999px and keeps its real circles: the 36x20 toggle in
      .sw and the 6px dot in .kbar-chip i, both of which a boxy radius would
      visibly break. */
-  --r-tag:4px;
+  --r-tag:0;
   --ease:cubic-bezier(.32,.72,0,1);
   --rail-w:236px;--top-h:56px;
   /* PER-ELEMENT LOCALS, declared here so they have a defined default.
@@ -433,7 +442,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 html[data-theme=dark] ::selection,html[data-theme=bastion] ::selection{color:#fff}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--n-200);border-radius:6px;border:2.5px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb{background:var(--n-200);border-radius:0;border:2.5px solid transparent;background-clip:content-box}
 ::-webkit-scrollbar-thumb:hover{background:var(--n-300);background-clip:content-box}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip{position:fixed;top:-60px;left:12px;z-index:200;background:var(--t-500);color:#fff;padding:9px 15px;border-radius:var(--r-md);font-size:12.5px;font-weight:650;transition:top .16s}
@@ -483,7 +492,15 @@ html[data-theme=bastion] .rail-mark .lg-dark{display:block}
 .rail-item{position:relative;width:100%;display:flex;align-items:center;gap:10px;padding:0 9px;height:35px;border:none;background:none;border-radius:var(--r-md);color:var(--rail-tx);cursor:pointer;font-size:13px;font-weight:550;text-align:left;transition:background .13s,color .13s;margin-bottom:1px;letter-spacing:-.01em}
 .rail-item:hover{background:var(--n-50);color:var(--text)}
 .rail-item.on{background:var(--t-50);color:var(--t-600);font-weight:650}
-.rail-item.on::before{content:'';position:absolute;left:-9px;top:50%;transform:translateY(-50%);width:3px;height:19px;background:var(--t-500);border-radius:0 2px 2px 0}
+/* THE SPINE GROWS INTO PLACE. It existed only on .on, so it could not
+   transition — navigating simply put a bar beside the new module and removed
+   the one beside the old. Declared on every item at zero height instead, so the
+   two ends of a navigation are one movement. transform-origin is the centre, to
+   match the translateY(-50%) that positions it. */
+.rail-item::before{content:'';position:absolute;left:-9px;top:50%;width:3px;height:19px;
+  background:var(--t-500);transform:translateY(-50%) scaleY(0);transform-origin:center;
+  transition:transform .24s var(--ease)}
+.rail-item.on::before{transform:translateY(-50%) scaleY(1)}
 .rail-ic{width:18px;height:18px;flex-shrink:0;display:grid;place-items:center}
 .rail-ic svg{width:17px;height:17px;stroke-width:1.85}
 .rail-lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -505,7 +522,7 @@ body.rail-min .rail-head{justify-content:center;padding:13px 0}
 body.rail-min .rail-mark{width:100%;justify-content:center}
 body.rail-min .rail-mark .lg-light,body.rail-min .rail-mark .lg-dark{display:none}
 body.rail-min .rail-mark .lg-icon{display:block;height:32px;width:32px}
-body.rail-min .rail-collapse{position:absolute;top:50%;left:auto;right:-11px;transform:translateY(-50%);border-radius:50%;background:var(--surface);border:1px solid var(--border);width:22px;height:22px;z-index:5}
+body.rail-min .rail-collapse{position:absolute;top:50%;left:auto;right:-11px;transform:translateY(-50%);border-radius:0;background:var(--surface);border:1px solid var(--border);width:22px;height:22px;z-index:5}
 body.rail-min .rail-collapse svg{transform:rotate(180deg)}
 body.rail-min .rail-item{justify-content:center;padding:0;height:38px}
 body.rail-min .rail-group{margin-bottom:9px;padding-top:9px;border-top:1px solid var(--rail-bd)}
