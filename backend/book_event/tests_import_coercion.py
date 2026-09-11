@@ -482,13 +482,19 @@ class RejectUnreadableTests(ImportCase):
         """
         "false" matched no recognised spelling, so 13,481 rows fell through to the
         Pending default. Pending is the right answer for an unticked flag, but it
-        has to be REACHED rather than fallen into — and the same fallback silently
-        absorbed Absent, which means something else entirely.
+        has to be REACHED rather than fallen into.
+
+        The absent vocabulary lands on Pending too, now that the field is the
+        two-state checkbox it always was in Zoho. It stays RECOGNISED rather than
+        deleted: an unlisted word is an import error, so removing these spellings
+        would reject a real sheet instead of reading it. "probably" below is the
+        difference — that one nobody has declared, and it still errors.
         """
         self.assertEqual(coerce("attendance", "true"), ("Confirmed", None))
         self.assertEqual(coerce("attendance", "false"), ("Pending", None))
-        self.assertEqual(coerce("attendance", "Absent"), ("No-show", None))
-        self.assertEqual(coerce("attendance", "did not attend"), ("No-show", None))
+        self.assertEqual(coerce("attendance", "Absent"), ("Pending", None))
+        self.assertEqual(coerce("attendance", "did not attend"), ("Pending", None))
+        self.assertEqual(coerce("attendance", "Cancelled"), ("Pending", None))
         value, error = coerce("attendance", "probably")
         self.assertIsNone(value)
         self.assertIn("probably", error)

@@ -51,7 +51,15 @@ class ParseOwnershipTests(SimpleTestCase):
     def test_table_is_whole(self):
         owners = parse_ownership()
         self.assertEqual(len(owners), 419)
-        self.assertEqual(len(set(owners.values())), 8)
+        self.assertEqual(len(set(owners.values())), 9)
+        # The eleven codes reassigned to Danny Velgara on 2026-09-12. Pinned
+        # because they are Paxton's in the source sheet: a re-paste that
+        # loses them reverts 2,405 tickets, silently and with no error.
+        self.assertEqual(
+            sorted(k for k, v in owners.items() if v == "Danny Velgara"),
+            ["BAPE", "FLC", "FLE", "FLIL", "FLTX", "FLU", "FLUK",
+             "PCU", "SCE", "SCSG", "SCU"],
+        )
         # Every owner is "First Last": resolve_owners partitions on the first
         # space, so a single-token or three-token name would resolve to nobody
         # and abort the run.

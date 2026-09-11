@@ -121,7 +121,8 @@ export function blankDelegate(today, defaultOwner = '') {
  *                   two fields for one fact, and Delegate Number is the one kept.
  *   Attendance      the separate Pending/Confirmed/No-show status dropdown is gone.
  *   Status          "Attendance - IN?" below is the same field as a checkbox, which
- *                   is how Zoho presents it and how the importers already read it.
+ *                   is how Zoho presents it, how the importers already read it, and
+ *                   now all the stored field can hold.
  *   Job Title       intentionally omitted (removed per earlier product request).
  *
  * Event Code and Event Name are `display` and come from the INVOICE (the `from`
@@ -166,11 +167,9 @@ const baseCols = ({ onTransfer } = {}) => [
   {
     key: 'attendance', label: 'Attendance - IN?', type: 'checkbox', width: 120,
     checked: (v) => v === 'Confirmed',
-    // Unchecking returns the row to Pending, EXCEPT where it holds one of the
-    // other stored states: 'No-show' and 'Cancelled' are also "not in", and
-    // flattening them to Pending would destroy the distinction on any row that
-    // was merely opened and saved.
-    toggle: (on, prev) => (on ? 'Confirmed' : (!prev || prev === 'Confirmed' ? 'Pending' : prev)),
+    // Two states, nothing to preserve: the stored field is the checkbox itself
+    // (BookDelegate.Attendance), so ticked is Confirmed and unticked is Pending.
+    toggle: (on) => (on ? 'Confirmed' : 'Pending'),
   },
   { key: 'added_time', label: 'Added Time', type: 'display', width: 150, format: 'datetime' },
   { key: 'modified_time', label: 'Modified Time', type: 'display', width: 150, format: 'datetime' },
